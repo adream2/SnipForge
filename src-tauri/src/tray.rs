@@ -26,6 +26,7 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     let a_scroll = accel(&hk.scroll_capture);
     let a_panel = accel(&hk.clipboard_panel);
     let a_pin_clip = accel(&hk.pin_from_clipboard);
+    let a_record = accel(&hk.toggle_recording);
 
     let region = MenuItem::with_id(app, "capture_region", "区域截图", true, a_region.as_deref())?;
     let window_shot =
@@ -40,6 +41,11 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
         MenuItem::with_id(app, "show_clipboard", "剪贴板管理", true, None::<&str>)?;
     let pin_clip =
         MenuItem::with_id(app, "pin_clipboard", "贴剪贴板图片", true, a_pin_clip.as_deref())?;
+    let sep_rec = PredefinedMenuItem::separator(app)?;
+    let rec_region =
+        MenuItem::with_id(app, "record_region", "录制区域…", true, a_record.as_deref())?;
+    let rec_full = MenuItem::with_id(app, "record_full", "录制全屏", true, None::<&str>)?;
+    let rec_stop = MenuItem::with_id(app, "record_stop", "停止录制", true, None::<&str>)?;
     let tools = MenuItem::with_id(app, "show_tools", "图片工具", true, None::<&str>)?;
     let upload = MenuItem::with_id(app, "show_upload", "图床设置", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "show_settings", "设置…", true, None::<&str>)?;
@@ -57,6 +63,10 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
             &panel,
             &history,
             &pin_clip,
+            &sep_rec,
+            &rec_region,
+            &rec_full,
+            &rec_stop,
             &tools,
             &upload,
             &settings,
@@ -95,6 +105,30 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = crate::commands::clipboard::clipboard_pin_current(h).await {
                         log::warn!("贴剪贴板图片失败: {e}");
+                    }
+                });
+            }
+            "record_region" => {
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::record::trigger_region_record(&h) {
+                        log::warn!("录制区域失败: {e}");
+                    }
+                });
+            }
+            "record_full" => {
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::record::start_fullscreen(&h) {
+                        log::warn!("录制全屏失败: {e}");
+                    }
+                });
+            }
+            "record_stop" => {
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::record::stop_recording(&h) {
+                        log::warn!("停止录制失败: {e}");
                     }
                 });
             }

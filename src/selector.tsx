@@ -15,6 +15,11 @@ import './styles/selector.css'
  *
  * 提交给后端的一律是物理像素。
  */
+/** 从 URL 读模式：selector.html?mode=record 表示框完直接开录 */
+const IS_RECORD =
+  typeof location !== 'undefined' &&
+  new URLSearchParams(location.search).get('mode') === 'record'
+
 export default function Selector() {
   const [frame, setFrame] = useState<FramePayload | null>(null)
   const [display, setDisplay] = useState<DisplayPreview | null>(null)
@@ -175,7 +180,12 @@ export default function Selector() {
       if (mode === 'scroll') {
         await api.captureScroll(display.id, phys)
       } else {
-        await api.captureCommit(display.id, phys)
+        if (IS_RECORD) {
+          // 录屏：后端会先关掉这个覆盖层再开采集，避免把深色遮罩录进去
+          await api.recordStartRegion(phys)
+        } else {
+          await api.captureCommit(display.id, phys)
+        }
       }
     } catch {
       setBusy(false)
@@ -324,7 +334,7 @@ export default function Selector() {
           <IconX size={15} />
         </button>
         <button
-          title="确认（Enter）"
+          title={IS_RECORD ? '开始录制（Enter）' : '确认（Enter）'}
           onClick={() => void commit()}
           style={{ background: 'var(--accent)' }}
         >
@@ -334,7 +344,9 @@ export default function Selector() {
 
       {!selection && (
         <div className="selector-hint" style={{ pointerEvents: 'none' }}>
-          拖拽框选 · 回车确认 · Esc 取消 · W 窗口模式 · S 长截图
+          {IS_RECORD
+            ? '拖拽框选要录制的区域 · 回车开始录制 · Esc 取消'
+            : '拖拽框选 · 回车确认 · Esc 取消 · W 窗口模式 · S 长截图'}
         </div>
       )}
     </div>

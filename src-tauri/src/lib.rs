@@ -17,6 +17,7 @@ mod ocr;
 mod panel;
 mod paths;
 mod plugins;
+mod record;
 mod shortcuts;
 mod state;
 mod tray;
@@ -201,6 +202,148 @@ pub fn smoke_test() -> i32 {
     failures
 }
 
+/// 录屏编码自检：写一段 2 秒 30fps 的合成动画到临时文件，再读回时长。
+/// `snipforge.exe --record-smoke`
+pub fn record_smoke() -> i32 {
+    let path = std::env::temp_dir().join("snipforge-record-smoke.mp4");
+    let _ = std::fs::remove_file(&path);
+    print!("== 录屏编码自检 ==");
+    match record::encoder_smoke(&path, 30, 2) {
+        Ok((ms, frames)) => {
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            println!("
+[ok] 写出 {} 帧，时长 {}ms，文件 {} KB", frames, ms, size / 1024);
+            println!("[ok] 文件：{}", path.display());
+            0
+        }
+        Err(e) => {
+            println!("
+[fail] {e}");
+            1
+        }
+    }
+}
+
+/// 真实录屏自检：录 N 秒主屏，报告帧数/时长/体积。
+/// `snipforge.exe --record-test 3`
+pub fn record_screen_smoke(seconds: u64) -> i32 {
+    let mon = match xcap::Monitor::all().ok().and_then(|m| m.into_iter().next()) {
+        Some(m) => m,
+        None => {
+            println!("[fail] 没有可用显示器");
+            return 1;
+        }
+    };
+    let rect = types::Rect {
+        x: mon.x().unwrap_or(0),
+        y: mon.y().unwrap_or(0),
+        width: mon.width().unwrap_or(1920),
+        height: mon.height().unwrap_or(1080),
+    };
+    drop(mon);
+
+    let path = std::env::temp_dir().join("snipforge-record-test.mp4");
+    let _ = std::fs::remove_file(&path);
+
+    let opts = record::RecordOptions {
+        rect,
+        fps: 30,
+        bitrate: 8_000_000,
+        draw_cursor: true,
+    };
+    println!("== 真实录屏自检 {}s ==", seconds);
+    let rec = match record::start(None, opts, path.clone()) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("[fail] 启动失败: {e}");
+            return 1;
+        }
+    };
+    rec.begin();
+    std::thread::sleep(std::time::Duration::from_secs(seconds));
+    match rec.stop() {
+        Ok(r) => {
+            let real_fps = r.frames as f64 * 1000.0 / r.duration_ms.max(1) as f64;
+            println!(
+                "[ok] {} 帧，{}ms，{} KB，{}×{}，平均 {:.1} fps",
+                r.frames,
+                r.duration_ms,
+                r.bytes / 1024,
+                r.width,
+                r.height,
+                real_fps
+            );
+            match record::mf::probe_duration_ms(&path) {
+                Ok(ms) => println!("[ok] 容器时长 {ms}ms"),
+                Err(e) => {
+                    println!("[fail] 读回失败: {e}");
+                    return 1;
+                }
+            }
+            0
+        }
+        Err(e) => {
+            println!("[fail] {e}");
+            1
+        }
+    }
+}
+
+/// 抽录制文件的第一帧存 PNG，确认画面方向与颜色。
+/// `snipforge.exe --record-inspect <mp4> [out.png]`
+pub fn record_inspect(
+    src: &str,
+    out: Option<&str>,
+    crop: Option<(u32, u32, u32, u32)>,
+    skip: u32,
+) -> i32 {
+    let src = std::path::PathBuf::from(src);
+    let out = out
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("snipforge-frame0.png"));
+    match record::mf::extract_frame(&src, &out, skip) {
+        Ok((w, h)) => {
+            if let Some((cx, cy, cw, ch)) = crop {
+                let cw = cw.min(w.saturating_sub(cx));
+                let ch = ch.min(h.saturating_sub(cy));
+                match image::open(&out) {
+                    Ok(img) => {
+                        let sub = img.crop_imm(cx, cy, cw, ch);
+                        let _ = sub.save_with_format(&out, image::ImageFormat::Png);
+                        println!("[ok] 解出 {w}×{h}，裁 {cw}×{ch} 后存 {}", out.display());
+                        return 0;
+                    }
+                    Err(e) => {
+                        println!("[fail] 裁剪失败: {e}");
+                        return 1;
+                    }
+                }
+            }
+            println!("[ok] 解出 {w}×{h}，已存 {}", out.display());
+            0
+        }
+        Err(e) => {
+            println!("[fail] {e}");
+            1
+        }
+    }
+}
+
+/// 光标自检：导出当前光标位图
+pub fn cursor_test(out: &str) -> i32 {
+    let path = std::path::PathBuf::from(out);
+    match record::cursor_smoke(&path) {
+        Ok((w, h)) => {
+            println!("[ok] 光标 {w}×{h}，已存 {}", path.display());
+            0
+        }
+        Err(e) => {
+            println!("[fail] {e}");
+            1
+        }
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -322,6 +465,20 @@ pub fn run() {
             // 图片
             commands::image::image_save,
             commands::image::image_save_as,
+            // 录屏
+            commands::record::record_start,
+            commands::record::record_start_region,
+            commands::record::record_pick_region,
+            commands::record::record_start_fullscreen,
+            commands::record::record_begin,
+            commands::record::record_pause,
+            commands::record::record_resume,
+            commands::record::record_toggle_pause,
+            commands::record::record_stop,
+            commands::record::record_cancel,
+            commands::record::record_status,
+            commands::record::record_set_lens,
+            commands::record::record_set_interactive,
             commands::image::image_copy,
             commands::image::image_pin,
             commands::image::image_ocr,

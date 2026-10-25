@@ -57,7 +57,8 @@ impl Default for Hotkeys {
             active_window_capture: "Alt+W".into(),
             scroll_capture: "Alt+S".into(),
             clipboard_panel: "Alt+V".into(),
-            toggle_recording: "Alt+R".into(),
+            // Alt+R 在不少机器上被别的软件占着，Ctrl+Alt+R 更安全
+            toggle_recording: "Ctrl+Alt+R".into(),
             pin_from_clipboard: "Alt+P".into(),
         }
     }
@@ -194,6 +195,12 @@ pub struct RecordConfig {
     pub video_bits_per_second: u32,
     pub countdown: u32,
     pub show_cursor: bool,
+    /// 鼠标高亮环
+    pub cursor_highlight: bool,
+    /// 放大镜
+    pub magnifier: bool,
+    /// 录像时允许在屏幕上标注
+    pub annotate: bool,
 }
 
 impl Default for RecordConfig {
@@ -204,6 +211,10 @@ impl Default for RecordConfig {
             video_bits_per_second: 8_000_000,
             countdown: 3,
             show_cursor: true,
+            // 三个"让录屏好看"的开关，默认全开 —— 用户要的就是这个
+            cursor_highlight: true,
+            magnifier: false,
+            annotate: true,
         }
     }
 }

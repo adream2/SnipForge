@@ -5,6 +5,7 @@ import type { AppSettings, ClipboardStats } from './lib/types'
 import {
   IconClipboard,
   IconImage,
+  IconVideo,
   IconUpload,
   IconPlugin,
   IconSettings,
@@ -13,16 +14,18 @@ import {
   IconX
 } from './components/Icons'
 import ClipboardPage from './pages/ClipboardPage'
+import RecordPage from './pages/RecordPage'
 import ToolsPage from './pages/ToolsPage'
 import UploadPage from './pages/UploadPage'
 import PluginsPage from './pages/PluginsPage'
 import SettingsPage from './pages/SettingsPage'
 import { ToastProvider, useToast } from './components/Toast'
 
-type Page = 'clipboard' | 'tools' | 'upload' | 'plugins' | 'settings'
+type Page = 'clipboard' | 'record' | 'tools' | 'upload' | 'plugins' | 'settings'
 
 const NAV: Array<{ id: Page; label: string; icon: React.ReactNode }> = [
   { id: 'clipboard', label: '剪贴板', icon: <IconClipboard size={16} /> },
+  { id: 'record', label: '录屏', icon: <IconVideo size={16} /> },
   { id: 'tools', label: '图片工具', icon: <IconImage size={16} /> },
   { id: 'upload', label: '图床', icon: <IconUpload size={16} /> },
   { id: 'plugins', label: '插件', icon: <IconPlugin size={16} /> },
@@ -51,6 +54,17 @@ function Shell() {
         toast.push(t.message, t.type === 'error' ? 'error' : t.type === 'success' ? 'success' : 'info')
       })
       .then((u) => unsubs.push(u))
+    // 录制结束：给个明确反馈 + 直接打开所在文件夹（找不到就只提示）
+    void events
+      .onRecordStop((r) => {
+        const mb = (r.bytes / 1048576).toFixed(1)
+        toast.push(`录制已保存：${r.path}（${mb} MB / ${Math.round(r.durationMs / 1000)}s）`, 'success')
+      })
+      .then((u) => unsubs.push(u))
+    void events
+      .on<string>('record://error', (msg) => toast.push(`录制失败：${msg}`, 'error'))
+      .then((u) => unsubs.push(u))
+
     return () => unsubs.forEach((u) => u())
   }, [toast])
 
@@ -116,6 +130,9 @@ function Shell() {
 
           <main className="content">
             {page === 'clipboard' && <ClipboardPage onStats={setStats} />}
+            {page === 'record' && settings && (
+              <RecordPage settings={settings} onChange={updateSettings} />
+            )}
             {page === 'tools' && <ToolsPage />}
             {page === 'upload' && <UploadPage settings={settings} onChange={updateSettings} />}
             {page === 'plugins' && <PluginsPage />}

@@ -30,6 +30,13 @@ export const IconImage = ({ size, className, strokeWidth = 1.7 }: IconProps) => 
   </svg>
 )
 
+export const IconVideo = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <rect x="2.5" y="5.5" width="13" height="13" rx="2.5" />
+    <path d="M15.5 10.5l4-2.5v8l-4-2.5z" />
+  </svg>
+)
+
 export const IconUpload = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
   <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
     <path d="M12 16V4M8 8l4-4 4 4" />

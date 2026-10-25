@@ -1,0 +1,188 @@
+/* 录制控制条。窗口本身被排除在捕获之外，所以长得好看点没代价。 */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  height: 100%;
+  font-family: var(--font, system-ui, 'Microsoft YaHei', sans-serif);
+  user-select: none;
+  cursor: default;
+}
+
+.rb-root {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 8px 0 16px;
+  border-radius: 14px;
+  background: rgba(22, 22, 26, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  color: #e8e8ee;
+  backdrop-filter: blur(12px);
+}
+
+/* 只有空白处能拖窗口，按钮上不能 —— 否则点按钮会变成拖动 */
+.rb-drag {
+  position: absolute;
+  inset: 0 0 0 0;
+  z-index: 0;
+}
+
+.rb-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff3b30;
+  box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7);
+  animation: rb-pulse 1.6s infinite;
+  flex: none;
+  z-index: 1;
+}
+
+.rb-dot.paused {
+  background: #ffb020;
+  animation: none;
+}
+
+@keyframes rb-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.65);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgba(255, 59, 48, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 59, 48, 0);
+  }
+}
+
+.rb-time {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+  z-index: 1;
+}
+
+.rb-meta {
+  font-size: 11.5px;
+  color: #9a9aa5;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 1;
+}
+
+.rb-tag {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 176, 32, 0.18);
+  color: #ffb020;
+  font-size: 10.5px;
+}
+
+.rb-sep {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.1);
+  z-index: 1;
+}
+
+.rb-btn {
+  position: relative;
+  z-index: 1;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.07);
+  color: #d8d8e0;
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+
+.rb-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.rb-btn.on {
+  background: rgba(108, 92, 231, 0.85);
+  color: #fff;
+  border-color: rgba(108, 92, 231, 0.9);
+}
+
+.rb-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rb-stop {
+  position: relative;
+  z-index: 1;
+  height: 32px;
+  padding: 0 16px;
+  margin-left: 2px;
+  border-radius: 8px;
+  border: none;
+  background: #e5484d;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.rb-stop:hover:not(:disabled) {
+  background: #f05a5f;
+}
+
+.rb-stop:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.rb-err {
+  position: absolute;
+  left: 12px;
+  top: 58px;
+  max-width: 440px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  background: rgba(229, 72, 77, 0.95);
+  color: #fff;
+  font-size: 11.5px;
+  z-index: 2;
+}
+
+/* ---------------- 倒计时 ---------------- */
+
+.rb-count {
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(22, 22, 26, 0.92);
+}
+
+.rb-count-num {
+  font-size: 26px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.rb-count-tip {
+  font-size: 11px;
+  color: #9a9aa5;
+}

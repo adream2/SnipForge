@@ -57,6 +57,15 @@ impl From<tauri::Error> for AppError {
     }
 }
 
+/// Win32 / Media Foundation 的 HRESULT 直接转过来。
+/// 录屏那段全是 COM 调用，逐处 map_err 会把代码淹没。
+#[cfg(windows)]
+impl From<windows::core::Error> for AppError {
+    fn from(e: windows::core::Error) -> Self {
+        AppError::Win32(format!("{} ({:#x})", e.message(), e.code().0))
+    }
+}
+
 impl From<base64::DecodeError> for AppError {
     fn from(e: base64::DecodeError) -> Self {
         AppError::Msg(format!("Base64 解码失败: {e}"))

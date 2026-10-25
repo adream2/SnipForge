@@ -7,6 +7,10 @@ use tauri::{
 const MAIN: &str = "main";
 const SELECTOR: &str = "selector";
 const EDITOR: &str = "editor";
+/// 录制覆盖层：精确盖住录制区域，负责鼠标环/放大镜/标注。**必须被录进画面**。
+const RECORD_OVERLAY: &str = "record-overlay";
+/// 录制控制条。**必须排除在画面之外** —— 否则每段录像都带着一个控制条。
+const RECORD_BAR: &str = "record-bar";
 
 /// 点是否落在矩形内（物理像素坐标）
 pub fn rect_contains(rect: &Rect, x: i32, y: i32) -> bool {
@@ -60,15 +64,32 @@ pub fn emit_to_main(app: &AppHandle, event: &str, payload: impl serde::Serialize
 ///   WebView2 一个窗口只认一个 DPI 基准，窗口横跨两块缩放不同的屏必有错位。
 ///   逐屏覆盖 + 用物理像素定位，是唯一能保证像素级精确的做法。
 ///   用户想截另一块屏，把鼠标移过去再按热键即可——这比跨屏框选更符合直觉。
-pub fn open_selector(app: &AppHandle, display_rect: Rect, display_id: u32) -> AppResult<()> {
+/// 打开区域选择覆盖层。
+///
+/// `for_record` 为 true 时前端走"录屏"分支：框完直接开录，不进编辑器。
+pub fn open_selector(
+    app: &AppHandle,
+    display_rect: Rect,
+    display_id: u32,
+    for_record: bool,
+) -> AppResult<()> {
     close_selector(app);
 
     let cursor = app
         .cursor_position()
         .map_err(|e| AppError::Msg(format!("读取鼠标位置失败: {e}")))?;
 
-    let builder = WebviewWindowBuilder::new(app, SELECTOR, WebviewUrl::App("selector.html".into()))
-        .title("SnipForge Selector")
+    let url = if for_record {
+        WebviewUrl::App("selector.html?mode=record".into())
+    } else {
+        WebviewUrl::App("selector.html".into())
+    };
+    let builder = WebviewWindowBuilder::new(app, SELECTOR, url)
+        .title(if for_record {
+            "SnipForge Record Region"
+        } else {
+            "SnipForge Selector"
+        })
         .decorations(false)
         .transparent(true)
         .always_on_top(true)
@@ -215,4 +236,125 @@ fn pin_geometry(app: &AppHandle, img_w: u32, img_h: u32) -> (i32, i32, u32, u32)
         .clamp(my + 4, (my + mh - h - 4).max(my + 4));
 
     (x, y, w as u32, h as u32)
+}
+
+
+/* ------------------------ 录屏窗口 ------------------------ */
+
+/// 打开录制用的两个窗口。
+///
+/// 覆盖层和录制区域**等大、同位**，并且自己被录进画面 —— 鼠标环、放大镜、
+/// 标注都是它画的，这是"所见即所得"的前提。
+/// 控制条反过来：用 `WDA_EXCLUDEFROMCAPTURE` 从捕获里排除，
+/// 所以它摆在哪儿都不会出现在视频里。
+pub fn open_record_windows(app: &AppHandle, rect: Rect) -> AppResult<()> {
+    close_record_windows(app);
+
+    // ---- 覆盖层 ----
+    let overlay = WebviewWindowBuilder::new(
+        app,
+        RECORD_OVERLAY,
+        WebviewUrl::App("overlay.html".into()),
+    )
+    .title("SnipForge Overlay")
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .focused(false)
+    .visible(false)
+    .shadow(false)
+    .accept_first_mouse(true)
+    .build()
+    .map_err(|e| AppError::Msg(format!("创建录制覆盖层失败: {e}")))?;
+
+    let _ = overlay.set_position(PhysicalPosition::new(rect.x, rect.y));
+    let _ = overlay.set_size(PhysicalSize::new(rect.width, rect.height));
+    // 默认不挡鼠标：用户是在操作别的程序，不是操作我们
+    let _ = overlay.set_ignore_cursor_events(true);
+
+    // ---- 控制条 ----
+    let bar_w = 470.0_f64;
+    let bar_h = 56.0_f64;
+    let bar = WebviewWindowBuilder::new(app, RECORD_BAR, WebviewUrl::App("record.html".into()))
+        .title("SnipForge Record")
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .focused(false)
+        .visible(false)
+        .shadow(false)
+        .build()
+        .map_err(|e| AppError::Msg(format!("创建录制控制条失败: {e}")))?;
+
+    // 底部居中、区域内部 —— 反正它不会被录进画面
+    let bx = rect.x + (rect.width as i32 - bar_w as i32) / 2;
+    let by = rect.y + rect.height as i32 - bar_h as i32 - 28;
+    let _ = bar.set_position(PhysicalPosition::new(bx, by));
+    let _ = bar.set_size(PhysicalSize::new(bar_w as u32, bar_h as u32));
+    exclude_from_capture(&bar);
+
+    // 两个窗口都等 webview 起来再显示，否则会闪一下白底
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        for label in [RECORD_OVERLAY, RECORD_BAR] {
+            if let Some(w) = handle.get_webview_window(label) {
+                let _ = w.show();
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// 让窗口不出现在任何屏幕捕获里（DXGI 桌面复制也会尊重这个标记）
+fn exclude_from_capture(win: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+        };
+        if let Ok(h) = win.hwnd() {
+            unsafe {
+                let _ = SetWindowDisplayAffinity(HWND(h.0), WDA_EXCLUDEFROMCAPTURE);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = win;
+}
+
+pub fn close_record_windows(app: &AppHandle) {
+    for label in [RECORD_OVERLAY, RECORD_BAR] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.close();
+        }
+    }
+}
+
+/// 标注模式要接收鼠标，普通模式要穿透
+pub fn set_overlay_interactive(app: &AppHandle, interactive: bool) {
+    if let Some(w) = app.get_webview_window(RECORD_OVERLAY) {
+        let _ = w.set_ignore_cursor_events(!interactive);
+        if interactive {
+            let _ = w.set_focus();
+        }
+    }
+}
+
+pub fn emit_to_record_overlay(app: &AppHandle, event: &str, payload: impl serde::Serialize + Clone) {
+    if let Some(w) = app.get_webview_window(RECORD_OVERLAY) {
+        let _ = w.emit_to(RECORD_OVERLAY, event, payload);
+    }
+}
+
+pub fn emit_to_record_bar(app: &AppHandle, event: &str, payload: impl serde::Serialize + Clone) {
+    if let Some(w) = app.get_webview_window(RECORD_BAR) {
+        let _ = w.emit_to(RECORD_BAR, event, payload);
+    }
 }

@@ -7,7 +7,9 @@
     "panel",
     "selector",
     "editor",
-    "pin-*"
+    "pin-*",
+    "record-overlay",
+    "record-bar"
   ],
   "permissions": [
     "core:default",

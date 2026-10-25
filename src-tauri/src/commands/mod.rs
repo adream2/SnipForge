@@ -2,6 +2,7 @@ pub mod capture;
 pub mod clipboard;
 pub mod image;
 pub mod plugins;
+pub mod record;
 pub mod settings;
 pub mod upload;
 

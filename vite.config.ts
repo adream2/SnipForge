@@ -27,7 +27,9 @@ export default defineConfig({
         selector: r('selector.html'),
         editor: r('editor.html'),
         pin: r('pin.html'),
-        panel: r('panel.html')
+        panel: r('panel.html'),
+        record: r('record.html'),
+        overlay: r('overlay.html')
       }
     }
   }

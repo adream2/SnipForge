@@ -71,6 +71,9 @@ export interface AppSettings {
     videoBitsPerSecond: number
     countdown: number
     showCursor: boolean
+    cursorHighlight: boolean
+    magnifier: boolean
+    annotate: boolean
   }
   general: {
     language: string
@@ -239,4 +242,48 @@ export interface PluginState {
 export interface PinInit {
   dataUrl: string
   opacity: number
+}
+
+/* ---------------- 录屏 ---------------- */
+
+export interface RecordStatus {
+  running: boolean
+  paused: boolean
+  /** 倒计时结束后才为 true */
+  started: boolean
+  lens: boolean
+  elapsedMs: number
+  frames: number
+  fps: number
+  path: string
+  width: number
+  height: number
+}
+
+export interface RecordResult {
+  path: string
+  durationMs: number
+  frames: number
+  bytes: number
+  width: number
+  height: number
+}
+
+export interface RecordCursorEvt {
+  /** 区域相对坐标（物理像素） */
+  x: number
+  y: number
+  recording: boolean
+}
+
+export interface RecordClickEvt {
+  x: number
+  y: number
+  button: string
+}
+
+export interface RecordLensEvt {
+  url: string
+  x: number
+  y: number
 }
