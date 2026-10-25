@@ -91,6 +91,9 @@ function Panel() {
       if (mine !== reqSeq.current) return
       setItems(list)
       setIndex(0)
+      // 列表到位了才报就绪。后端在"预热"期间接住的回车会在这一步补做，
+      // 所以必须等 setItems 之后再报，否则补做的那次粘贴会粘到旧的首项。
+      void api.clipboardPanelReady(list[0]?.id ?? null)
     } finally {
       if (mine === reqSeq.current) setLoading(false)
     }

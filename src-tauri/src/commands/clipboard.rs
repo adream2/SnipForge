@@ -275,6 +275,17 @@ pub fn clipboard_panel_hide(app: tauri::AppHandle) -> AppResult<()> {
     Ok(())
 }
 
+/// 面板把列表加载完了。
+///
+/// 前端只在这时候调，作用是解除「预热」：预热期间键盘钩子接住的回车，
+/// 会在这里补做成一次粘贴。`top_id` 传前端此刻列表的第一条，
+/// 保证补做的那次粘贴和用户看到的条目一致。
+#[tauri::command]
+pub fn clipboard_panel_ready(app: tauri::AppHandle, top_id: Option<String>) -> AppResult<()> {
+    crate::panel::mark_ready(&app, top_id);
+    Ok(())
+}
+
 /// 记住的目标窗口进程名，面板显示「粘贴到 记事本」之类的提示
 #[tauri::command]
 pub fn clipboard_panel_target() -> AppResult<String> {

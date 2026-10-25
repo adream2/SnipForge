@@ -80,6 +80,8 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         const WM_KEYDOWN: usize = 0x0100;
         const WM_SYSKEYDOWN: usize = 0x0104;
+        const VK_RETURN: u32 = 0x0D;
+        const VK_ESCAPE: u32 = 0x1B;
         let is_down = wparam.0 == WM_KEYDOWN || wparam.0 == WM_SYSKEYDOWN;
 
         // 只处理按下事件，抬起事件直接放行。
@@ -103,6 +105,28 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                     });
                 }
                 // 吞掉这次按键，系统就不会弹它自己的剪贴板面板
+                return LRESULT(1);
+            }
+        }
+
+        // 面板刚弹出、列表还没加载完（几十毫秒）时，回车先接住。
+        //
+        // 这段时间里前端的事件监听还没挂好，回车会直接丢掉 ——
+        // 用户「按 Win+V 然后立刻敲回车」就白按了。攒一次，等前端报就绪再补做。
+        // 有 WARMUP_MAX_MS 上限兜底，前端万一没报就绪也不会一直吞键。
+        if is_down && crate::panel::is_warming() {
+            if kb.vkCode == VK_RETURN {
+                crate::panel::capture_confirm();
+                return LRESULT(1);
+            }
+            if kb.vkCode == VK_ESCAPE {
+                crate::panel::cancel_pending();
+                if let Some(app) = APP.get() {
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        crate::panel::hide(&handle);
+                    });
+                }
                 return LRESULT(1);
             }
         }

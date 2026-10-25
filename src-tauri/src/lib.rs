@@ -350,6 +350,7 @@ pub fn run() {
             // 剪贴板悬浮面板
             commands::clipboard::clipboard_panel_paste,
             commands::clipboard::clipboard_panel_hide,
+            commands::clipboard::clipboard_panel_ready,
             commands::clipboard::clipboard_panel_target,
             // 图床
             commands::upload::upload_providers,

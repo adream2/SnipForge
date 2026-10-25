@@ -275,9 +275,84 @@ def plain_paste_test(trials=15):
     return 0
 
 
+def turbo_test(trials=8, gap_ms=25):
+    """按 Win+V 之后几乎立刻敲回车 —— 比人手还快。
+
+    这一步验的是"预热期缓冲"：面板窗口出来到列表加载完有几十毫秒，
+    这期间前端还没挂上按键监听。后端键盘钩子会先把回车接住，
+    等前端报就绪再补做一次粘贴。
+
+    如果没有缓冲，这里的回车会掉进空气里，表现为"按了没反应"。
+    """
+    pid = app_pid()
+    if not pid:
+        print("snipforge.exe 没在运行", flush=True)
+        return 2
+
+    subprocess.Popen(["notepad.exe"])
+    np = None
+    for _ in range(40):
+        time.sleep(0.25)
+        np = get_notepad()
+        if np:
+            break
+    if not np:
+        print("记事本没起来", flush=True)
+        return 2
+    label = "零间隔（一次性塞入）" if gap_ms < 0 else f"{gap_ms}ms"
+    print(f"gap = {label}（Win+V 到回车）", flush=True)
+
+    run = int(time.time()) % 100000
+    ok = 0
+    for i in range(1, trials + 1):
+        tag = f"TB{run}x{i}"
+        old = f"OB{run}x{i}"
+
+        set_clipboard_text(old)
+        time.sleep(1.3)
+
+        force_foreground(np)
+        time.sleep(0.15)
+        combo(VK_CONTROL, VK_A)
+        tap(VK_DELETE)
+        time.sleep(0.08)
+
+        set_clipboard_text(tag)
+        time.sleep(0.03)
+        if gap_ms < 0:
+            # 零间隔：Win+V 和回车一次性塞进输入队列，中间不留任何空隙。
+            # 这是人能表达的极限（实际人手至少 80ms），用来压出缓冲区的作用。
+            key(VK_LWIN)
+            key(VK_V)
+            key(VK_V, True)
+            key(VK_LWIN, True)
+            key(VK_RETURN)
+            time.sleep(0.02)
+            key(VK_RETURN, True)
+        else:
+            combo(VK_LWIN, VK_V)          # 唤起面板
+            time.sleep(gap_ms / 1000.0)   # 只等这么点时间
+            tap(VK_RETURN)                # 立刻回车
+        time.sleep(1.0)               # 等补做完成
+
+        got = notepad_text(np).strip()
+        if got == tag:
+            ok += 1
+            print(f"  [{tag}] ok   回车没丢", flush=True)
+        else:
+            print(f"  [{tag}] FAIL 期望 {tag!r}，实际 {got[:40]!r}", flush=True)
+
+    print(flush=True)
+    print(f"结果：{ok}/{trials} 通过（gap={label}）", flush=True)
+    return 0 if ok == trials else 1
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "plain":
         return plain_paste_test()
+    if len(sys.argv) > 1 and sys.argv[1] == "turbo":
+        gap = int(sys.argv[2]) if len(sys.argv) > 2 else 25
+        return turbo_test(gap_ms=gap)
 
     trials = int(sys.argv[1]) if len(sys.argv) > 1 else 4
 

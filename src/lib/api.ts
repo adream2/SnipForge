@@ -84,6 +84,9 @@ export const api = {
   clipboardPanelPaste: (id: string, copyOnly = false) =>
     invoke<string>('clipboard_panel_paste', { id, copyOnly }),
   clipboardPanelHide: () => invoke<void>('clipboard_panel_hide'),
+  /** 列表加载完了，通知后端解除"预热"（预热期攒下的回车会在后端补做） */
+  clipboardPanelReady: (topId: string | null) =>
+    invoke<void>('clipboard_panel_ready', { topId }),
   /** 记住的目标窗口进程名，用来显示「粘贴到 xxx」 */
   clipboardPanelTarget: () => invoke<string>('clipboard_panel_target'),
   clipboardSystemHistoryGet: () => invoke<boolean>('clipboard_system_history_get'),

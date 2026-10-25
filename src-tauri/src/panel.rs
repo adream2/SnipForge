@@ -12,7 +12,7 @@
 //! 还得自己回原窗口按 Ctrl+V —— 那和看历史记录没区别。
 
 use crate::error::{AppError, AppResult};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
@@ -32,11 +32,79 @@ const PANEL_H: f64 = 470.0;
 /// 实测第一下 100% 命中，第二下才正常，正是用户说的「要按好几次」。
 const AUTOHIDE_GRACE_MS: i64 = 800;
 
+/// 「预热窗口」的兜底上限。
+///
+/// 面板弹出到列表真正加载完有几十毫秒，这期间用户手快按下回车，前端还没挂好监听，
+/// 按键会直接丢掉。所以这段时间由键盘钩子先接住（见 keyhook），等前端报就绪再补做。
+/// 万一前端因为某个异常没报就绪，这个上限保证钩子不会一直吞回车。
+const WARMUP_MAX_MS: i64 = 1200;
+
 /// 最近一次 show 的时间戳（毫秒）
 static SHOWN_AT: AtomicI64 = AtomicI64::new(0);
 
+/// 面板还在「预热」中的截止时间戳；0 = 已就绪
+static WARMING_UNTIL: AtomicI64 = AtomicI64::new(0);
+
+/// 预热期间用户按过回车，等就绪后要补做一次粘贴
+static PENDING_CONFIRM: AtomicBool = AtomicBool::new(false);
+
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// 面板是否还没就绪（键盘钩子据此决定要不要接住回车）
+pub fn is_warming() -> bool {
+    let until = WARMING_UNTIL.load(Ordering::SeqCst);
+    until != 0 && now_ms() < until
+}
+
+/// 预热期间接住一次回车，等就绪后补做
+pub fn capture_confirm() {
+    if !PENDING_CONFIRM.swap(true, Ordering::SeqCst) {
+        log::info!("预热期接住一次回车，等面板就绪后补做");
+    }
+}
+
+/// 预热期间按了 Esc：取消待确认，并直接收起
+pub fn cancel_pending() {
+    PENDING_CONFIRM.store(false, Ordering::SeqCst);
+    WARMING_UNTIL.store(0, Ordering::SeqCst);
+}
+
+/// 前端把列表加载完就调这个。若预热期间攒了一次回车，在这里补做粘贴。
+///
+/// `top_id` 是前端此刻列表的第一条 —— 由前端传，保证"补做的粘贴"
+/// 和用户眼睛看到的条目一致，不用在后端重算一遍筛选和排序。
+pub fn mark_ready(app: &AppHandle, top_id: Option<String>) {
+    let until = WARMING_UNTIL.swap(0, Ordering::SeqCst);
+    let pending = PENDING_CONFIRM.swap(false, Ordering::SeqCst);
+
+    if until != 0 {
+        // 这个数字就是"面板从出现到可用"的真实耗时，调手感时看它
+        log::debug!(
+            "面板就绪，预热用时 {}ms（期间{}收到确认键）",
+            now_ms() - (until - WARMUP_MAX_MS),
+            if pending { "" } else { "未" }
+        );
+    }
+
+    if !pending {
+        return;
+    }
+    // 用户可能在预热期间已经按 Esc 收起了面板
+    if !is_visible(app) {
+        log::debug!("预热期攒下的回车已作废：面板已收起");
+        return;
+    }
+    match top_id {
+        Some(id) => {
+            log::info!("补做预热期攒下的回车: id={id}");
+            if let Err(e) = paste_item(app, &id, false) {
+                log::warn!("补做粘贴失败: {e}");
+            }
+        }
+        None => log::debug!("预热期攒下的回车无处可粘：列表为空"),
+    }
 }
 
 /// 呼出面板时的前台窗口句柄。0 表示「没有可粘贴的目标」，此时只能复制。
@@ -92,12 +160,19 @@ pub fn toggle(app: &AppHandle) {
 }
 
 pub fn hide(app: &AppHandle) {
+    // 收起了就不用再等就绪，勾子也别再吞回车
+    cancel_pending();
     if let Some(win) = app.get_webview_window(PANEL) {
         let _ = win.hide();
     }
 }
 
 pub fn show(app: &AppHandle) {
+    // 预热标记放最前面：从这一刻起键盘钩子就会接住回车。
+    // 放在 sync_now 后面的话，剪贴板 I/O 的那几毫秒里按下的回车会漏过去。
+    PENDING_CONFIRM.store(false, Ordering::SeqCst);
+    WARMING_UNTIL.store(now_ms() + WARMUP_MAX_MS, Ordering::SeqCst);
+
     // 记目标必须放在弹窗之前 —— 弹窗一出现，前台窗口就变成我们自己了
     if !is_visible(app) {
         let fg = crate::win32::focus::foreground_hwnd();
