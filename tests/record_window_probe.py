@@ -52,9 +52,7 @@ def main():
     time.sleep(0.6)
     snap("rec_sel_initial.png")
 
-    # W 进窗口模式，鼠标滑到记事本上
-    dp.tap(0x57)  # W
-    time.sleep(0.3)
+    # 不按 W —— 录屏模式默认就是智能窗口选择：悬停高亮、单击选中
     u32.SetCursorPos(px + pw // 2, py + ph // 2)
     time.sleep(0.5)
     snap("rec_win_hover.png")

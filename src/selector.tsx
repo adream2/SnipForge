@@ -20,6 +20,11 @@ const IS_RECORD =
   typeof location !== 'undefined' &&
   new URLSearchParams(location.search).get('mode') === 'record'
 
+/** 录屏模式默认就是"智能窗口选择"：光标悬停即高亮所在窗口，单击选中整个窗口，
+ * 拖拽则框任意区域。不需要先按 W 切模式 —— 那个快捷键藏在看不见的地方，
+ * 用户期望的手感是微信截图那种"移过去就亮"。 */
+const SMART_WINDOW = IS_RECORD
+
 export default function Selector() {
   const [frame, setFrame] = useState<FramePayload | null>(null)
   const [display, setDisplay] = useState<DisplayPreview | null>(null)
@@ -129,15 +134,7 @@ export default function Selector() {
     if (mode === 'window') {
       const target = hitTest(x, y)
       if (target) {
-        // 窗口 rect 是物理像素，selection 这一层全是 CSS 像素
-        // （commit 里还会乘回物理像素）。不换算的话，缩放屏上
-        // 选出来的框和窗口对不上，尺寸标签也是错的。
-        setSelection({
-          x: (target.rect.x - (display?.bounds.x ?? 0)) / scale,
-          y: (target.rect.y - (display?.bounds.y ?? 0)) / scale,
-          width: target.rect.width / scale,
-          height: target.rect.height / scale
-        })
+        pickWindow(target)
         return
       }
     }
@@ -145,6 +142,19 @@ export default function Selector() {
     setCursor({ x, y })
     setDragging(true)
     setSelection({ x, y, width: 0, height: 0 })
+  }
+
+  /** 选中一个窗口。窗口 rect 是物理像素，selection 这一层全是 CSS 像素
+   * （commit 里还会乘回物理像素）。不换算的话，缩放屏上选出来的框
+   * 和窗口对不上，尺寸标签也是错的。 */
+  const pickWindow = (target: NativeWindowInfo) => {
+    setSelection({
+      x: (target.rect.x - (display?.bounds.x ?? 0)) / scale,
+      y: (target.rect.y - (display?.bounds.y ?? 0)) / scale,
+      width: target.rect.width / scale,
+      height: target.rect.height / scale
+    })
+    setHoverWindow(null)
   }
 
   const onMouseMove = (e: React.MouseEvent) => {
@@ -159,13 +169,29 @@ export default function Selector() {
       setHoverWindow(null)
       return
     }
-    if (mode === 'window') {
+    // 录屏模式不需要先切"窗口模式"：光标悬停就高亮所在窗口，
+    // 单击选中、拖拽框区域 —— 和微信截图的手感一致。
+    if (mode === 'window' || SMART_WINDOW) {
       setHoverWindow(hitTest(x, y))
     }
   }
 
-  const onMouseUp = () => {
+  const onMouseUp = (e: React.MouseEvent) => {
+    const wasDragging = dragging && anchor
     setDragging(false)
+    if (!wasDragging) return
+
+    // 原地单击（几乎没拖动）→ 当作"选这个窗口"。
+    // 拖出去了就是自由框选，走正常流程。
+    const rect = rootRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const moved = Math.abs(x - anchor.x) + Math.abs(y - anchor.y) > 6
+    if (!moved && SMART_WINDOW && mode !== 'scroll') {
+      const target = hitTest(x, y)
+      if (target) pickWindow(target)
+    }
   }
 
   const commit = async () => {
@@ -253,7 +279,7 @@ export default function Selector() {
         <img className="selector-bg" src={display.preview} alt="" draggable={false} />
       )}
 
-      {hoverRect && !selection && mode === 'window' && (
+      {(hoverRect && !selection && (mode === 'window' || SMART_WINDOW)) && (
         <div
           className="selector-win-hint"
           style={{
@@ -366,7 +392,7 @@ export default function Selector() {
           style={{ pointerEvents: 'none', bottom: IS_RECORD ? 112 : undefined }}
         >
           {IS_RECORD
-            ? '拖拽框选 · 按 W 或点下方窗口图标选窗口 · 回车开始录制 · Esc 取消'
+            ? '移动到窗口上单击即可选中 · 拖拽框选任意区域 · 回车开始录制 · Esc 取消'
             : '拖拽框选 · 回车确认 · Esc 取消 · W 窗口模式 · S 长截图'}
         </div>
       )}
