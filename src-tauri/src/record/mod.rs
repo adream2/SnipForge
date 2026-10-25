@@ -2,6 +2,7 @@
 //!
 //! 分层：
 //!   - `mf`     —— Media Foundation H.264/MP4 写入器（纯编码，不含业务）
+//!   - `gif`    —— GIF 写入器（降采样 + 静态帧合并 + 逐帧调色板）
 //!   - `cursor` —— 把真实鼠标光标合进画面（DXGI 帧不含光标）
 //!   - 本文件   —— 会话：取帧、定拍、裁剪、暂停、停止
 //!
@@ -16,6 +17,7 @@
 //!     的接口；抓整屏再裁是唯一的做法，成本也多不了多少。
 
 pub mod cursor;
+pub mod gif;
 pub mod mf;
 
 use crate::error::{AppError, AppResult};
@@ -27,6 +29,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use cursor::CursorTracker;
+use gif::GifPlan;
 use tauri::Emitter;
 
 /// 放大镜取样的源尺寸（物理像素）。覆盖层按 CSS 放大 display 到 ~2 倍。
@@ -99,6 +102,14 @@ pub struct RecordOptions {
     pub bitrate: u32,
     /// 是否把鼠标光标画进画面
     pub draw_cursor: bool,
+    /// 是否写 MP4。只出 GIF 时关掉 —— 能省一半编码开销，
+    /// 也免得用户选了"只要 GIF"却多出一个几 MB 的 mp4。
+    #[serde(default = "default_true")]
+    pub write_mp4: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -116,17 +127,29 @@ pub struct RecordStatus {
     pub path: String,
     pub width: u32,
     pub height: u32,
+    /// 这一路是否在同时写 GIF（控制条上显示个标记）
+    pub gif: bool,
+    /// 是否在写 MP4
+    pub mp4: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordResult {
+    /// 主产物路径：有 MP4 就是 MP4，只出 GIF 时是 GIF
     pub path: String,
     pub duration_ms: u64,
     pub frames: u64,
     pub bytes: u64,
     pub width: u32,
     pub height: u32,
+    /// 同时产出的 GIF（没开就是 None）
+    pub gif_path: Option<String>,
+    pub gif_bytes: u64,
+    pub gif_frames: u64,
+    /// GIF 输出尺寸
+    pub gif_width: u32,
+    pub gif_height: u32,
 }
 
 /// 录制线程与外部共享的开关
@@ -174,6 +197,8 @@ pub struct ActiveRecording {
     pub opts: RecordOptions,
     pub width: u32,
     pub height: u32,
+    /// 同时产出的 GIF 路径（没开则为 None）
+    pub gif_path: Option<PathBuf>,
     thread: Option<std::thread::JoinHandle<AppResult<RecordResult>>>,
 }
 
@@ -198,6 +223,12 @@ impl ActiveRecording {
     pub fn status(&self) -> RecordStatus {
         let frames = self.live.frames.load(Ordering::SeqCst);
         let elapsed = self.live.elapsed_ms.load(Ordering::SeqCst);
+        // 只出 GIF 时，对外露的路径要指向 gif —— 控制条/日志都读这个
+        let shown = if self.opts.write_mp4 {
+            &self.path
+        } else {
+            self.gif_path.as_ref().unwrap_or(&self.path)
+        };
         RecordStatus {
             running: true,
             paused: self.live.is_paused(),
@@ -210,9 +241,11 @@ impl ActiveRecording {
             } else {
                 0.0
             },
-            path: self.path.to_string_lossy().to_string(),
+            path: shown.to_string_lossy().to_string(),
             width: self.width,
             height: self.height,
+            gif: self.gif_path.is_some(),
+            mp4: self.opts.write_mp4,
         }
     }
 
@@ -231,12 +264,23 @@ impl ActiveRecording {
 }
 
 /// 开录。立刻返回，真正的采集在后台线程里跑。
-pub fn start(app: Option<tauri::AppHandle>, opts: RecordOptions, path: PathBuf) -> AppResult<ActiveRecording> {
+///
+/// `path` 是 MP4 的落盘路径（`opts.write_mp4 == false` 时可以随便给）。
+/// `gif` 非空则同时/只写 GIF。
+pub fn start(
+    app: Option<tauri::AppHandle>,
+    opts: RecordOptions,
+    path: PathBuf,
+    gif: Option<GifPlan>,
+) -> AppResult<ActiveRecording> {
     // 尺寸取偶数：H.264 的宏块要求，奇数宽高会被编码器拒
     let width = opts.rect.width & !1;
     let height = opts.rect.height & !1;
     if width < 16 || height < 16 {
         return Err(AppError::Msg("录制区域太小（至少 16×16）".into()));
+    }
+    if !opts.write_mp4 && gif.is_none() {
+        return Err(AppError::Msg("没有选择任何输出格式".into()));
     }
 
     // Monitor 内含裸指针、不是 Send，不能跨线程传；
@@ -246,11 +290,13 @@ pub fn start(app: Option<tauri::AppHandle>, opts: RecordOptions, path: PathBuf) 
     let live2 = live.clone();
     let opts2 = opts.clone();
     let path2 = path.clone();
+    let gif2 = gif.clone();
+    let gif_path = gif.map(|g| g.path);
 
     let thread = std::thread::Builder::new()
         .name("snipforge-record".into())
         .spawn(move || {
-            let r = run(app.clone(), opts2, path2, width, height, live2);
+            let r = run(app.clone(), opts2, path2, width, height, live2, gif2);
             // 录制线程的失败以前只会躺在 JoinHandle 里，直到用户点停止才暴露。
             // 采集中途挂掉的话控制条还在计时，用户完全不知情 —— 必须立刻喊出来。
             if let Err(e) = &r {
@@ -269,6 +315,7 @@ pub fn start(app: Option<tauri::AppHandle>, opts: RecordOptions, path: PathBuf) 
         opts,
         width,
         height,
+        gif_path,
         thread: Some(thread),
     })
 }
@@ -300,6 +347,7 @@ fn run(
     width: u32,
     height: u32,
     live: Arc<Live>,
+    gif_plan: Option<GifPlan>,
 ) -> AppResult<RecordResult> {
     let monitor = pick_monitor(&opts.rect)?;
     let mx = monitor.x().unwrap_or(0);
@@ -338,13 +386,33 @@ fn run(
         .start()
         .map_err(|e| AppError::Msg(format!("屏幕采集启动失败: {e}")))?;
 
-    let mut writer = mf::Mp4Writer::new(
-        &path,
-        width,
-        height,
-        opts.fps,
-        opts.bitrate.max(500_000),
-    )?;
+    let mut writer = if opts.write_mp4 {
+        Some(mf::Mp4Writer::new(
+            &path,
+            width,
+            height,
+            opts.fps,
+            opts.bitrate.max(500_000),
+        )?)
+    } else {
+        None
+    };
+
+    // GIF 那一路独立开：编码器自己管降采样和调色板，主循环只管喂帧。
+    // 开不出来不算致命（MP4 还能录），但要留日志 —— 用户找不到 gif 时能查。
+    let mut gif_writer = match &gif_plan {
+        Some(plan) => match gif::GifWriter::new(plan, width, height, opts.fps) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                log::error!("GIF 编码器启动失败，本次只写 MP4: {e}");
+                if let Some(app) = &app {
+                    let _ = app.emit("record://error", format!("GIF 编码器启动失败: {e}"));
+                }
+                None
+            }
+        },
+        None => None,
+    };
 
     let frame_dur = Duration::from_nanos(1_000_000_000u64 / opts.fps.max(1) as u64);
     let mut next_tick = Instant::now();
@@ -354,6 +422,8 @@ fn run(
     let stride = (width * 4) as usize;
     let mut last_lens = Instant::now();
     let mut warmed = false;
+    // 正式开写的时刻，只出 GIF 时用它算时长（GIF 没有"帧数÷帧率"这条时间轴）
+    let mut warmed_at: Option<Instant> = None;
 
     log::info!(
         "开始录制 {}×{} @{}fps 到 {}（显示器 {}×{} 偏移 {ox},{oy}）",
@@ -444,12 +514,33 @@ fn run(
                 if !warmed {
                     warmed = true;
                     next_tick = Instant::now();
+                    warmed_at = Some(Instant::now());
                 }
-                if let Err(e) = writer.write_rgba(&cropped) {
-                    let _ = recorder.stop();
-                    return Err(e);
+                if let Some(w) = writer.as_mut() {
+                    if let Err(e) = w.write_rgba(&cropped) {
+                        let _ = recorder.stop();
+                        return Err(e);
+                    }
                 }
                 live.advance(opts.fps);
+
+                // GIF 走同一份已经画过光标的画面，所以 GIF 里也有鼠标。
+                // 编码失败不该把整场录制带走 —— 记下来、关掉这一路，MP4 继续。
+                let mut gif_fail = None;
+                if let Some(g) = gif_writer.as_mut() {
+                    if let Err(e) = g.sample(&cropped) {
+                        log::error!("GIF 写帧失败，后续不再写 GIF: {e}");
+                        gif_fail = Some(e);
+                    }
+                }
+                if let Some(e) = gif_fail {
+                    if let Some(mut g) = gif_writer.take() {
+                        let _ = g.finish();
+                    }
+                    if let Some(app) = &app {
+                        let _ = app.emit("record://error", format!("GIF 写入中断: {e}"));
+                    }
+                }
 
                 // 放大镜：把光标周围裁一小块推给覆盖层，由它放大显示。
                 // 12Hz 足够（这是预览，不是画面主体），PNG 无损避免二次压缩。
@@ -472,21 +563,58 @@ fn run(
         }
     }
 
-    let frames = writer.frames_written();
-    writer.finish()?;
+    let frames = live.frames.load(Ordering::SeqCst);
+    if let Some(mut w) = writer.take() {
+        w.finish()?;
+    }
     let _ = recorder.stop();
 
-    let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    let duration_ms = (frames as u64) * 1000 / opts.fps.max(1) as u64;
+    // GIF 收尾放在 MP4 之后：它要多写一帧 + 文件尾，别让它拖慢 MP4 的落盘
+    let mut gif_out: Option<(String, u64, u64, u32, u32)> = None;
+    if let Some(mut g) = gif_writer.take() {
+        let gp = g.path().to_path_buf();
+        let (gw, gh) = g.out_size();
+        match g.finish() {
+            Ok(n) => {
+                let bytes = std::fs::metadata(&gp).map(|m| m.len()).unwrap_or(0);
+                log::info!("GIF 完成：{n} 帧 {}×{} {} KB", gw, gh, bytes / 1024);
+                gif_out = Some((gp.to_string_lossy().to_string(), bytes, n, gw, gh));
+            }
+            Err(e) => log::error!("GIF 收尾失败: {e}"),
+        }
+    }
+
+    // 主产物：有 MP4 就是 MP4，只出 GIF 时路径指向 GIF
+    let main_path = if opts.write_mp4 {
+        path.clone()
+    } else {
+        gif_out
+            .as_ref()
+            .map(|(p, _, _, _, _)| PathBuf::from(p))
+            .unwrap_or_else(|| path.clone())
+    };
+    let bytes = std::fs::metadata(&main_path).map(|m| m.len()).unwrap_or(0);
+    // 有 MP4 就以帧数折算（那才是视频时间轴的真实长度）；
+    // 只出 GIF 时按墙上时间算 —— 掉帧只会让画面更新慢，时长不该缩水。
+    let duration_ms = if opts.write_mp4 {
+        (frames as u64) * 1000 / opts.fps.max(1) as u64
+    } else {
+        warmed_at.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0)
+    };
     log::info!("录制结束：{frames} 帧，{duration_ms}ms，{} KB", bytes / 1024);
 
     Ok(RecordResult {
-        path: path.to_string_lossy().to_string(),
+        path: main_path.to_string_lossy().to_string(),
         duration_ms,
         frames: frames as u64,
         bytes,
         width,
         height,
+        gif_path: gif_out.as_ref().map(|(p, _, _, _, _)| p.clone()),
+        gif_bytes: gif_out.as_ref().map(|(_, b, _, _, _)| *b).unwrap_or(0),
+        gif_frames: gif_out.as_ref().map(|(_, _, n, _, _)| *n).unwrap_or(0),
+        gif_width: gif_out.as_ref().map(|(_, _, _, w, _)| *w).unwrap_or(0),
+        gif_height: gif_out.as_ref().map(|(_, _, _, _, h)| *h).unwrap_or(0),
     })
 }
 

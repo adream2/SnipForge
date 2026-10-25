@@ -80,21 +80,31 @@ fn start_impl(
         std::path::PathBuf::from(&cfg.save.dir)
     };
     std::fs::create_dir_all(&dir)?;
+
+    // 输出格式：mp4 / gif / both。两个文件同名不同扩展，用户一眼能对上。
+    let fmt = cfg.record.format.to_ascii_lowercase();
+    let want_mp4 = fmt != "gif";
+    let want_gif = fmt == "gif" || fmt == "both";
+    let stem = crate::uploader::render_file_name(&cfg.save.name_template, "mp4");
+
     // 必须带扩展名：Media Foundation 靠扩展名决定封装格式，
     // 没有 .mp4 会直接建不出文件（而且报错很含糊）。
-    let path = dir.join(format!(
-        "{}.mp4",
-        crate::uploader::render_file_name(&cfg.save.name_template, "mp4")
-    ));
+    let path = dir.join(format!("{stem}.mp4"));
+    let gif_plan = want_gif.then(|| crate::record::gif::GifPlan {
+        path: dir.join(format!("{stem}.gif")),
+        fps: cfg.record.gif_fps.clamp(2, 30),
+        max_width: cfg.record.gif_width,
+    });
 
     let opts = RecordOptions {
         rect,
         fps: cfg.record.fps.clamp(10, 60),
         bitrate: cfg.record.video_bits_per_second.max(1_000_000),
         draw_cursor: cfg.record.show_cursor,
+        write_mp4: want_mp4,
     };
 
-    let rec = crate::record::start(Some(app.clone()), opts, path)?;
+    let rec = crate::record::start(Some(app.clone()), opts, path, gif_plan)?;
     rec.set_lens(cfg.record.magnifier);
 
     // 窗口要在采集起来之后再开，否则覆盖层会先于采集出现，头几帧里没有它
@@ -212,8 +222,13 @@ pub fn record_cancel(app: tauri::AppHandle) -> AppResult<()> {
     crate::windows::close_record_windows(&app);
     if let Some(rec) = rec {
         let path = rec.path.clone();
+        let gif = rec.gif_path.clone();
         let _ = rec.stop();
         let _ = std::fs::remove_file(&path);
+        // GIF 那一半也得删，否则取消录制会在文件夹里留个残废 gif
+        if let Some(g) = gif {
+            let _ = std::fs::remove_file(g);
+        }
     }
     Ok(())
 }
@@ -268,12 +283,29 @@ pub fn stop_recording(app: &tauri::AppHandle) -> AppResult<RecordResult> {
     crate::windows::close_record_windows(app);
     let result = rec.stop()?;
     log::info!(
-        "录制完成：{}（{} 帧 / {}ms / {} KB）",
+        "录制完成：{}（{} 帧 / {}ms / {} KB）{}",
         result.path,
         result.frames,
         result.duration_ms,
-        result.bytes / 1024
+        result.bytes / 1024,
+        match &result.gif_path {
+            Some(p) => format!(" + GIF {}（{} KB）", p, result.gif_bytes / 1024),
+            None => String::new(),
+        }
     );
+
+    // 录完把文件塞进剪贴板：GIF 的下一个动作几乎总是"粘到聊天窗口里"。
+    // 走 CF_HDROP，粘出来是文件本身而不是一条路径文本。
+    if let Some(state) = app.try_state::<Arc<AppState>>() {
+        let cfg = state.settings.read().clone();
+        if cfg.save.after_save == "copy" {
+            let target = result.gif_path.clone().unwrap_or_else(|| result.path.clone());
+            if let Err(e) = crate::win32::clipboard::set_files(&[target]) {
+                log::warn!("把录制文件放进剪贴板失败: {e}");
+            }
+        }
+    }
+
     let _ = app.emit("record://stopped", &result);
     Ok(result)
 }

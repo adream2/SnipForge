@@ -201,6 +201,12 @@ pub struct RecordConfig {
     pub magnifier: bool,
     /// 录像时允许在屏幕上标注
     pub annotate: bool,
+    /// 输出格式：mp4 | gif | both
+    pub format: String,
+    /// GIF 帧率（GIF 以 1/100 秒计时，太高只会白白变大）
+    pub gif_fps: u32,
+    /// GIF 输出最大宽度，0 = 原尺寸
+    pub gif_width: u32,
 }
 
 impl Default for RecordConfig {
@@ -215,6 +221,11 @@ impl Default for RecordConfig {
             cursor_highlight: true,
             magnifier: false,
             annotate: true,
+            format: "mp4".into(),
+            // 12fps：兼顾鼠标移动的顺滑和体积。GIF 到 15 以上基本只剩体积在涨。
+            gif_fps: 12,
+            // 900px：贴在聊天窗口里刚好，再宽体积翻倍涨
+            gif_width: 900,
         }
     }
 }

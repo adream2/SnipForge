@@ -21,6 +21,7 @@ function RecordBar() {
   const [lens, setLens] = useState(false)
   const [anno, setAnno] = useState(false)
   const [fps, setFps] = useState(0)
+  const [out, setOut] = useState('')
   const [err, setErr] = useState('')
   /** 只允许 begin 一次，倒计时的重入会写出重复帧 */
   const began = useRef(false)
@@ -65,6 +66,8 @@ function RecordBar() {
         setElapsed(st.elapsedMs)
         setFps(st.fps)
         setLens(st.lens)
+        // 输出格式的角标：gif / mp4 / both
+        setOut(st.gif && st.mp4 ? 'MP4+GIF' : st.gif ? 'GIF' : 'MP4')
         setPhase(st.paused ? 'paused' : 'recording')
       } catch {
         /* 录制刚结束的那一瞬可能查不到，忽略 */
@@ -148,6 +151,7 @@ function RecordBar() {
       <div className="rb-time">{fmt(elapsed)}</div>
       <div className="rb-meta">
         {Math.round(fps) || '—'} fps
+        {out && <span className="rb-tag rb-fmt">{out}</span>}
         {phase === 'paused' && <span className="rb-tag">已暂停</span>}
       </div>
 

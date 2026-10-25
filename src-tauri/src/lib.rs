@@ -224,6 +224,112 @@ pub fn record_smoke() -> i32 {
     }
 }
 
+/// GIF 编码自检：合成动画 → 写 GIF → 用 gif 自己的解码器读回来核对。
+/// `snipforge.exe --gif-smoke`
+pub fn gif_smoke() -> i32 {
+    let path = std::env::temp_dir().join("snipforge-gif-smoke.gif");
+    println!("== GIF 编码自检 ==");
+    match record::gif::gif_smoke(&path, 12, 2) {
+        Ok((written, read, total_cs)) => {
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            println!(
+                "[ok] 写入 {written} 帧，读回 {read} 帧，总时长 {}ms，文件 {} KB",
+                total_cs * 10,
+                size / 1024
+            );
+            println!("[ok] 文件：{}", path.display());
+            0
+        }
+        Err(e) => {
+            println!("[fail] {e}");
+            1
+        }
+    }
+}
+
+/// 真实 GIF 录屏自检：录 N 秒主屏，直出 GIF（不写 MP4）。
+/// `snipforge.exe --gif-test 5 [宽度] [帧率]`
+pub fn gif_screen_smoke(seconds: u64, width: u32, fps: u32) -> i32 {
+    let mon = match xcap::Monitor::all().ok().and_then(|m| m.into_iter().next()) {
+        Some(m) => m,
+        None => {
+            println!("[fail] 没有可用显示器");
+            return 1;
+        }
+    };
+    let rect = types::Rect {
+        x: mon.x().unwrap_or(0),
+        y: mon.y().unwrap_or(0),
+        width: mon.width().unwrap_or(1920),
+        height: mon.height().unwrap_or(1080),
+    };
+    drop(mon);
+
+    let path = std::env::temp_dir().join("snipforge-gif-test.gif");
+    let _ = std::fs::remove_file(&path);
+
+    let plan = record::gif::GifPlan {
+        path: path.clone(),
+        fps,
+        max_width: width,
+    };
+    let opts = record::RecordOptions {
+        rect,
+        fps: 30,
+        bitrate: 4_000_000,
+        draw_cursor: true,
+        write_mp4: false,
+    };
+    println!("== 真实 GIF 录屏自检 {}s（宽 {width}，{fps}fps） ==", seconds);
+    let rec = match record::start(None, opts, path.clone(), Some(plan)) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("[fail] 启动失败: {e}");
+            return 1;
+        }
+    };
+    rec.begin();
+    std::thread::sleep(std::time::Duration::from_secs(seconds));
+    match rec.stop() {
+        Ok(r) => {
+            println!(
+                "[ok] 采集 {} 帧 / {}ms → GIF {} 帧 {}×{} {} KB",
+                r.frames,
+                r.duration_ms,
+                r.gif_frames,
+                r.gif_width,
+                r.gif_height,
+                r.gif_bytes / 1024
+            );
+            println!("[ok] 文件：{}", r.path);
+            0
+        }
+        Err(e) => {
+            println!("[fail] {e}");
+            1
+        }
+    }
+}
+
+/// 把 GIF 的某一帧导成 PNG，肉眼确认颜色和方向。
+/// `snipforge.exe --gif-inspect <gif> [out.png] [index]`
+pub fn gif_inspect(src: &str, out: Option<&str>, index: u32) -> i32 {
+    let src = std::path::PathBuf::from(src);
+    let out = out
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("snipforge-gif-frame.png"));
+    match record::gif::extract_frame(&src, &out, index) {
+        Ok((w, h)) => {
+            println!("[ok] 画布 {w}×{h}，第 {index} 帧已存 {}", out.display());
+            0
+        }
+        Err(e) => {
+            println!("[fail] {e}");
+            1
+        }
+    }
+}
+
 /// 真实录屏自检：录 N 秒主屏，报告帧数/时长/体积。
 /// `snipforge.exe --record-test 3`
 pub fn record_screen_smoke(seconds: u64) -> i32 {
@@ -250,9 +356,10 @@ pub fn record_screen_smoke(seconds: u64) -> i32 {
         fps: 30,
         bitrate: 8_000_000,
         draw_cursor: true,
+        write_mp4: true,
     };
     println!("== 真实录屏自检 {}s ==", seconds);
-    let rec = match record::start(None, opts, path.clone()) {
+    let rec = match record::start(None, opts, path.clone(), None) {
         Ok(r) => r,
         Err(e) => {
             println!("[fail] 启动失败: {e}");

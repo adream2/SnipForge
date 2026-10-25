@@ -186,3 +186,10 @@ body,
   font-size: 11px;
   color: #9a9aa5;
 }
+
+/* 输出格式角标：和"已暂停"区分开，用中性的冷色 */
+.rb-tag.rb-fmt {
+  background: rgba(120, 160, 255, 0.16);
+  color: #8fb0ff;
+  letter-spacing: 0.02em;
+}

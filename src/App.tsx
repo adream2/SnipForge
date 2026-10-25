@@ -58,7 +58,13 @@ function Shell() {
     void events
       .onRecordStop((r) => {
         const mb = (r.bytes / 1048576).toFixed(1)
-        toast.push(`录制已保存：${r.path}（${mb} MB / ${Math.round(r.durationMs / 1000)}s）`, 'success')
+        const gif = r.gifPath
+          ? `；GIF ${(r.gifBytes / 1048576).toFixed(1)} MB`
+          : ''
+        toast.push(
+          `录制已保存：${r.path}（${mb} MB / ${Math.round(r.durationMs / 1000)}s${gif}）`,
+          'success'
+        )
       })
       .then((u) => unsubs.push(u))
     void events

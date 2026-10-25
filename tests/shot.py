@@ -57,7 +57,10 @@ def grab(x, y, w, h):
     mem = g32.CreateCompatibleDC(screen)
     bmp = g32.CreateCompatibleBitmap(screen, w, h)
     old = g32.SelectObject(mem, bmp)
-    g32.BitBlt(mem, 0, 0, w, h, screen, x, y, 0x00CC0020)  # SRCCOPY
+    # SRCCOPY | CAPTUREBLT：不加 CAPTUREBLT 时，分层窗口（透明窗口）
+    # 会被整体排除 —— 而 SnipForge 的选区/覆盖层/控制条全是透明窗口，
+    # 少这个标志截图里就"看不到"它们，排查时会得出完全错误的结论。
+    g32.BitBlt(mem, 0, 0, w, h, screen, x, y, 0x00CC0020 | 0x40000000)
 
     bi = BITMAPINFOHEADER()
     bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)

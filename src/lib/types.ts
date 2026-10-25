@@ -74,6 +74,11 @@ export interface AppSettings {
     cursorHighlight: boolean
     magnifier: boolean
     annotate: boolean
+    /** mp4 | gif | both */
+    format: string
+    gifFps: number
+    /** GIF 输出最大宽度，0 = 原尺寸 */
+    gifWidth: number
   }
   general: {
     language: string
@@ -258,15 +263,26 @@ export interface RecordStatus {
   path: string
   width: number
   height: number
+  /** 这一路是否在同时写 GIF */
+  gif: boolean
+  /** 是否在写 MP4 */
+  mp4: boolean
 }
 
 export interface RecordResult {
+  /** 主产物：有 MP4 就是 MP4，只出 GIF 时是 GIF */
   path: string
   durationMs: number
   frames: number
   bytes: number
   width: number
   height: number
+  /** 同时产出的 GIF，没开就是 null */
+  gifPath: string | null
+  gifBytes: number
+  gifFrames: number
+  gifWidth: number
+  gifHeight: number
 }
 
 export interface RecordCursorEvt {

@@ -26,14 +26,15 @@
 | `clipboard_race.py turbo 25` | 比人手还快：Win+V 后 25ms 就回车，验预热期缓冲 | `8/8 通过` |
 | `clipboard_race.py turbo -1` | 极端：Win+V 和回车一次性塞进输入队列，零间隔 | `8/8 通过` |
 | `clipboard_race.py plain` | 普通 Ctrl+V 有没有被剪贴板监听拖累（"影响系统"的对照实验） | `15/15 全部命中` |
-| `record_e2e.py` | 录屏全链路：Ctrl+Alt+R → 选区 → 拖框 → 倒计时 → 控制条 + 覆盖层 → 停止 → 校验 mp4 | `6/6 通过` |
+| `record_e2e.py` | 录屏全链路：Ctrl+Alt+R → 选区 → 拖框 → 倒计时 → 控制条 + 覆盖层 → 停止 → 按 `record.format` 校验产物（mp4 / gif / both，both 会核对同名） | `10/10 通过` |
+| `drag_probe.py` | 手动探针：触发热键 → 拖框 → 截图（含透明窗口），定位"回车没反应"这类交互问题 | — |
 | `panel_e2e.py` | 剪贴板面板全链路：Win+V 弹面板 → 回车 → 内容落到原窗口 | `8/8 通过` |
 | `pin_e2e.py` | 截图 → 编辑器 → F3 钉图 → 贴图窗口位置/尺寸 → Esc 关闭 | `7/7 通过` |
 | `hover_test.py` | 悬停图形滚轮调粗细、两种箭头样式 | 截图 `tests/out/h*.png` |
 | `arrow_shape.py` | 一次画四条锥尾箭头，肉眼验收形状 | `tests/out/arrow_shape.png` |
 | `arrow_tail.py` / `arrow_head.py` | 加粗后裁头部/尾部特写，看燕尾细节 | `tests/out/*_crop.png` |
 | `show_panel.py` | 把剪贴板面板叫出来停一会儿，方便手动截图 | — |
-| `shot.py` | 纯 ctypes 屏幕截图存 PNG（不依赖 Pillow） | — |
+| `shot.py` | 纯 ctypes 屏幕截图存 PNG（不依赖 Pillow）。**必须带 `CAPTUREBLT`**，否则透明分层窗口（选区/覆盖层/控制条）在截图里直接消失，会得出错误结论 | — |
 
 截图产物都落在 `tests/out/`（已 gitignore）。
 

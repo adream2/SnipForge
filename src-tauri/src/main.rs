@@ -62,6 +62,26 @@ fn main() {
         std::process::exit(snipforge_lib::record_smoke());
     }
 
+    if let Some(i) = std::env::args().position(|a| a == "--gif-test") {
+        let mut it = std::env::args().skip(i + 1);
+        let secs = it.next().and_then(|s| s.parse().ok()).unwrap_or(3);
+        let width = it.next().and_then(|s| s.parse().ok()).unwrap_or(900);
+        let fps = it.next().and_then(|s| s.parse().ok()).unwrap_or(12);
+        std::process::exit(snipforge_lib::gif_screen_smoke(secs, width, fps));
+    }
+
+    if std::env::args().any(|a| a == "--gif-smoke") {
+        std::process::exit(snipforge_lib::gif_smoke());
+    }
+
+    if let Some(i) = std::env::args().position(|a| a == "--gif-inspect") {
+        let mut it = std::env::args().skip(i + 1);
+        let src = it.next().unwrap_or_default();
+        let out = it.next();
+        let index = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        std::process::exit(snipforge_lib::gif_inspect(&src, out.as_deref(), index));
+    }
+
     if std::env::args().any(|a| a == "--smoke") {
         std::process::exit(snipforge_lib::smoke_test());
     }

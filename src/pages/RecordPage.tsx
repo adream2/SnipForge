@@ -30,6 +30,18 @@ const BITRATES = [
   { v: 16_000_000, label: '高清' }
 ]
 const COUNTDOWNS = [0, 3, 5]
+const FORMATS = [
+  { v: 'mp4', label: 'MP4 视频', desc: '体积小、能带声音，适合发群/存档' },
+  { v: 'gif', label: 'GIF 动图', desc: '直接贴进聊天窗口和文档，自动循环' },
+  { v: 'both', label: '两个都要', desc: '同时出 MP4 和 GIF，文件名相同' }
+]
+const GIF_FPS = [8, 10, 12, 15, 20]
+const GIF_WIDTHS = [
+  { v: 600, label: '600' },
+  { v: 900, label: '900' },
+  { v: 1280, label: '1280' },
+  { v: 0, label: '原尺寸' }
+]
 
 export default function RecordPage({
   settings,
@@ -41,6 +53,8 @@ export default function RecordPage({
   const toast = useToast()
   const [busy, setBusy] = useState(false)
   const rec = settings.record
+  const wantGif = rec.format === 'gif' || rec.format === 'both'
+  const gifOnly = rec.format === 'gif'
 
   const start = async (region: boolean) => {
     setBusy(true)
@@ -48,7 +62,11 @@ export default function RecordPage({
       // 后端会先把主窗口收起来（否则会被录进去），再进选区 / 直接开录
       if (region) await api.recordPickRegion()
       else await api.recordStartFullscreen()
-      toast.push(region ? '拖拽选择要录制的区域' : '录制已开始，控制条在屏幕底部', 'success')
+      const what = rec.format === 'gif' ? 'GIF' : rec.format === 'both' ? 'MP4 + GIF' : 'MP4'
+      toast.push(
+        `${what} 录制已开始${region ? '，拖拽选择要录制的区域' : ''}，控制条在屏幕底部`,
+        'success'
+      )
     } catch (e) {
       toast.push(String(e), 'error')
     } finally {
@@ -79,14 +97,65 @@ export default function RecordPage({
           </button>
         </div>
         <div style={{ padding: '0 16px 16px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.7 }}>
-          快捷键 <kbd>{settings.hotkeys.toggleRecording}</kbd>：没在录制时进区域选择，录制中则停止。
+          当前输出：<b>{FORMATS.find((f) => f.v === rec.format)?.label ?? 'MP4 视频'}</b>
+          。快捷键 <kbd>{settings.hotkeys.toggleRecording}</kbd>：没在录制时进区域选择，录制中则停止。
           录制时底部会出现控制条，可以暂停、标注、开放大镜。
         </div>
       </div>
 
       <div className="setting-card">
+        <header>输出格式</header>
+        <div style={{ padding: '12px 16px 4px', display: 'flex', gap: 8 }}>
+          {FORMATS.map((f) => (
+            <button
+              key={f.v}
+              className={`btn ${rec.format === f.v ? 'primary' : ''}`}
+              style={{ flex: 1, height: 54, flexDirection: 'column', gap: 2, lineHeight: 1.3 }}
+              onClick={() => void onChange({ record: { format: f.v } })}
+            >
+              <span style={{ fontSize: 13 }}>{f.label}</span>
+            </button>
+          ))}
+        </div>
+        <div style={{ padding: '0 16px 14px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.7 }}>
+          {FORMATS.find((f) => f.v === rec.format)?.desc}
+          {wantGif && ' · GIF 是录制时直出的，不走二次转码（所以要提前选好）'}
+        </div>
+        {wantGif && (
+          <>
+            <Row title="GIF 帧率" desc="GIF 以 1/100 秒计时，超过 15 基本只剩体积在涨">
+              <div className="seg">
+                {GIF_FPS.map((f) => (
+                  <button
+                    key={f}
+                    className={rec.gifFps === f ? 'active' : ''}
+                    onClick={() => void onChange({ record: { gifFps: f } })}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </Row>
+            <Row title="GIF 宽度" desc="贴在聊天窗口里 900 够用；原尺寸很容易几十 MB">
+              <div className="seg">
+                {GIF_WIDTHS.map((w) => (
+                  <button
+                    key={w.v}
+                    className={rec.gifWidth === w.v ? 'active' : ''}
+                    onClick={() => void onChange({ record: { gifWidth: w.v } })}
+                  >
+                    {w.label}
+                  </button>
+                ))}
+              </div>
+            </Row>
+          </>
+        )}
+      </div>
+
+      <div className="setting-card">
         <header>画面</header>
-        <Row title="帧率" desc="越高越流畅，文件也越大">
+        <Row title="帧率" desc={gifOnly ? '只影响录制采样，GIF 实际帧率看上面的设置' : '越高越流畅，文件也越大'}>
           <div className="seg">
             {FPS.map((f) => (
               <button
@@ -99,19 +168,21 @@ export default function RecordPage({
             ))}
           </div>
         </Row>
-        <Row title="画质" desc="对应码率，屏幕内容越花越吃码率">
-          <div className="seg">
-            {BITRATES.map((b) => (
-              <button
-                key={b.v}
-                className={rec.videoBitsPerSecond === b.v ? 'active' : ''}
-                onClick={() => void onChange({ record: { videoBitsPerSecond: b.v } })}
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
-        </Row>
+        {!gifOnly && (
+          <Row title="画质" desc="对应码率，屏幕内容越花越吃码率">
+            <div className="seg">
+              {BITRATES.map((b) => (
+                <button
+                  key={b.v}
+                  className={rec.videoBitsPerSecond === b.v ? 'active' : ''}
+                  onClick={() => void onChange({ record: { videoBitsPerSecond: b.v } })}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          </Row>
+        )}
         <Row title="倒计时" desc="给操作留出准备时间，这段不会录进去">
           <div className="seg">
             {COUNTDOWNS.map((c) => (
@@ -160,6 +231,9 @@ export default function RecordPage({
         <div style={{ padding: '12px 16px 16px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.8 }}>
           编码走 Windows 自带的 H.264 编码器（Media Foundation），不占安装体积，产出标准 MP4，
           Windows 播放器 / 网页 / 剪辑软件都能直接用。
+          <br />
+          GIF 和 MP4 共用同一次采集，画面内容完全一致；GIF 会按设定宽度缩放、自动合并静止画面，
+          所以录桌面操作时体积通常只有"逐帧存图"的几分之一。
           <br />
           控制条本身被排除在捕获之外，所以它放在屏幕哪个位置都不会出现在视频里。
         </div>

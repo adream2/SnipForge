@@ -5,8 +5,11 @@
 验的是四件事：
   1. 选区窗口以"录屏模式"打开（标题不同，框完不是进编辑器而是开录）
   2. 录制控制条出现（说明后端真的起来了）
-  3. 停止后产出 mp4，能读出时长（容器没写坏）
-  4. 覆盖层被录进了画面（鼠标环），这是整套"所见即所得"的前提
+  3. 停止后产出文件，能读出时长 / 解出帧（容器没写坏）
+  4. 覆盖层与录制区域等大，这是整套"所见即所得"的前提
+
+产物按 settings.json 里的 record.format 判定：
+  mp4  → 只出 mp4；gif → 只出 gif；both → 两个都要有，且同名不同扩展。
 
 跑法：先启动 snipforge.exe，再
     python tests/record_e2e.py [录制秒数]
@@ -116,11 +119,12 @@ def windows_of(pid):
     return out
 
 
-def wait_window(pid, title_part, timeout=6.0, width_min=0):
+def wait_window(pid, title_part, timeout=6.0, width_min=0, exact=False):
     end = time.time() + timeout
     while time.time() < end:
         for w in windows_of(pid):
-            if title_part in w["title"] and w["w"] >= width_min:
+            hit = w["title"] == title_part if exact else title_part in w["title"]
+            if hit and w["w"] >= width_min:
                 return w
         time.sleep(0.1)
     return None
@@ -157,22 +161,32 @@ def drag(x1, y1, x2, y2):
     time.sleep(0.2)
 
 
-def save_dir():
+def read_cfg():
     path = os.path.expandvars(r"%APPDATA%\fun.lxzt.snipforge\settings.json")
     try:
-        cfg = json.load(open(path, encoding="utf-8"))
-        d = (cfg.get("save") or {}).get("dir") or ""
-        if d.strip():
-            return d
+        return json.load(open(path, encoding="utf-8"))
     except Exception:
-        pass
+        return {}
+
+
+def save_dir(cfg):
+    d = (cfg.get("save") or {}).get("dir") or ""
+    if d.strip():
+        return d
     return os.path.expandvars(r"%USERPROFILE%\Pictures")
 
 
-def newest_mp4(directory, after):
-    files = [f for f in glob.glob(os.path.join(directory, "**", "*.mp4"), recursive=True)
+def newest(directory, ext, after):
+    files = [f for f in glob.glob(os.path.join(directory, "**", "*." + ext), recursive=True)
              if os.path.getmtime(f) >= after]
     return max(files, key=os.path.getmtime) if files else None
+
+
+def mp4_gif_pair(directory, after):
+    """找最近一组 mp4 / gif（both 模式用来核对同名）"""
+    a = newest(directory, "mp4", after)
+    b = newest(directory, "gif", after)
+    return (a, b) if a and b else None
 
 
 def main():
@@ -183,6 +197,10 @@ def main():
         print("snipforge.exe 没在运行，先启动它", flush=True)
         return 2
     print(f"snipforge pid={pid}", flush=True)
+
+    cfg = read_cfg()
+    fmt = ((cfg.get("record") or {}).get("format") or "mp4").lower()
+    print(f"输出格式（settings.json）：{fmt}", flush=True)
 
     started_at = time.time()
 
@@ -199,12 +217,18 @@ def main():
         return 1
 
     print("== 2. 框选区域并按回车 ==", flush=True)
+    # 先把选区窗口抢到前台：它刚创建时可能还在 WebView 初始化，
+    # 拖拽和回车落到别的窗口上就会表现成"回车没反应"。
+    force_foreground(sel["hwnd"])
+    time.sleep(0.5)
     x1, y1 = sel["x"] + 120, sel["y"] + 100
     x2, y2 = x1 + 700, y1 + 420
     drag(x1, y1, x2, y2)
     tap(VK_RETURN)
 
-    bar = wait_window(pid, "SnipForge Record", timeout=8)
+    # 控制条标题正好是 "SnipForge Record"，用精确匹配 —— 否则会先命中
+    # "SnipForge Record Region"（选区）或 "SnipForge Record Overlay"。
+    bar = wait_window(pid, "SnipForge Record", timeout=8, exact=True)
     check("录制控制条出现", bar is not None,
           f"{bar['w']}x{bar['h']}" if bar else "没出现")
     if not bar:
@@ -226,27 +250,52 @@ def main():
     record_hotkey()
     time.sleep(2.5)
 
-    mp4 = newest_mp4(save_dir(), started_at)
-    check("生成了 mp4", mp4 is not None, mp4 or f"在 {save_dir()} 下没找到")
-    if not mp4:
-        return 1
-
-    size = os.path.getsize(mp4)
-    # 静止画面压缩率极高，几十 KB 也是正常的；这里只挡「空文件」
-    check("文件体积合理", size > 15 * 1024, f"{size // 1024} KB")
-
+    outdir = save_dir(cfg)
     exe = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "src-tauri", "target", "release", "snipforge.exe")
-    out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out", "record_frame0.png")
-    os.makedirs(os.path.dirname(out_png), exist_ok=True)
-    r = subprocess.run([exe, "--record-inspect", mp4, out_png],
-                       capture_output=True, text=True)
-    check("能解出帧（容器完好）", "ok" in r.stdout, r.stdout.strip() or r.stderr.strip())
+    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
+    os.makedirs(out_dir, exist_ok=True)
+    produced = []
+
+    if fmt in ("mp4", "both"):
+        mp4 = newest(outdir, "mp4", started_at)
+        check("生成了 mp4", mp4 is not None, mp4 or f"在 {outdir} 下没找到")
+        if mp4:
+            produced.append(mp4)
+            size = os.path.getsize(mp4)
+            # 静止画面压缩率极高，几十 KB 也是正常的；这里只挡「空文件」
+            check("mp4 体积合理", size > 15 * 1024, f"{size // 1024} KB")
+            png = os.path.join(out_dir, "record_frame0.png")
+            r = subprocess.run([exe, "--record-inspect", mp4, png],
+                               capture_output=True, text=True)
+            check("mp4 能解出帧（容器完好）", "ok" in r.stdout,
+                  r.stdout.strip() or r.stderr.strip())
+
+    if fmt in ("gif", "both"):
+        gif = newest(outdir, "gif", started_at)
+        check("生成了 gif", gif is not None, gif or f"在 {outdir} 下没找到")
+        if gif:
+            produced.append(gif)
+            size = os.path.getsize(gif)
+            check("gif 体积合理", size > 5 * 1024, f"{size // 1024} KB")
+            png = os.path.join(out_dir, "record_gif_frame.png")
+            r = subprocess.run([exe, "--gif-inspect", gif, png, "0"],
+                               capture_output=True, text=True)
+            check("gif 能解出帧（编码完好）", "ok" in r.stdout,
+                  r.stdout.strip() or r.stderr.strip())
+            pair = mp4_gif_pair(outdir, started_at) if fmt == "both" else None
+            if pair:
+                a, b = pair
+                check("mp4 与 gif 同名不同扩展",
+                      os.path.splitext(os.path.basename(a))[0]
+                      == os.path.splitext(os.path.basename(b))[0],
+                      f"{os.path.basename(a)} / {os.path.basename(b)}")
 
     print(flush=True)
     ok = sum(1 for _, v in results if v)
     print(f"== {ok}/{len(results)} 通过 ==", flush=True)
-    print(f"产物：{mp4}", flush=True)
+    for f in produced:
+        print(f"产物：{f}", flush=True)
     return 0 if ok == len(results) else 1
 
 

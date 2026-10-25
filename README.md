@@ -146,7 +146,29 @@ Windows 端的一体化截图 / 剪贴板 / 图床 / 图片工具。Tauri 2 + Ru
 `record/mod.rs`（取帧、定拍、裁剪、暂停）。叠加内容全由透明覆盖层（`overlay.html`）绘制，
 覆盖层和录制区域等大且同位，所以**画面里看到什么，视频里就是什么**。
 
-- 📋 麦克风 / 系统声音、摄像头、GIF 导出、录制后剪辑
+- ✅ **GIF 直出**：`输出格式` 选 `GIF 动图` 或 `两个都要`，录制时直接从原始帧编码成 GIF，
+  不经过"先录 MP4 再转"的二次有损（也不用打包 ffmpeg）。见下。
+
+#### GIF 是怎么做到不糊、不爆体积的
+
+| 问题 | 做法 |
+| --- | --- |
+| 1080p 原尺寸 GIF 一分钟上百 MB | 按设定宽度等比缩（默认 900px），用**面积平均**缩图，屏幕文字不糊成马赛克 |
+| 屏幕大部分时间是静止的 | **合并静态帧**：完全相同的帧不重复写，把时长累加到上一帧的 delay 上；对静态桌面录 10 秒通常只有几帧 |
+| 256 色会糊 | 逐帧建调色板：256 色以内的画面（UI 截图基本都在这区间）建**精确色表**，颜色一个不差；超过才退回 NeuQuant 量化 |
+| 30fps 采集配 12fps GIF 会跳帧 | 按"累计跨过 1 就采"的节奏均匀取样，delay 四舍五入的余数留给下一帧抵，长期平均正好 12fps |
+| GIF 编码（逐像素查色表）拖慢采集 | 编码在**独立线程**：录制线程只做缩图+去重（轻活），量化/LZW/写盘全在编码线程；队列满就丢帧并把时长补到下一帧，**掉帧不乱时间轴** |
+
+已知取舍：没做误差扩散（dither）——屏幕内容以纯色块为主，精确色表能覆盖；
+对照片类画面做 dither 会让平色区域起噪点，反而更难看。GIF 不带声音，
+要声音选 MP4。
+
+实现上分三层：`record/mf.rs`（Media Foundation 写入器）、`record/gif.rs`（GIF 编码），
+`record/cursor.rs`（光标合成）、`record/mod.rs`（取帧、定拍、裁剪、暂停）。
+叠加内容全由透明覆盖层（`overlay.html`）绘制，
+覆盖层和录制区域等大且同位，所以**画面里看到什么，视频里就是什么**。
+
+- 📋 麦克风 / 系统声音、摄像头、录制后剪辑
 
 ---
 
@@ -301,6 +323,16 @@ snipforge.exe --smoke
 
 输出示例（本机实测）：
 
+GIF / 录屏编码有各自的自检：
+
+```bash
+snipforge.exe --gif-smoke            # 合成动画 → 写 GIF → 用解码器读回核对帧数/时长/尺寸
+snipforge.exe --gif-test 5 900 12    # 真实录主屏 5 秒直出 GIF（宽 900、12fps）
+snipforge.exe --gif-inspect a.gif out.png 0   # 抽 GIF 第 0 帧存 PNG，肉眼验颜色
+snipforge.exe --record-smoke         # MP4 编码自检
+snipforge.exe --record-test 3        # 真实录主屏 3 秒出 MP4
+```
+
 ```
 == SnipForge 冒烟测试 ==
 [ok] 屏幕捕获：1 块显示器
@@ -326,6 +358,9 @@ debug 级别会多出这几条关键信息：
 
 ### 环境踩坑记录
 
+- **release 二进制必须带 `custom-protocol`**。用 `npx tauri build`（或 `cargo build --release --features custom-protocol`）；
+  裸 `cargo build --release` 编出来的 exe 会去连 devUrl（127.0.0.1:5183），
+  窗口里全是"无法访问此页面"，看起来像前端坏了，其实是构建姿势不对。
 - **必须装完整 Rust 工具链**。只有 `rustc` 没有 `cargo` 是编不了的（有些环境管理工具会装成半套）。
 - **必须有 MSVC 链接器 + Windows SDK**。`rustup` 只装编译器本体，链接器要单独装 VS Build Tools 的 C++ 工作负载。装完 Rust 会警告 `installing msvc toolchain without its prerequisites`，别忽略。
 - **Git Bash 的 PATH 里有个 coreutils 的 `link.exe`**，会把 rustc 带偏报 `extra operand`。项目的 `.cargo/config.toml` 里已经显式锁死 MSVC 链接器路径。
