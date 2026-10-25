@@ -1,0 +1,19 @@
+{
+  "id": "0x0st",
+  "name": "0x0.st 临时图床",
+  "version": "1.0.0",
+  "description": "无需注册的公共临时文件托管，适合发个截图就走的场景",
+  "provider": {
+    "id": "0x0st",
+    "name": "0x0.st",
+    "url": "https://0x0.st",
+    "method": "POST",
+    "fieldName": "file",
+    "responsePath": "",
+    "headers": {
+      "User-Agent": "SnipForge/0.1 (screenshot tool)"
+    },
+    "fields": {},
+    "config_fields": []
+  }
+}

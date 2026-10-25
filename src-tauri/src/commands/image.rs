@@ -1,0 +1,234 @@
+use crate::error::{AppError, AppResult};
+use crate::state::AppState;
+use crate::types::{ImageInfoView, OcrResult, SaveOutcome};
+use crate::uploader::{data_url_to_bytes, mime_to_ext, render_file_name};
+use std::sync::Arc;
+use tauri::Manager;
+
+/// 保存图片（自动生成文件名）
+#[tauri::command]
+pub fn image_save(
+    state: tauri::State<'_, Arc<AppState>>,
+    data_url: String,
+    file_name: Option<String>,
+    open_folder: Option<bool>,
+) -> AppResult<SaveOutcome> {
+    let (bytes, mime) = data_url_to_bytes(&data_url)?;
+    let ext = mime_to_ext(&mime);
+
+    let cfg = state.settings.read().clone();
+    let dir = if cfg.save.dir.trim().is_empty() {
+        state.paths.pictures.clone()
+    } else {
+        std::path::PathBuf::from(&cfg.save.dir)
+    };
+    std::fs::create_dir_all(&dir)?;
+
+    let name = match file_name {
+        Some(n) if !n.trim().is_empty() => n,
+        _ => format!("{}.{}", render_file_name(&cfg.save.name_template, ext), ext),
+    };
+    let path = dir.join(&name);
+    std::fs::write(&path, &bytes)?;
+
+    if open_folder.unwrap_or(cfg.save.after_save == "open-folder") {
+        let _ = crate::commands::app_open_path_inner(&path);
+    }
+
+    Ok(SaveOutcome {
+        path: path.to_string_lossy().to_string(),
+        bytes: bytes.len() as u64,
+        format: ext.to_string(),
+    })
+}
+
+/// 另存为（弹系统对话框）
+#[tauri::command]
+pub async fn image_save_as(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    data_url: String,
+    suggested: Option<String>,
+) -> AppResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (bytes, mime) = data_url_to_bytes(&data_url)?;
+    let ext = mime_to_ext(&mime);
+    let cfg = state.settings.read().clone();
+    let default_name = suggested.unwrap_or_else(|| {
+        format!("{}.{}", render_file_name(&cfg.save.name_template, ext), ext)
+    });
+
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("保存图片")
+        .set_file_name(&default_name)
+        .add_filter(ext, &[ext])
+        .blocking_save_file();
+
+    match picked {
+        Some(path) => {
+            let p = path.to_string();
+            std::fs::write(&p, &bytes)?;
+            Ok(Some(p))
+        }
+        None => Ok(None),
+    }
+}
+
+/// 复制到剪贴板
+#[tauri::command]
+pub fn image_copy(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    data_url: String,
+) -> AppResult<()> {
+    let (bytes, _) = data_url_to_bytes(&data_url)?;
+    let service = app
+        .try_state::<Arc<crate::clipboard::ClipboardService>>()
+        .ok_or_else(|| AppError::Msg("剪贴板服务未初始化".into()))?;
+    crate::clipboard::copy_image_bytes(&service, &bytes)
+}
+
+/// OCR 识别（按当前配置选择引擎）
+#[tauri::command]
+pub async fn image_ocr(
+    state: tauri::State<'_, Arc<AppState>>,
+    data_url: String,
+) -> AppResult<OcrResult> {
+    let cfg = state.settings.read().ocr.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (bytes, _) = data_url_to_bytes(&data_url)?;
+        crate::ocr::recognize(&bytes, &cfg)
+    })
+    .await
+    .map_err(|e| AppError::Msg(format!("OCR 任务失败: {e}")))?
+}
+
+#[tauri::command]
+pub fn image_ocr_languages(state: tauri::State<'_, Arc<AppState>>) -> AppResult<Vec<String>> {
+    Ok(crate::ocr::engines(&state.settings.read().ocr.paddle_path)
+        .into_iter()
+        .find(|e| e.builtin)
+        .map(|e| e.languages)
+        .unwrap_or_default())
+}
+
+/// 列出可用 OCR 引擎及实时状态
+#[tauri::command]
+pub fn ocr_engines(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> AppResult<Vec<crate::ocr::EngineInfo>> {
+    Ok(crate::ocr::engines(&state.settings.read().ocr.paddle_path))
+}
+
+/// 打开 OCR 引擎目录（用户把 PaddleOCR-json 解压到这里即可）
+#[tauri::command]
+pub fn ocr_open_engine_dir(app: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>) -> AppResult<String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = state
+        .paths
+        .data
+        .join("ocr-engines");
+    std::fs::create_dir_all(&dir)?;
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| AppError::Msg(e.to_string()))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// 图片基本信息
+#[tauri::command]
+pub fn image_info(data_url: String) -> AppResult<ImageInfoView> {
+    let (bytes, mime) = data_url_to_bytes(&data_url)?;
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| AppError::Msg(format!("图片解码失败: {e}")))?;
+    Ok(ImageInfoView {
+        width: img.width(),
+        height: img.height(),
+        format: mime,
+        bytes: bytes.len() as u64,
+    })
+}
+
+/// 打开图片所在目录
+#[tauri::command]
+pub async fn image_open_folder(app: tauri::AppHandle, path: String) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let parent = std::path::Path::new(&path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or(path);
+    app.opener()
+        .open_path(parent, None::<&str>)
+        .map_err(|e| AppError::Msg(e.to_string()))
+}
+
+
+/// 一键下载并安装 PaddleOCR。
+///
+/// 官方包是 88MB 的 7z，普通用户没法自己解 —— 所以托管掉整个流程：
+/// 查最新版本 → 下载（带进度）→ 解压 → 自动设为当前引擎。
+#[tauri::command]
+pub async fn ocr_download_paddle(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> AppResult<String> {
+    use tauri::Emitter;
+
+    let engine_dir = state.paths.data.join("ocr-engines");
+    let handle = app.clone();
+
+    let exe = tauri::async_runtime::spawn_blocking(move || {
+        crate::ocr::paddle::download_and_install(&engine_dir, |p| {
+            let _ = handle.emit("ocr://download", p);
+        })
+    })
+    .await
+    .map_err(|e| AppError::Msg(format!("下载任务异常: {e}")))??;
+
+    let path_text = exe.to_string_lossy().to_string();
+    {
+        let mut cfg = state.settings.write();
+        cfg.ocr.engine = crate::ocr::PADDLE.to_string();
+        cfg.ocr.paddle_path = path_text.clone();
+    }
+    state.persist_settings()?;
+
+    // 让设置页立刻看到状态变化
+    let _ = app.emit("ocr://download", serde_json::json!({
+        "stage": "done",
+        "downloaded": 0,
+        "total": 0,
+        "message": "安装完成"
+    }));
+
+    Ok(path_text)
+}
+
+/// 钉图：把当前编辑结果钉在屏幕最上层当参考。
+///
+/// 先解码拿真实像素尺寸，才能算出"屏幕上该开多大"——
+/// 尺寸交给前端算的话，多屏不同缩放一定错位。
+#[tauri::command]
+pub async fn image_pin(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    data_url: String,
+) -> AppResult<()> {
+    let opacity = state.settings.read().editor.pin_opacity as f64;
+
+    // 解码放阻塞线程池，别占着 IPC 线程
+    let size = data_url.clone();
+    let (w, h) = tauri::async_runtime::spawn_blocking(move || -> AppResult<(u32, u32)> {
+        let (bytes, _mime) = data_url_to_bytes(&size)?;
+        let img = image::load_from_memory(&bytes)
+            .map_err(|e| AppError::Msg(format!("图片解码失败: {e}")))?;
+        Ok((img.width(), img.height()))
+    })
+    .await
+    .map_err(|e| AppError::Msg(format!("解码任务失败: {e}")))??;
+
+    crate::windows::open_pin(&app, data_url, w, h, opacity)
+}

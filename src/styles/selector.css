@@ -1,0 +1,129 @@
+.selector-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  user-select: none;
+  background: #000;
+}
+
+/* 交互层：铺满窗口，承载所有选区手势。
+   工具栏是它的兄弟节点，所以按钮上的事件不会冒泡进来。 */
+.selector-surface {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+
+.selector-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.selector-mask {
+  position: absolute;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.46);
+  pointer-events: none;
+}
+
+.selector-edge {
+  position: absolute;
+  outline: 1.5px solid #6c5ce7;
+  outline-offset: -1px;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.selector-handle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid #6c5ce7;
+  pointer-events: none;
+}
+
+.selector-win-hint {
+  position: absolute;
+  border: 1.5px solid #6c5ce7;
+  background: rgba(108, 92, 231, 0.12);
+  border-radius: 3px;
+  pointer-events: none;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.3);
+}
+
+.selector-size-tag {
+  position: absolute;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: rgba(20, 20, 24, 0.92);
+  color: #fff;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.selector-toolbar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 9px;
+  background: rgba(26, 26, 30, 0.95);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  cursor: default;
+  z-index: 10;
+}
+
+.selector-toolbar button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: #dcdce2;
+  transition: background 0.12s;
+}
+
+.selector-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.selector-toolbar button.active {
+  background: rgba(108, 92, 231, 0.9);
+  color: #fff;
+}
+
+.selector-toolbar .divider {
+  width: 1px;
+  height: 17px;
+  background: rgba(255, 255, 255, 0.16);
+  margin: 0 3px;
+}
+
+.selector-hint {
+  position: absolute;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: rgba(20, 20, 24, 0.82);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+}
+
+body {
+  background: transparent;
+}

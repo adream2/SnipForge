@@ -1,0 +1,19 @@
+{
+  "id": "catbox",
+  "name": "Catbox",
+  "version": "1.0.0",
+  "description": "免费公共图床，支持匿名上传，文件长期保留",
+  "provider": {
+    "id": "catbox",
+    "name": "Catbox",
+    "url": "https://catbox.moe/user/api.php",
+    "method": "POST",
+    "fieldName": "fileToUpload",
+    "responsePath": "",
+    "headers": {},
+    "fields": {
+      "reqtype": "fileupload"
+    },
+    "config_fields": []
+  }
+}

@@ -1,0 +1,124 @@
+use crate::config::AppSettings;
+use crate::error::{AppError, AppResult};
+use crate::paths::Paths;
+use crate::state::AppState;
+use crate::types::AppSettingsView;
+
+/// 读取完整配置
+#[tauri::command]
+pub fn settings_get(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppResult<AppSettingsView> {
+    Ok(AppSettingsView {
+        settings: state.settings_snapshot(),
+    })
+}
+
+/// 局部更新配置。前端只提交改动的字段，后端做深度合并后落盘。
+#[tauri::command]
+pub fn settings_patch(
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+    patch: serde_json::Value,
+) -> AppResult<AppSettingsView> {
+    {
+        let mut guard = state.settings.write();
+        guard.apply_patch(&patch);
+    }
+    state.persist_settings()?;
+    Ok(AppSettingsView {
+        settings: state.settings_snapshot(),
+    })
+}
+
+/// 恢复默认配置（保留 provider 凭据，避免用户手滑把 token 清了）
+#[tauri::command]
+pub fn settings_reset(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppResult<AppSettingsView> {
+    {
+        let mut guard = state.settings.write();
+        let providers = guard.uploader.providers.clone();
+        let plugin_enabled = guard.plugin_enabled.clone();
+        let mut fresh = AppSettings::default();
+        fresh.uploader.providers = providers;
+        fresh.plugin_enabled = plugin_enabled;
+        *guard = fresh;
+    }
+    state.persist_settings()?;
+    Ok(AppSettingsView {
+        settings: state.settings_snapshot(),
+    })
+}
+
+/// 选择目录（走系统对话框）
+#[tauri::command]
+pub async fn settings_pick_dir(
+    app: tauri::AppHandle,
+    default_path: Option<String>,
+) -> AppResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app.dialog().file().set_title("选择目录");
+    if let Some(p) = default_path.filter(|s| !s.is_empty()) {
+        dialog = dialog.set_directory(p);
+    }
+    let picked = dialog.blocking_pick_folder();
+    match picked {
+        Some(path) => Ok(Some(path.to_string())),
+        None => Ok(None),
+    }
+}
+
+/// 应用信息（版本、数据目录、OCR 语言、快捷键注册状态）
+#[tauri::command]
+pub fn app_info(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppResult<crate::types::AppInfo> {
+    Ok(crate::types::AppInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        platform: std::env::consts::OS.to_string(),
+        data_dir: state.paths.data.to_string_lossy().to_string(),
+        ocr_languages: crate::ocr::available_languages(),
+        hotkey_results: state.hotkey_results.read().clone(),
+    })
+}
+
+/// 在资源管理器里打开目录
+#[tauri::command]
+pub fn app_open_dir(app: tauri::AppHandle, path: String) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| AppError::Msg(e.to_string()))
+}
+
+/// 用默认程序打开文件
+#[tauri::command]
+pub fn app_open_path(app: tauri::AppHandle, path: String) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| AppError::Msg(e.to_string()))
+}
+
+/// 目标保存目录的最终取值（用户没设就用图片目录/SnipForge）
+pub fn resolve_save_dir(state: &AppState) -> std::path::PathBuf {
+    let cfg = state.settings.read();
+    if cfg.save.dir.trim().is_empty() {
+        state.paths.pictures.clone()
+    } else {
+        std::path::PathBuf::from(&cfg.save.dir)
+    }
+}
+
+/// 首次启动时确保目录存在
+pub fn ensure_paths(paths: &Paths) -> AppResult<()> {
+    paths.ensure()?;
+    Ok(())
+}
+
+/// 前端把错误写到同一份日志里。
+///
+/// WebView 里的 console 在生产包里看不到，出问题时用户只能说"点了没反应"。
+/// 让前端把异常转发到日志文件，排查成本从"猜"降到"看"。
+#[tauri::command]
+pub fn app_log(level: String, message: String) {
+    match level.as_str() {
+        "error" => log::error!("[前端] {message}"),
+        "warn" => log::warn!("[前端] {message}"),
+        _ => log::info!("[前端] {message}"),
+    }
+}

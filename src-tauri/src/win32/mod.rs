@@ -1,0 +1,71 @@
+//! Win32 FFI 封装层。
+//!
+//! 全项目只有这个模块 import `windows` crate —— 上层拿到的是干净的 Rust 类型。
+//! 这不是洁癖：FFI 细节（句柄生命周期、DPI 上下文、字符串编码）一旦泄漏到业务层，
+//! 后面任何一处改动都要重新推理系统调用，成本会指数级上升。
+
+#[cfg(windows)]
+pub mod clipboard;
+#[cfg(windows)]
+pub mod focus;
+#[cfg(windows)]
+pub mod input;
+#[cfg(windows)]
+pub mod keyhook;
+#[cfg(windows)]
+pub mod window;
+
+#[cfg(not(windows))]
+pub mod keyhook {
+    pub fn install(_app: tauri::AppHandle) {}
+    pub fn set_active(_v: bool) {}
+    pub fn is_active() -> bool {
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub mod clipboard {
+    pub fn set_files(_paths: &[String]) -> Result<(), String> {
+        Err("仅支持 Windows".into())
+    }
+}
+
+#[cfg(not(windows))]
+pub mod focus {
+    pub fn foreground_hwnd() -> isize {
+        0
+    }
+    pub fn is_own_window(_hwnd: isize) -> bool {
+        false
+    }
+    pub fn is_alive(_hwnd: isize) -> bool {
+        false
+    }
+    pub fn activate(_hwnd: isize) -> Result<(), String> {
+        Err("仅支持 Windows".into())
+    }
+}
+
+#[cfg(not(windows))]
+pub mod input {
+    pub fn scroll_at(_x: i32, _y: i32, _delta: i32) -> Result<(), String> {
+        Err("仅支持 Windows".into())
+    }
+    pub fn paste_hotkey() -> Result<(), String> {
+        Err("仅支持 Windows".into())
+    }
+}
+
+#[cfg(not(windows))]
+pub mod window {
+    use crate::types::NativeWindowInfo;
+
+    pub fn list_top_level_windows(_self_pid: u32) -> Vec<NativeWindowInfo> {
+        Vec::new()
+    }
+    pub fn foreground_window() -> Option<NativeWindowInfo> {
+        None
+    }
+    pub fn set_dpi_aware() {}
+}

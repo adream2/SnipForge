@@ -1,0 +1,484 @@
+:root {
+  --accent: #6c5ce7;
+  --mono: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
+  --font: "Segoe UI Variable Display", -apple-system, "Segoe UI", "Microsoft YaHei UI",
+    "PingFang SC", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 13px;
+  color: #f2f2f5;
+  background: #1c1c1e;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  user-select: text;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #3a3a40;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: all 0.13s;
+  white-space: nowrap;
+}
+.btn:hover {
+  filter: brightness(1.15);
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.btn.sm {
+  height: 27px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.btn.primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.switch {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background: #3f3f46;
+  transition: background 0.16s;
+  flex-shrink: 0;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.16s;
+}
+.switch.on {
+  background: var(--accent);
+}
+.switch.on::after {
+  transform: translateX(16px);
+}
+
+.editor-root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1c1c1e;
+}
+
+.editor-topbar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-bottom: 1px solid #2c2c30;
+  flex-shrink: 0;
+}
+.editor-topbar .drag {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.editor-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.editor-tools {
+  width: 46px;
+  border-right: 1px solid #2c2c30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+
+.tool-btn {
+  width: 33px;
+  height: 33px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: #a1a1aa;
+  transition: all 0.13s;
+}
+.tool-btn:hover {
+  background: #2c2c30;
+  color: #f2f2f5;
+}
+.tool-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 舞台外层：负责给缩放条定位，自己不吃滚动 */
+.stage-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+ * 舞台本身是滚动容器。放大后靠原生滚动 + 中键/空格拖拽移动视口。
+ * 注意这里**不能**用 justify-content/align-items 居中：
+ * 内容大于容器时，flex 居中会把左上角推到滚动区域之外，永远滚不到。
+ * 居中交给 .stage-artboard 的 margin:auto —— 小于容器时自动居中，
+ * 大于容器时 margin 归零，从原点开始，滚动条正常。
+ */
+.editor-stage {
+  flex: 1;
+  position: relative;
+  overflow: auto;
+  display: flex;
+  background: #141416;
+  min-width: 0;
+  scrollbar-width: thin;
+}
+
+.editor-stage::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.editor-stage::-webkit-scrollbar-thumb {
+  background: #3a3a40;
+  border-radius: 5px;
+  border: 2px solid #141416;
+}
+
+.editor-stage.is-panning,
+.editor-stage.is-panning * {
+  cursor: grabbing !important;
+}
+
+/* 美化底板：内边距/圆角/背景/阴影都在这里，所见即所得 */
+.stage-artboard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: auto;
+  flex: none;
+}
+
+.stage-canvas-holder {
+  position: relative;
+  overflow: hidden;
+  background-image: linear-gradient(45deg, #2a2a2e 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2a2e 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2a2e 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2a2e 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.stage-canvas-holder canvas {
+  display: block;
+}
+
+/* 水印预览层：和导出时 canvas 上画的位置、字号、透明度保持一致 */
+.wm-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  color: #ffffff;
+  font-weight: 600;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.wm-single {
+  padding: 0 1em 0.7em 0;
+  white-space: nowrap;
+}
+
+.wm-tiled-wrap {
+  position: absolute;
+  inset: -25%;
+  transform: rotate(-30deg);
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  justify-content: center;
+  gap: 2.2em 3em;
+}
+
+.wm-tile {
+  white-space: nowrap;
+}
+
+.editor-panel {
+  width: 232px;
+  border-left: 1px solid #2c2c30;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.panel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.panel-group > .title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #71717a;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  transition: transform 0.12s;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.swatch:hover {
+  transform: scale(1.12);
+}
+.swatch.active {
+  border-color: #fff;
+}
+
+.slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: #3a3a40;
+  outline: none;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.dark-input {
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid #3a3a40;
+  background: #232327;
+  color: #f2f2f5;
+  outline: none;
+  width: 100%;
+  font-size: 12px;
+}
+.dark-input:focus {
+  border-color: var(--accent);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 外壳选择芯片 */
+.frame-chip {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid #3a3a40;
+  background: #232327;
+  color: #a1a1aa;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.frame-chip:hover {
+  border-color: #52525b;
+  color: #e4e4e7;
+}
+.frame-chip.active {
+  background: #6c5ce7;
+  border-color: #6c5ce7;
+  color: #fff;
+}
+
+.frame-shell {
+  transition: background 0.16s ease, border-radius 0.16s ease;
+}
+
+/* ---------------- 缩放控件 ---------------- */
+
+.zoom-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(28, 28, 32, 0.92);
+  border: 1px solid #34343a;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  z-index: 5;
+}
+
+.zoom-bar button {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.zoom-bar button:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #e4e4e7;
+}
+
+.zoom-bar .zoom-val {
+  min-width: 46px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: #e4e4e7;
+}
+
+.zoom-bar .zoom-fit.active {
+  background: rgba(108, 92, 231, 0.9);
+  color: #fff;
+}
+
+.zoom-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: #3a3a40;
+}
+
+/* 导出失败的提示条：浮在内容上方，不占布局 */
+.editor-error {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 70%;
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: rgba(229, 72, 77, 0.95);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 30;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+/* 悬停提示：告诉用户滚轮会改什么，位置在缩放条上方 */
+.shape-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 48px;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(108, 92, 231, 0.92);
+  color: #fff;
+  font-size: 11.5px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(108, 92, 231, 0.35);
+  z-index: 6;
+}
