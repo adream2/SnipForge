@@ -1,7 +1,7 @@
 /**
- * 生成应用图标与托盘图标。
+ * 生成应用图标与托盘图标，产物全部进 src-tauri/icons/。
  * 手写 PNG 编码器而不是拉 sharp/canvas：只需要几个固定尺寸的小图，
- * 为这点需求引入 native 依赖不值当。跑一次即可，产物进 resources/。
+ * 为这点需求引入 native 依赖不值当。跑一次即可，图标改了就重跑。
  *
  *   node scripts/make-icons.mjs
  */
@@ -87,8 +87,7 @@ const smooth = (d, aa) => clamp01(0.5 - d / aa)
  * 图标构图：圆角底 + 渐变 + 白色选区角标 + 斜向剪刀线。
  * 一眼能看出是"框选截图"这件事。
  */
-function drawIcon(size, opts = {}) {
-  const { mono = false } = opts
+function drawIcon(size) {
   const s = size
   const px = Buffer.alloc(s * s * 4)
   const aa = Math.max(1.1, s / 64)
@@ -110,12 +109,6 @@ function drawIcon(size, opts = {}) {
       let r = lerp(92, 168, t)
       let g = lerp(84, 130, t)
       let b = lerp(231, 255, t)
-
-      if (mono) {
-        r = 255
-        g = 255
-        b = 255
-      }
 
       // 顶部高光
       const gloss = clamp01(1 - y / (s * 0.55)) * 0.14
@@ -164,20 +157,9 @@ function drawIcon(size, opts = {}) {
   return encodePng(s, s, px)
 }
 
-mkdirSync(join(root, 'resources'), { recursive: true })
-mkdirSync(join(root, 'build'), { recursive: true })
 mkdirSync(join(root, 'src-tauri', 'icons'), { recursive: true })
 
 const icon256 = drawIcon(256)
-writeFileSync(join(root, 'resources', 'icon.png'), icon256)
-writeFileSync(join(root, 'build', 'icon.png'), icon256)
-
-for (const s of [16, 24, 32, 48]) {
-  writeFileSync(join(root, 'resources', `tray-${s}.png`), drawIcon(s))
-}
-
-// 托盘用白色单色版，深色任务栏上更清楚
-writeFileSync(join(root, 'resources', 'tray-mono.png'), drawIcon(32, { mono: true }))
 
 /* ---------------- Tauri 需要的图标集 ---------------- */
 
@@ -222,4 +204,4 @@ for (const s of [16, 24, 48, 64, 256]) {
   writeFileSync(join(tauriIcons, `${s}x${s}.png`), drawIcon(s))
 }
 
-console.log('图标已生成: resources/, build/, src-tauri/icons/')
+console.log('图标已生成: src-tauri/icons/')
