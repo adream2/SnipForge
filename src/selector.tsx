@@ -129,11 +129,14 @@ export default function Selector() {
     if (mode === 'window') {
       const target = hitTest(x, y)
       if (target) {
+        // 窗口 rect 是物理像素，selection 这一层全是 CSS 像素
+        // （commit 里还会乘回物理像素）。不换算的话，缩放屏上
+        // 选出来的框和窗口对不上，尺寸标签也是错的。
         setSelection({
-          x: target.rect.x,
-          y: target.rect.y,
-          width: target.rect.width,
-          height: target.rect.height
+          x: (target.rect.x - (display?.bounds.x ?? 0)) / scale,
+          y: (target.rect.y - (display?.bounds.y ?? 0)) / scale,
+          width: target.rect.width / scale,
+          height: target.rect.height / scale
         })
         return
       }
@@ -177,7 +180,8 @@ export default function Selector() {
       height: Math.round(selection.height * scale)
     }
     try {
-      if (mode === 'scroll') {
+      if (mode === 'scroll' && !IS_RECORD) {
+        // 录屏没有"滚动长录"这种东西，这里只可能来自截图模式
         await api.captureScroll(display.id, phys)
       } else {
         if (IS_RECORD) {
@@ -207,11 +211,23 @@ export default function Selector() {
     : ''
 
   const toolbarStyle = (() => {
-    if (!selection) return { display: 'none' }
-    const below = selection.y + selection.height + 10
-    const top = below + 40 < window.innerHeight ? below : Math.max(8, selection.y - 46)
-    const left = Math.min(Math.max(8, selection.x + selection.width - 244), window.innerWidth - 252)
-    return { top, left } as React.CSSProperties
+    if (selection) {
+      const below = selection.y + selection.height + 10
+      const top = below + 40 < window.innerHeight ? below : Math.max(8, selection.y - 46)
+      const left = Math.min(Math.max(8, selection.x + selection.width - 244), window.innerWidth - 252)
+      return { top, left } as React.CSSProperties
+    }
+    if (IS_RECORD) {
+      // 录屏模式没有选区时工具栏也常驻：窗口选择（W）这个能力藏在一个
+      // 看不见的快捷键后面，第一次用的人根本发现不了。
+      // 放底部居中。注意要抬到任务栏上面 —— 任务栏是置顶窗口，
+      // bottom:14 这种"贴边"位置会被它整个盖住，看起来像没渲染。
+      return {
+        bottom: 60,
+        left: Math.max(8, (window.innerWidth - 236) / 2)
+      } as React.CSSProperties
+    }
+    return { display: 'none' } as React.CSSProperties
   })()
 
   return (
@@ -317,18 +333,20 @@ export default function Selector() {
         </button>
         <button
           className={mode === 'window' ? 'active' : ''}
-          title="窗口截图（W）"
+          title="窗口模式（W）：点哪个窗口录哪个"
           onClick={() => setMode('window')}
         >
           <IconWindow size={15} />
         </button>
-        <button
-          className={mode === 'scroll' ? 'active' : ''}
-          title="滚动长截图（S）"
-          onClick={() => setMode('scroll')}
-        >
-          <IconScroll size={15} />
-        </button>
+        {!IS_RECORD && (
+          <button
+            className={mode === 'scroll' ? 'active' : ''}
+            title="滚动长截图（S）"
+            onClick={() => setMode('scroll')}
+          >
+            <IconScroll size={15} />
+          </button>
+        )}
         <div className="divider" />
         <button title="取消（Esc）" onClick={() => void api.captureCancel()}>
           <IconX size={15} />
@@ -343,9 +361,12 @@ export default function Selector() {
       </div>
 
       {!selection && (
-        <div className="selector-hint" style={{ pointerEvents: 'none' }}>
+        <div
+          className="selector-hint"
+          style={{ pointerEvents: 'none', bottom: IS_RECORD ? 112 : undefined }}
+        >
           {IS_RECORD
-            ? '拖拽框选要录制的区域 · 回车开始录制 · Esc 取消'
+            ? '拖拽框选 · 按 W 或点下方窗口图标选窗口 · 回车开始录制 · Esc 取消'
             : '拖拽框选 · 回车确认 · Esc 取消 · W 窗口模式 · S 长截图'}
         </div>
       )}

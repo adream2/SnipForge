@@ -27,6 +27,7 @@
 | `clipboard_race.py turbo -1` | 极端：Win+V 和回车一次性塞进输入队列，零间隔 | `8/8 通过` |
 | `clipboard_race.py plain` | 普通 Ctrl+V 有没有被剪贴板监听拖累（"影响系统"的对照实验） | `15/15 全部命中` |
 | `record_e2e.py` | 录屏全链路：Ctrl+Alt+R → 选区 → 拖框 → 倒计时 → 控制条 + 覆盖层 → 停止 → 按 `record.format` 校验产物（mp4 / gif / both，both 会核对同名） | `10/10 通过` |
+| `record_window_probe.py` | 录屏选区"窗口模式"探针：W 进窗口模式 → 悬停高亮 → 点击选中 → 回车开录，截图存 tests/out/ 供肉眼核对 | 控制条出现 |
 | `drag_probe.py` | 手动探针：触发热键 → 拖框 → 截图（含透明窗口），定位"回车没反应"这类交互问题 | — |
 | `panel_e2e.py` | 剪贴板面板全链路：Win+V 弹面板 → 回车 → 内容落到原窗口 | `8/8 通过` |
 | `pin_e2e.py` | 截图 → 编辑器 → F3 钉图 → 贴图窗口位置/尺寸 → Esc 关闭 | `7/7 通过` |
