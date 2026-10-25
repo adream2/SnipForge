@@ -23,8 +23,6 @@ const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STA
 pub struct ClipboardService {
     pub store: ClipboardStore,
     running: AtomicBool,
-    /// 自己往剪贴板写内容时的静默期，避免把刚复制出去的又记一遍
-    suppress_until: Mutex<i64>,
     last_sequence: Mutex<u32>,
 }
 
@@ -33,19 +31,18 @@ impl ClipboardService {
         Self {
             store: ClipboardStore::new(paths),
             running: AtomicBool::new(false),
-            suppress_until: Mutex::new(0),
             last_sequence: Mutex::new(0),
         }
     }
 
-    pub fn suppress(&self, ms: i64) {
-        *self.suppress_until.lock() = chrono::Utc::now().timestamp_millis() + ms;
-    }
-
-    fn is_suppressed(&self) -> bool {
-        chrono::Utc::now().timestamp_millis() < *self.suppress_until.lock()
-    }
 }
+
+/*
+ * 这里**没有**"自己写剪贴板就跳过"的抑制机制，是刻意的：
+ * 截图后点复制、OCR 复制文字、面板里粘贴，都是我们自己往剪贴板写内容，
+ * 用户同样期望它们出现在历史里。重复内容由 hash 去重兜住（命中只 touch 提到最前），
+ * 不会产生垃圾条目。以前那套 suppress 曾经把用户刚复制的图永久丢掉。
+ */
 
 pub fn sequence_number() -> u32 {
     #[cfg(windows)]
@@ -91,24 +88,108 @@ pub fn start_monitor(app: AppHandle, state: Arc<AppState>, interval_ms: u64, cap
             if seq == *service.last_sequence.lock() {
                 continue;
             }
-            *service.last_sequence.lock() = seq;
 
-            // 注意：这里**不能**因为"是自己写的"就跳过。
-            // 截图后点复制、OCR 复制文字，都是往剪贴板写内容 —— 用户期望它们出现在历史里。
-            // 重复内容由 hash 去重兜住（命中就只更新时间并提到最前），不会产生垃圾条目。
+            // 注意：序列号**只在真的读到内容之后**才推进。
+            //
+            // 以前是先推进再扫描，于是「剪贴板被占用」这一轮会被当成已处理，
+            // 那次变化永远丢了 —— 而用户「Ctrl+C 完立刻按 Win+V」正好落在
+            // 源程序还在渲染剪贴板的那个窗口里，表现就是「刚复制的不在列表里」。
+            //
+            // 另外这里**不能**因为"是自己写的"就跳过：截图后点复制、OCR 复制文字
+            // 都是往剪贴板写内容，用户期望它们出现在历史里。重复内容由 hash 去重兜住。
             match scan_clipboard(&service, capture_images, skip_sensitive) {
-                Ok(Some(item)) => {
+                Ok(ScanResult::New(item)) => {
+                    *service.last_sequence.lock() = seq;
                     log::info!("剪贴板收录: {} ({} 字节)", item.kind, item.size);
                     let _ = app.emit("clipboard://new", &item);
                     let _ = app.emit("clipboard://stats", service.store.stats());
                     let _ = service.store.save();
                 }
-                Ok(None) => log::debug!("剪贴板变化无有效内容（seq={seq}）"),
-                Err(e) => log::warn!("剪贴板扫描失败: {e}"),
+                Ok(ScanResult::Duplicate) => {
+                    *service.last_sequence.lock() = seq;
+                    let _ = app.emit("clipboard://stats", service.store.stats());
+                    let _ = service.store.save();
+                }
+                Ok(ScanResult::Empty) => {
+                    *service.last_sequence.lock() = seq;
+                    log::debug!("剪贴板变化无有效内容（seq={seq}）");
+                }
+                Ok(ScanResult::Busy) => {
+                    // 不推进序列号，下一轮继续试
+                    log::debug!("剪贴板正被占用，{interval_ms}ms 后重试（seq={seq}）");
+                }
+                Err(e) => {
+                    *service.last_sequence.lock() = seq;
+                    log::warn!("剪贴板扫描失败: {e}");
+                }
             }
         }
         log::info!("剪贴板监听已停止");
     });
+}
+
+/// 立刻扫一次剪贴板，不等轮询周期。
+///
+/// 面板打开前必须调这个：用户「Ctrl+C → 立刻 Win+V」的间隔常常不到 100ms，
+/// 500ms 的轮询还没跑到，列表里就没有刚复制的那条 ——
+/// 用户看到的是「按了没反应」，或者粘出来是上一次的内容。
+///
+/// 返回新收录的条目（没有新内容就是 None）。剪贴板被占用时**不推进序列号**，
+/// 留一轮给下一次重试。
+pub fn sync_now(app: &AppHandle) -> Option<ClipboardItem> {
+    let service = app
+        .try_state::<Arc<ClipboardService>>()?
+        .inner()
+        .clone();
+    let state = app.try_state::<Arc<AppState>>()?;
+    let (capture_images, skip_sensitive) = {
+        let s = state.settings.read();
+        (s.clipboard.capture_images, s.clipboard.skip_sensitive)
+    };
+
+    let seq = sequence_number();
+    if seq == *service.last_sequence.lock() {
+        return None;
+    }
+
+    // 刚 Ctrl+C 的一瞬间，源程序还在渲染延迟格式，剪贴板是锁着的。
+    // 这一次读不到就白等 500ms 轮询，而面板已经打开了 —— 用户看到的就是
+    // 「列表里没有刚复制的东西」。所以这里最多重试 4 次（约 60ms），
+    // 用 60ms 的延迟换「列表一定是最新的」，值。
+    for attempt in 0..4 {
+        match scan_clipboard(&service, capture_images, skip_sensitive) {
+            Ok(ScanResult::New(item)) => {
+                *service.last_sequence.lock() = seq;
+                log::info!("剪贴板即时收录: {} ({} 字节)", item.kind, item.size);
+                let _ = service.store.save();
+                let _ = app.emit("clipboard://new", &item);
+                return Some(item);
+            }
+            Ok(ScanResult::Duplicate) => {
+                *service.last_sequence.lock() = seq;
+                let _ = service.store.save();
+                return None;
+            }
+            Ok(ScanResult::Empty) => {
+                *service.last_sequence.lock() = seq;
+                return None;
+            }
+            Ok(ScanResult::Busy) => {
+                if attempt == 3 {
+                    // 留给轮询线程：序列号没推进，下一轮还会再试
+                    log::debug!("剪贴板持续被占用，留给轮询重试");
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(15));
+            }
+            Err(e) => {
+                *service.last_sequence.lock() = seq;
+                log::warn!("剪贴板即时扫描失败: {e}");
+                return None;
+            }
+        }
+    }
+    None
 }
 
 pub fn stop_monitor(app: &AppHandle) {
@@ -188,13 +269,27 @@ fn has_format(format: u32) -> bool {
     unsafe { windows::Win32::System::DataExchange::IsClipboardFormatAvailable(format).is_ok() }
 }
 
-fn read_raw(capture_images: bool) -> Option<RawClip> {
+/// 读剪贴板的结果。
+///
+/// **必须区分「空」和「占用」**：刚 Ctrl+C 的一瞬间，源程序还在渲染延迟格式，
+/// 剪贴板是锁着的，这时候 `OpenClipboard` 会失败。如果把它当成「没有内容」
+/// 一起跳过，那次变化就永远丢了 —— 用户「复制完立刻粘贴」正好落在这个窗口里，
+/// 表现就是「刚复制的东西不在列表里」。
+enum ReadOutcome {
+    Got(RawClip),
+    /// 剪贴板里没有我们支持的内容（空、或者只有不认识的格式）
+    Empty,
+    /// 剪贴板被别的进程占着，内容未知，必须重试
+    Busy,
+}
+
+fn read_raw(capture_images: bool) -> ReadOutcome {
     let mut cb = match arboard::Clipboard::new() {
         Ok(c) => c,
         Err(e) => {
-            // 剪贴板被别的程序独占时会发生，下一轮会重试
-            log::debug!("打开剪贴板失败: {e}");
-            return None;
+            // 被独占：这是"暂时读不到"，不是"没有内容"，交给调用方重试
+            log::debug!("打开剪贴板失败（将重试）: {e}");
+            return ReadOutcome::Busy;
         }
     };
 
@@ -207,7 +302,7 @@ fn read_raw(capture_images: bool) -> Option<RawClip> {
                     img.height as u32,
                     img.bytes.into_owned(),
                 ) {
-                    return Some(RawClip::Image(buf));
+                    return ReadOutcome::Got(RawClip::Image(buf));
                 }
             }
             Ok(_) => {}
@@ -218,23 +313,36 @@ fn read_raw(capture_images: bool) -> Option<RawClip> {
     // 文件列表要单独走 Win32（arboard 不提供 CF_HDROP）
     let files = read_files();
     if !files.is_empty() {
-        return Some(RawClip::Files(files));
+        return ReadOutcome::Got(RawClip::Files(files));
     }
 
     match cb.get_text() {
-        Ok(text) if !text.trim().is_empty() => Some(RawClip::Text(text)),
-        _ => None,
+        Ok(text) if !text.trim().is_empty() => ReadOutcome::Got(RawClip::Text(text)),
+        _ => ReadOutcome::Empty,
     }
+}
+
+/// 一次扫描的结论。调用方靠它决定要不要推进「已处理到的序列号」。
+pub enum ScanResult {
+    /// 新收录了一条
+    New(ClipboardItem),
+    /// 内容已在历史里，只把时间往前挪
+    Duplicate,
+    /// 没有可收录的内容
+    Empty,
+    /// 暂时读不到，下轮再来
+    Busy,
 }
 
 fn scan_clipboard(
     service: &ClipboardService,
     capture_images: bool,
     _skip_sensitive: bool,
-) -> AppResult<Option<ClipboardItem>> {
-    let Some(raw) = read_raw(capture_images) else {
-        log::debug!("read_raw 返回空，剪贴板里可能是不支持的类型");
-        return Ok(None);
+) -> AppResult<ScanResult> {
+    let raw = match read_raw(capture_images) {
+        ReadOutcome::Got(r) => r,
+        ReadOutcome::Empty => return Ok(ScanResult::Empty),
+        ReadOutcome::Busy => return Ok(ScanResult::Busy),
     };
 
     let now = chrono::Utc::now().timestamp_millis();
@@ -249,7 +357,7 @@ fn scan_clipboard(
     // 相同内容：只更新时间，不重复入库
     if service.store.find_by_hash(&hash).is_some() {
         service.store.touch(&hash);
-        return Ok(None);
+        return Ok(ScanResult::Duplicate);
     }
 
     let mut item = ClipboardItem {
@@ -314,7 +422,7 @@ fn scan_clipboard(
         }
     }
 
-    Ok(Some(service.store.add(item)))
+    Ok(ScanResult::New(service.store.add(item)))
 }
 
 fn detect_kind(text: &str) -> &'static str {
@@ -371,7 +479,6 @@ pub fn paste(service: &ClipboardService, id: &str) -> AppResult<String> {
         .find_by_id(id)
         .ok_or_else(|| AppError::Msg("条目不存在".into()))?;
 
-    service.suppress(900);
     let mut cb = arboard::Clipboard::new().map_err(|e| AppError::Clipboard(e.to_string()))?;
 
     match item.kind.as_str() {
@@ -411,7 +518,6 @@ pub fn paste(service: &ClipboardService, id: &str) -> AppResult<String> {
 }
 
 pub fn copy_text(service: &ClipboardService, text: &str) -> AppResult<()> {
-    service.suppress(700);
     let mut cb = arboard::Clipboard::new().map_err(|e| AppError::Clipboard(e.to_string()))?;
     cb.set_text(text).map_err(|e| AppError::Clipboard(e.to_string()))?;
     Ok(())
@@ -421,7 +527,6 @@ pub fn copy_image_bytes(service: &ClipboardService, png: &[u8]) -> AppResult<()>
     let img = image::load_from_memory(png)
         .map_err(|e| AppError::Msg(format!("图片解码失败: {e}")))?
         .to_rgba8();
-    service.suppress(900);
     let mut cb = arboard::Clipboard::new().map_err(|e| AppError::Clipboard(e.to_string()))?;
     cb.set_image(arboard::ImageData {
         width: img.width() as usize,

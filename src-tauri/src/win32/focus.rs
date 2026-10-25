@@ -88,3 +88,25 @@ pub fn activate(hwnd: isize) -> Result<(), String> {
     }
     Err("系统拒绝了焦点切换".into())
 }
+
+/// 把焦点抢过来，并且**确认真的抢到了**才返回 true。
+///
+/// `SetForegroundWindow` 返回 TRUE 只代表请求被接受，前台窗口未必立刻变。
+/// 面板弹出来之后马上就要接收用户按键，焦点没到手的话回车会落到原窗口上，
+/// 用户看到的就是「点了没反应」。所以这里循环确认，超时就算失败。
+pub fn activate_wait(hwnd: isize, timeout_ms: u64) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    loop {
+        if foreground_hwnd() == hwnd {
+            return true;
+        }
+        let _ = activate(hwnd);
+        if std::time::Instant::now() >= deadline {
+            return foreground_hwnd() == hwnd;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+}

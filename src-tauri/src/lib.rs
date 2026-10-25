@@ -262,6 +262,20 @@ pub fn run() {
             win32::keyhook::install(app.handle().clone());
             win32::keyhook::set_active(state.settings.read().clipboard.takeover_win_v);
 
+            // 预建剪贴板面板（隐藏）：否则第一次按 Win+V 要等 webview 起来，
+            // 那几百毫秒里面板是空白的，用户敲回车毫无反应。
+            //
+            // 必须放到后台线程：建窗口内部要把请求投递给主线程再等结果，
+            // 在 setup 里（就在主线程上）直接调会自锁。延迟 400ms 是让启动
+            // 优先把主窗口画出来，用户感知不到。
+            {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    panel::prewarm(&h);
+                });
+            }
+
             // 首次启动展示主窗口，之后只在托盘里待命
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.show();

@@ -73,18 +73,26 @@ function Panel() {
   const [loading, setLoading] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  /** 取数请求序号：只认最新一次的结果 */
+  const reqSeq = useRef(0)
 
   const load = useCallback(async (kw: string, k: string) => {
+    // 挂载时有两个 effect 会同时取数（一个初始化、一个按关键字防抖），
+    // 加上每次呼出的 reset，很容易出现「先发的请求后回来」。
+    // 那样旧列表会盖掉新列表 —— 面板上看到的条目和刚触发的同步结果不一致，
+    // 用户就会「回车粘出来是上一次的内容」。用序号丢弃过期响应。
+    const mine = ++reqSeq.current
     try {
       const list = await api.clipboardList({
         keyword: kw || undefined,
         kind: k === 'all' ? undefined : k,
         limit: 80
       })
+      if (mine !== reqSeq.current) return
       setItems(list)
       setIndex(0)
     } finally {
-      setLoading(false)
+      if (mine === reqSeq.current) setLoading(false)
     }
   }, [])
 

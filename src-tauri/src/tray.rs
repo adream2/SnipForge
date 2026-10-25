@@ -81,7 +81,15 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
             "capture_window" => crate::commands::capture::trigger(&handle, "active-window"),
             "capture_full" => crate::commands::capture::trigger(&handle, "fullscreen"),
             "capture_scroll" => crate::commands::capture::trigger(&handle, "scroll"),
-            "panel_clipboard" => crate::panel::toggle(&handle),
+            // 托盘菜单回调跑在主线程，而 panel::show 里的 cursor_position() /
+            // monitor_from_point() 会把请求投递到主线程再等结果 —— 直接调用就自锁。
+            // 所以一律丢给异步运行时，这里立刻返回。
+            "panel_clipboard" => {
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::panel::toggle(&h);
+                });
+            }
             "pin_clipboard" => {
                 let h = handle.clone();
                 tauri::async_runtime::spawn(async move {

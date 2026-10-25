@@ -16,7 +16,24 @@ pub fn clipboard_list(
     query: Option<ClipboardQuery>,
 ) -> AppResult<Vec<ClipboardItem>> {
     let svc = service(&app)?;
-    Ok(crate::clipboard::list(&svc, query.unwrap_or_default()))
+    let items = crate::clipboard::list(&svc, query.unwrap_or_default());
+    // 面板打开时列表首项是谁，直接决定回车粘什么。
+    // 这条日志是排查「粘错条目」唯一的抓手，留着。
+    if let Some(first) = items.first() {
+        log::debug!(
+            "列表返回 {} 条，首项 id={} 内容={:?}",
+            items.len(),
+            first.id,
+            first
+                .text
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .take(20)
+                .collect::<String>()
+        );
+    }
+    Ok(items)
 }
 
 #[tauri::command]

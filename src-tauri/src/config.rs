@@ -107,7 +107,10 @@ impl Default for ClipboardConfig {
             skip_sensitive: false,
             retention_days: 0,
             capture_images: true,
-            takeover_win_v: false,
+            // 默认接管 Win+V：这个工具的存在意义就是替代系统剪贴板，
+            // 默认关掉等于功能默认不存在（用户会以为"按了没反应"）。
+            // 不想要的可以在设置里关，钩子仍挂着但只放行。
+            takeover_win_v: true,
         }
     }
 }
