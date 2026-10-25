@@ -75,8 +75,18 @@ export default function RecordPage({
   }
 
   return (
-    <div className="settings-wrap">
-      <div className="setting-card">
+    <>
+      <div className="page-head">
+        <h1>录屏</h1>
+        <div className="spacer" />
+        <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+          快捷键 <kbd>{settings.hotkeys.toggleRecording}</kbd>
+        </span>
+      </div>
+
+      <div className="page-body">
+        <div className="settings-wrap">
+          <div className="setting-card">
         <header>开始录制</header>
         <div style={{ padding: '14px 16px 18px', display: 'flex', gap: 10 }}>
           <button
@@ -238,6 +248,8 @@ export default function RecordPage({
           控制条本身被排除在捕获之外，所以它放在屏幕哪个位置都不会出现在视频里。
         </div>
       </div>
-    </div>
+        </div>
+      </div>
+    </>
   )
 }
