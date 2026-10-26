@@ -126,6 +126,15 @@ pub struct UploaderConfig {
     pub active_provider: String,
     pub auto_upload_on_capture: bool,
     pub copy_as_markdown: bool,
+    /// 上传前压缩（在渲染进程用 canvas 做，能出**有损 WebP**；
+    /// 后端 image crate 只支持无损 WebP，效果差一截）
+    pub compress: bool,
+    /// 转换目标：keep | webp | jpeg | png
+    pub compress_format: String,
+    /// 有损格式的质量 1-100
+    pub compress_quality: u32,
+    /// 最长边上限（像素），0 = 不限
+    pub compress_max_edge: u32,
     /// provider_id -> 该 provider 的配置键值
     pub providers: HashMap<String, HashMap<String, serde_json::Value>>,
 }
@@ -137,6 +146,12 @@ impl Default for UploaderConfig {
             active_provider: "github".into(),
             auto_upload_on_capture: false,
             copy_as_markdown: false,
+            // 默认压缩：图床场景绝大多数是"发给别人看"，不是存档原图。
+            // WebP q90 对截图几乎无损，体积常常只剩 PNG 的三分之一。
+            compress: true,
+            compress_format: "webp".into(),
+            compress_quality: 90,
+            compress_max_edge: 0,
             providers: HashMap::new(),
         }
     }

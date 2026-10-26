@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { api } from '../lib/api'
+import { extOf, prepareWithSettings } from '../lib/compress'
 import { IconImage, IconLoader, IconSave, IconUpload, IconCopy } from '../components/Icons'
 import { useToast } from '../components/Toast'
 
@@ -144,7 +145,9 @@ export default function ToolsPage() {
   const doUpload = async () => {
     if (!activeUrl) return
     try {
-      const out = await api.uploadImage(activeUrl)
+      // 先按图床配置压缩/转格式，再传
+      const p = await prepareWithSettings(activeUrl)
+      const out = await api.uploadImage(p.dataUrl, undefined, `image.${extOf(p.format)}`)
       await api.clipboardCopyText(out.result.url)
       toast.push(`已上传并复制链接：${out.result.url}`, 'success')
     } catch (e) {
@@ -434,7 +437,8 @@ export default function ToolsPage() {
                   onClick={async () => {
                     if (!result) return
                     try {
-                      const out = await api.uploadImage(result.dataUrl)
+                      const p = await prepareWithSettings(result.dataUrl)
+                      const out = await api.uploadImage(p.dataUrl, undefined, `image.${extOf(p.format)}`)
                       await api.clipboardCopyText(out.result.url)
                       toast.push(`已上传并复制链接：${out.result.url}`, 'success')
                     } catch (e) {

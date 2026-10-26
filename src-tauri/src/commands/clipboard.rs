@@ -42,6 +42,40 @@ pub fn clipboard_thumb(app: tauri::AppHandle, id: String) -> AppResult<Option<St
     Ok(crate::clipboard::thumbnail_data_url(&svc, &id))
 }
 
+/// 取剪贴板历史里某张图片的**原始**数据（不是缩略图）。
+///
+/// 图床要用它上传剪贴板里的图：缩略图是 JPEG 压过的，传上去等于二次压缩。
+/// 不给 id 就取最新一张。
+#[tauri::command]
+pub fn clipboard_image_data(app: tauri::AppHandle, id: Option<String>) -> AppResult<String> {
+    use base64::Engine;
+    const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+
+    let svc = service(&app)?;
+    let item = match id {
+        Some(id) => svc.store.find_by_id(&id),
+        None => svc
+            .store
+            .query(&ClipboardQuery {
+                keyword: None,
+                kind: Some("image".into()),
+                pinned_only: None,
+                limit: Some(1),
+                offset: None,
+            })
+            .into_iter()
+            .next(),
+    }
+    .ok_or_else(|| AppError::Msg("剪贴板里还没有图片".into()))?;
+
+    let path = svc
+        .store
+        .blob_path(&item)
+        .ok_or_else(|| AppError::Msg("图片文件已丢失".into()))?;
+    let bytes = std::fs::read(path)?;
+    Ok(format!("data:image/png;base64,{}", B64.encode(bytes)))
+}
+
 #[tauri::command]
 pub fn clipboard_stats(app: tauri::AppHandle) -> AppResult<ClipboardStats> {
     let svc = service(&app)?;

@@ -601,6 +601,7 @@ pub fn run() {
             // 剪贴板
             commands::clipboard::clipboard_list,
             commands::clipboard::clipboard_thumb,
+            commands::clipboard::clipboard_image_data,
             commands::clipboard::clipboard_stats,
             commands::clipboard::clipboard_paste,
             commands::clipboard::clipboard_toggle_pin,

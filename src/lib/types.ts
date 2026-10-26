@@ -50,6 +50,13 @@ export interface AppSettings {
     activeProvider: string
     autoUploadOnCapture: boolean
     copyAsMarkdown: boolean
+    /** 上传前压缩（canvas 做，能出有损 WebP） */
+    compress: boolean
+    /** keep | webp | jpeg | png */
+    compressFormat: string
+    compressQuality: number
+    /** 最长边上限，0 = 不限 */
+    compressMaxEdge: number
     providers: Record<string, Record<string, unknown>>
   }
   editor: {

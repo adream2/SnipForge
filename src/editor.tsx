@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { api, events } from './lib/api'
 import type { CaptureResult, OcrResult } from './lib/types'
+import { extOf, prepareWithSettings } from './lib/compress'
 import {
   ASPECTS,
   BG_PRESETS,
@@ -680,7 +681,8 @@ export default function Editor() {
     if (!dataUrl) return
     setBusy('upload')
     try {
-      const out = await api.uploadImage(dataUrl)
+      const p = await prepareWithSettings(dataUrl)
+      const out = await api.uploadImage(p.dataUrl, undefined, `image.${extOf(p.format)}`)
       await api.clipboardCopyText(out.result.url)
       setError(`上传成功，链接已复制：${out.result.url}`)
       window.setTimeout(() => setError(''), 8000)

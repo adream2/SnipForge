@@ -75,6 +75,8 @@ export const api = {
   clipboardList: (query: ClipboardQuery = {}) =>
     invoke<ClipboardItem[]>('clipboard_list', { query }),
   clipboardThumb: (id: string) => invoke<string | null>('clipboard_thumb', { id }),
+  clipboardImageData: (id?: string) =>
+    invoke<string>('clipboard_image_data', { id: id ?? null }),
   clipboardStats: () => invoke<ClipboardStats>('clipboard_stats'),
   clipboardPaste: (id: string, autoPaste = false) =>
     invoke<string>('clipboard_paste', { id, autoPaste }),
