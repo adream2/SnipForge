@@ -25,6 +25,7 @@ export const api = {
   settingsReset: () => invoke<{ settings: AppSettings }>('settings_reset'),
   pickDir: (defaultPath?: string) => invoke<string | null>('settings_pick_dir', { defaultPath }),
   appInfo: () => invoke<AppInfo>('app_info'),
+  showMain: (route?: string) => invoke<void>('app_show_main', { route: route ?? null }),
   openDir: (path: string) => invoke<void>('app_open_dir', { path }),
   openPath: (path: string) => invoke<void>('app_open_path', { path }),
 

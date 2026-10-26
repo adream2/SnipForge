@@ -116,6 +116,37 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 筛选行右侧的小工具：清空 / 设置 */
+.p-tool {
+  display: grid;
+  place-items: center;
+  height: 22px;
+  min-width: 22px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.p-tool:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* 二次确认态：变成一颗红底文字按钮，误点不会直接清库 */
+.p-tool.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+  padding: 0 8px;
+}
+
+.p-tool-text {
+  white-space: nowrap;
+}
+
 /* ---------------- 列表 ---------------- */
 
 .p-list {
@@ -137,6 +168,7 @@ body {
 }
 
 .p-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -144,6 +176,59 @@ body {
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.1s;
+}
+
+/* 行内动作：浮动在右侧，不占文本宽度（否则每行正文都会缩一截）。
+   选中行常显（键盘操作时能看见有哪些动作），其余悬停才出现。 */
+.p-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(16, 16, 24, 0.1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+
+.p-row:hover .p-actions,
+.p-row.active .p-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.p-act {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.p-act:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.p-act.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.p-act.danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .p-row.active {

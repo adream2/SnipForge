@@ -4,6 +4,12 @@ use crate::paths::Paths;
 use crate::state::AppState;
 use crate::types::AppSettingsView;
 
+/// 打开主窗口并跳到指定页面（剪贴板面板上的"设置"按钮用它）
+#[tauri::command]
+pub fn app_show_main(app: tauri::AppHandle, route: Option<String>) {
+    crate::windows::show_main(&app, route.as_deref());
+}
+
 /// 读取完整配置
 #[tauri::command]
 pub fn settings_get(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppResult<AppSettingsView> {

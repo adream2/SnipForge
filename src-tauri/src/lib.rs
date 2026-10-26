@@ -552,6 +552,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // 设置
             commands::settings_get,
+            commands::app_show_main,
             commands::settings_patch,
             commands::settings_reset,
             commands::settings_pick_dir,

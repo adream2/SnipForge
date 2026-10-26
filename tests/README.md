@@ -27,6 +27,7 @@
 | `clipboard_race.py turbo -1` | 极端：Win+V 和回车一次性塞进输入队列，零间隔 | `8/8 通过` |
 | `clipboard_race.py plain` | 普通 Ctrl+V 有没有被剪贴板监听拖累（"影响系统"的对照实验） | `15/15 全部命中` |
 | `record_e2e.py` | 录屏全链路：Ctrl+Alt+R → 选区 → 拖框 → 倒计时 → 控制条 + 覆盖层 → 停止 → 按 `record.format` 校验产物（mp4 / gif / both，both 会核对同名） | `10/10 通过` |
+| `panel_actions_probe.py` | 剪贴板面板管理操作：Alt+V 呼出 → Ctrl+P 置顶 → Del 删除，比对 history.json 校验结果 | — |
 | `window_hit_probe.py` | 诊断"光标下该选哪个窗口"：对比面积排序 / z 序 / WindowFromPoint 三种策略的命中结果，排查"识别不到窗口" | — |
 | `record_window_probe.py` | 录屏选区"窗口模式"探针：W 进窗口模式 → 悬停高亮 → 点击选中 → 回车开录，截图存 tests/out/ 供肉眼核对 | 控制条出现 |
 | `drag_probe.py` | 手动探针：触发热键 → 拖框 → 截图（含透明窗口），定位"回车没反应"这类交互问题 | — |
