@@ -23,6 +23,36 @@ fn lock() -> AppResult<std::sync::MutexGuard<'static, Option<ActiveRecording>>> 
         .map_err(|_| AppError::Msg("录制状态锁已污染".into()))
 }
 
+/// 录制格式。跟着"动作"走：点哪个按钮/按哪个快捷键就录什么，
+/// 不需要先去设置里选一遍再回来。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fmt {
+    Mp4,
+    Gif,
+}
+
+impl Fmt {
+    /// 前端/托盘传上来的字符串；认不出来一律按视频处理（最保守的默认）。
+    pub fn parse(s: Option<&str>) -> Self {
+        match s.map(|v| v.to_ascii_lowercase()).as_deref() {
+            Some("gif") => Fmt::Gif,
+            _ => Fmt::Mp4,
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Fmt::Mp4 => "mp4",
+            Fmt::Gif => "gif",
+        }
+    }
+    fn write_mp4(&self) -> bool {
+        matches!(self, Fmt::Mp4)
+    }
+    fn want_gif(&self) -> bool {
+        matches!(self, Fmt::Gif)
+    }
+}
+
 /// 没指定区域就录主屏
 fn resolve_rect(rect: Option<Rect>) -> AppResult<Rect> {
     if let Some(r) = rect {
@@ -57,14 +87,16 @@ pub fn record_start(
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     rect: Option<Rect>,
+    format: Option<String>,
 ) -> AppResult<RecordStatus> {
-    start_impl(&app, &state, rect)
+    start_impl(&app, &state, rect, Fmt::parse(format.as_deref()))
 }
 
 fn start_impl(
     app: &tauri::AppHandle,
     state: &AppState,
     rect: Option<Rect>,
+    fmt: Fmt,
 ) -> AppResult<RecordStatus> {
     let mut guard = lock()?;
     if guard.is_some() {
@@ -81,11 +113,10 @@ fn start_impl(
     };
     std::fs::create_dir_all(&dir)?;
 
-    // 输出格式：mp4 / gif / both。两个文件同名不同扩展，用户一眼能对上。
-    let fmt = cfg.record.format.to_ascii_lowercase();
-    let want_mp4 = fmt != "gif";
-    let want_gif = fmt == "gif" || fmt == "both";
-    let stem = crate::uploader::render_file_name(&cfg.save.name_template, "mp4");
+    let want_mp4 = fmt.write_mp4();
+    let want_gif = fmt.want_gif();
+    let ext = fmt.as_str();
+    let stem = crate::uploader::render_file_name(&cfg.save.name_template, ext);
 
     // 必须带扩展名：Media Foundation 靠扩展名决定封装格式，
     // 没有 .mp4 会直接建不出文件（而且报错很含糊）。
@@ -114,7 +145,7 @@ fn start_impl(
 
     let status = rec.status();
     *guard = Some(rec);
-    log::info!("开始录制区域 {:?} → {}", rect, status.path);
+    log::info!("开始录制区域 {:?}（{}）→ {}", rect, ext, status.path);
     Ok(status)
 }
 
@@ -127,14 +158,16 @@ pub fn record_start_region(
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     rect: Rect,
+    format: Option<String>,
 ) -> AppResult<()> {
     crate::windows::close_selector(&app);
 
     let handle = app.clone();
     let state = state.inner().clone();
+    let fmt = Fmt::parse(format.as_deref());
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(160));
-        if let Err(e) = start_impl(&handle, &state, Some(rect)) {
+        if let Err(e) = start_impl(&handle, &state, Some(rect), fmt) {
             log::error!("从选区开始录制失败: {e}");
             let _ = handle.emit("record://error", e.to_string());
         }
@@ -240,7 +273,7 @@ pub fn is_recording() -> bool {
 
 /// 主窗口/托盘点"开始录制区域"时走这条：
 /// 打开选区窗口，用户框完再真正开录。
-pub fn trigger_region_record(app: &tauri::AppHandle) -> AppResult<()> {
+pub fn trigger_region_record(app: &tauri::AppHandle, fmt: Fmt) -> AppResult<()> {
     if is_recording() {
         return Err(AppError::Msg("已经在录制中".into()));
     }
@@ -260,19 +293,19 @@ pub fn trigger_region_record(app: &tauri::AppHandle) -> AppResult<()> {
         .or_else(|| payload.displays.first())
         .ok_or_else(|| AppError::Msg("没有可用显示器".into()))?;
 
-    crate::windows::open_selector(app, target.bounds, target.id, true)
+    crate::windows::open_selector(app, target.bounds, target.id, Some(fmt.as_str()))
 }
 
 /* ------------------ 给托盘 / 快捷键用的公开入口 ------------------ */
 
 /// 录主屏
-pub fn start_fullscreen(app: &tauri::AppHandle) -> AppResult<RecordStatus> {
+pub fn start_fullscreen(app: &tauri::AppHandle, fmt: Fmt) -> AppResult<RecordStatus> {
     let state = app
         .try_state::<Arc<AppState>>()
         .ok_or_else(|| AppError::Msg("状态未初始化".into()))?
         .inner()
         .clone();
-    start_impl(app, &state, None)
+    start_impl(app, &state, None, fmt)
 }
 
 /// 停止并收尾（托盘菜单用，行为和命令一致）
@@ -315,12 +348,13 @@ pub fn stop_recording(app: &tauri::AppHandle) -> AppResult<RecordResult> {
 /// 不先藏的话，选区背景图（截屏）里会有我们自己的窗口，
 /// 用户刚框到的那块区域大概率就是它。
 #[tauri::command]
-pub fn record_pick_region(app: tauri::AppHandle) -> AppResult<()> {
+pub fn record_pick_region(app: tauri::AppHandle, format: Option<String>) -> AppResult<()> {
     crate::windows::hide_main(&app);
     let handle = app.clone();
+    let fmt = Fmt::parse(format.as_deref());
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(180));
-        if let Err(e) = trigger_region_record(&handle) {
+        if let Err(e) = trigger_region_record(&handle, fmt) {
             log::warn!("进入录制选区失败: {e}");
             let _ = handle.emit("record://error", e.to_string());
         }
@@ -330,12 +364,13 @@ pub fn record_pick_region(app: tauri::AppHandle) -> AppResult<()> {
 
 /// 主窗口里点"录制全屏"
 #[tauri::command]
-pub fn record_start_fullscreen(app: tauri::AppHandle) -> AppResult<()> {
+pub fn record_start_fullscreen(app: tauri::AppHandle, format: Option<String>) -> AppResult<()> {
     crate::windows::hide_main(&app);
     let handle = app.clone();
+    let fmt = Fmt::parse(format.as_deref());
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(180));
-        if let Err(e) = start_fullscreen(&handle) {
+        if let Err(e) = start_fullscreen(&handle, fmt) {
             log::warn!("录制全屏失败: {e}");
             let _ = handle.emit("record://error", e.to_string());
         }
@@ -343,13 +378,15 @@ pub fn record_start_fullscreen(app: tauri::AppHandle) -> AppResult<()> {
     Ok(())
 }
 
-/// 快捷键 / 托盘上的"录屏"：录着就停，没录就进选区
-pub fn toggle(app: &tauri::AppHandle) {
+/// 快捷键 / 托盘上的"录屏"：录着就停，没录就按 `fmt` 进选区。
+///
+/// 停止时不看格式 —— 谁在录就停谁，用户按哪个键都是"停"。
+pub fn toggle(app: &tauri::AppHandle, fmt: Fmt) {
     if is_recording() {
         if let Err(e) = stop_recording(app) {
             log::warn!("停止录制失败: {e}");
         }
-    } else if let Err(e) = trigger_region_record(app) {
+    } else if let Err(e) = trigger_region_record(app, fmt) {
         log::warn!("开始录制失败: {e}");
     }
 }

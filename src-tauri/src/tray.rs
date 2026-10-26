@@ -1,7 +1,8 @@
+use crate::commands::record::Fmt;
 use crate::error::AppResult;
 use crate::state::AppState;
 use std::sync::Arc;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager};
 
 /// 构建托盘菜单。
@@ -27,6 +28,7 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     let a_panel = accel(&hk.clipboard_panel);
     let a_pin_clip = accel(&hk.pin_from_clipboard);
     let a_record = accel(&hk.toggle_recording);
+    let a_record_gif = accel(&hk.toggle_recording_gif);
 
     let region = MenuItem::with_id(app, "capture_region", "区域截图", true, a_region.as_deref())?;
     let window_shot =
@@ -42,9 +44,16 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     let pin_clip =
         MenuItem::with_id(app, "pin_clipboard", "贴剪贴板图片", true, a_pin_clip.as_deref())?;
     let sep_rec = PredefinedMenuItem::separator(app)?;
-    let rec_region =
-        MenuItem::with_id(app, "record_region", "录制区域…", true, a_record.as_deref())?;
-    let rec_full = MenuItem::with_id(app, "record_full", "录制全屏", true, None::<&str>)?;
+    // 视频和 GIF 分成两个子菜单：点哪个录哪个，不用先进软件改设置
+    let vid_region =
+        MenuItem::with_id(app, "rec_mp4_region", "录制区域…", true, a_record.as_deref())?;
+    let vid_full = MenuItem::with_id(app, "rec_mp4_full", "录制全屏", true, None::<&str>)?;
+    let gif_region =
+        MenuItem::with_id(app, "rec_gif_region", "录制区域…", true, a_record_gif.as_deref())?;
+    let gif_full = MenuItem::with_id(app, "rec_gif_full", "录制全屏", true, None::<&str>)?;
+    let rec_video =
+        Submenu::with_items(app, "录制视频 (MP4)", true, &[&vid_region, &vid_full])?;
+    let rec_gif = Submenu::with_items(app, "录制 GIF", true, &[&gif_region, &gif_full])?;
     let rec_stop = MenuItem::with_id(app, "record_stop", "停止录制", true, None::<&str>)?;
     let tools = MenuItem::with_id(app, "show_tools", "图片工具", true, None::<&str>)?;
     let upload = MenuItem::with_id(app, "show_upload", "图床设置", true, None::<&str>)?;
@@ -64,8 +73,8 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
             &history,
             &pin_clip,
             &sep_rec,
-            &rec_region,
-            &rec_full,
+            &rec_video,
+            &rec_gif,
             &rec_stop,
             &tools,
             &upload,
@@ -108,18 +117,20 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
                     }
                 });
             }
-            "record_region" => {
+            "rec_mp4_region" | "rec_gif_region" => {
+                let fmt = if id == "rec_gif_region" { Fmt::Gif } else { Fmt::Mp4 };
                 let h = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::commands::record::trigger_region_record(&h) {
+                    if let Err(e) = crate::commands::record::trigger_region_record(&h, fmt) {
                         log::warn!("录制区域失败: {e}");
                     }
                 });
             }
-            "record_full" => {
+            "rec_mp4_full" | "rec_gif_full" => {
+                let fmt = if id == "rec_gif_full" { Fmt::Gif } else { Fmt::Mp4 };
                 let h = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::commands::record::start_fullscreen(&h) {
+                    if let Err(e) = crate::commands::record::start_fullscreen(&h, fmt) {
                         log::warn!("录制全屏失败: {e}");
                     }
                 });

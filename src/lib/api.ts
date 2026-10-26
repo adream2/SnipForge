@@ -12,6 +12,7 @@ import type {
   PluginState,
   ProviderMeta,
   Rect,
+  RecordFormat,
   RecordResult,
   RecordStatus,
   UploadOutcome
@@ -89,14 +90,17 @@ export const api = {
     invoke<string>('clipboard_panel_paste', { id, copyOnly }),
   clipboardPanelHide: () => invoke<void>('clipboard_panel_hide'),
   /* ---------------- 录屏 ---------------- */
-  recordStart: (rect?: Rect | null) =>
-    invoke<RecordStatus>('record_start', { rect: rect ?? null }),
+  recordStart: (rect?: Rect | null, format?: RecordFormat) =>
+    invoke<RecordStatus>('record_start', { rect: rect ?? null, format: format ?? null }),
   /** 主窗口里的"录制区域…"：收起主窗口 → 进选区 → 框完自动开录 */
-  recordPickRegion: () => invoke<void>('record_pick_region'),
+  recordPickRegion: (format?: RecordFormat) =>
+    invoke<void>('record_pick_region', { format: format ?? null }),
   /** 主窗口里的"录制全屏" */
-  recordStartFullscreen: () => invoke<void>('record_start_fullscreen'),
+  recordStartFullscreen: (format?: RecordFormat) =>
+    invoke<void>('record_start_fullscreen', { format: format ?? null }),
   /** 选区框完后直接开录（先关选区再采集） */
-  recordStartRegion: (rect: Rect) => invoke<void>('record_start_region', { rect }),
+  recordStartRegion: (rect: Rect, format?: RecordFormat) =>
+    invoke<void>('record_start_region', { rect, format: format ?? null }),
   recordBegin: () => invoke<void>('record_begin'),
   recordPause: () => invoke<void>('record_pause'),
   recordResume: () => invoke<void>('record_resume'),

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, events } from './lib/api'
-import type { DisplayPreview, FramePayload, NativeWindowInfo, Rect } from './lib/types'
+import type { DisplayPreview, FramePayload, NativeWindowInfo, Rect, RecordFormat } from './lib/types'
 import { IconCheck, IconWindow, IconMonitor, IconScroll, IconX } from './components/Icons'
 import './styles/selector.css'
 
@@ -15,10 +15,13 @@ import './styles/selector.css'
  *
  * 提交给后端的一律是物理像素。
  */
-/** 从 URL 读模式：selector.html?mode=record 表示框完直接开录 */
-const IS_RECORD =
-  typeof location !== 'undefined' &&
-  new URLSearchParams(location.search).get('mode') === 'record'
+const PARAMS =
+  typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
+
+/** 从 URL 读模式：selector.html?mode=record&fmt=gif 表示框完直接录 GIF */
+const IS_RECORD = PARAMS.get('mode') === 'record'
+/** 进来时带的格式（由点击的按钮/热键决定）；在选区里还能按 G / V 改 */
+const INITIAL_FMT: RecordFormat = PARAMS.get('fmt') === 'gif' ? 'gif' : 'mp4'
 
 /** 录屏模式默认就是"智能窗口选择"：光标悬停即高亮所在窗口，单击选中整个窗口，
  * 拖拽则框任意区域。不需要先按 W 切模式 —— 那个快捷键藏在看不见的地方，
@@ -35,6 +38,8 @@ export default function Selector() {
   const [selection, setSelection] = useState<Rect | null>(null)
   const [hoverWindow, setHoverWindow] = useState<NativeWindowInfo | null>(null)
   const [mode, setMode] = useState<'region' | 'window' | 'scroll'>('region')
+  /** 录成什么：视频还是 GIF。跟着进来的动作走，选区里可当场改 */
+  const [fmt, setFmt] = useState<RecordFormat>(INITIAL_FMT)
   const [busy, setBusy] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -132,6 +137,11 @@ export default function Selector() {
       }
       if (e.key === 's' && !e.ctrlKey && !e.metaKey) setMode('scroll')
       if (e.key === 'w' && !e.ctrlKey && !e.metaKey && !e.altKey) setMode('window')
+      // 录屏模式：G = 录 GIF，V = 录视频。不用退出去重来
+      if (IS_RECORD && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === 'g') setFmt('gif')
+        if (e.key === 'v') setFmt('mp4')
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -233,7 +243,7 @@ export default function Selector() {
       } else {
         if (IS_RECORD) {
           // 录屏：后端会先关掉这个覆盖层再开采集，避免把深色遮罩录进去
-          await api.recordStartRegion(phys)
+          await api.recordStartRegion(phys, fmt)
         } else {
           await api.captureCommit(display.id, phys)
         }
@@ -413,12 +423,37 @@ export default function Selector() {
             <IconScroll size={15} />
           </button>
         )}
+        {IS_RECORD && (
+          <>
+            <div className="divider" />
+            <div className="selector-fmt">
+              <button
+                className={fmt === 'mp4' ? 'active' : ''}
+                title="录成视频 MP4（V）"
+                onClick={() => setFmt('mp4')}
+              >
+                视频
+              </button>
+              <button
+                className={fmt === 'gif' ? 'active' : ''}
+                title="录成 GIF 动图（G）"
+                onClick={() => setFmt('gif')}
+              >
+                GIF
+              </button>
+            </div>
+          </>
+        )}
         <div className="divider" />
         <button title="取消（Esc）" onClick={() => void api.captureCancel()}>
           <IconX size={15} />
         </button>
         <button
-          title={IS_RECORD ? '开始录制（Enter）' : '确认（Enter）'}
+          title={
+            IS_RECORD
+              ? `开始录制${fmt === 'gif' ? ' GIF' : '视频'}（Enter）`
+              : '确认（Enter）'
+          }
           onClick={() => void commit()}
           style={{ background: 'var(--accent)' }}
         >
@@ -432,7 +467,7 @@ export default function Selector() {
           style={{ pointerEvents: 'none', bottom: IS_RECORD ? 112 : undefined }}
         >
           {IS_RECORD
-            ? '移动到窗口上单击即可选中 · 拖拽框选任意区域 · 回车开始录制 · Esc 取消'
+            ? `${fmt === 'gif' ? 'GIF' : '视频'}录制 · 移动到窗口上单击选中 · 拖拽框选任意区域 · G/V 切换格式 · 回车开始`
             : '拖拽框选 · 回车确认 · Esc 取消 · W 窗口模式 · S 长截图'}
         </div>
       )}

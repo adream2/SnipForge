@@ -29,7 +29,9 @@ const HOTKEY_FIELDS: Array<{ key: string; label: string }> = [
   { key: 'activeWindowCapture', label: '窗口截图' },
   { key: 'scrollCapture', label: '滚动长截图' },
   { key: 'clipboardPanel', label: '剪贴板面板' },
-  { key: 'pinFromClipboard', label: '剪贴板贴图' }
+  { key: 'pinFromClipboard', label: '剪贴板贴图' },
+  { key: 'toggleRecording', label: '录屏（视频）' },
+  { key: 'toggleRecordingGif', label: '录屏（GIF）' }
 ]
 
 export default function SettingsPage({

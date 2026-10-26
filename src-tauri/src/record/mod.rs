@@ -3,6 +3,7 @@
 //! 分层：
 //!   - `mf`     —— Media Foundation H.264/MP4 写入器（纯编码，不含业务）
 //!   - `gif`    —— GIF 写入器（降采样 + 静态帧合并 + 逐帧调色板）
+//!   - `dxgi`   —— 桌面复制取帧（自己实现，见该文件的"为什么不用 xcap"）
 //!   - `cursor` —— 把真实鼠标光标合进画面（DXGI 帧不含光标）
 //!   - 本文件   —— 会话：取帧、定拍、裁剪、暂停、停止
 //!
@@ -17,6 +18,7 @@
 //!     的接口；抓整屏再裁是唯一的做法，成本也多不了多少。
 
 pub mod cursor;
+pub mod dxgi;
 pub mod gif;
 pub mod mf;
 
@@ -349,42 +351,32 @@ fn run(
     live: Arc<Live>,
     gif_plan: Option<GifPlan>,
 ) -> AppResult<RecordResult> {
-    let monitor = pick_monitor(&opts.rect)?;
-    let mx = monitor.x().unwrap_or(0);
-    let my = monitor.y().unwrap_or(0);
-    let mw = monitor.width().unwrap_or(width);
-    let mh = monitor.height().unwrap_or(height);
-
-    // 区域相对显示器左上角的偏移
-    let ox = (opts.rect.x - mx).max(0);
-    let oy = (opts.rect.y - my).max(0);
-    if ox + width as i32 > mw as i32 || oy + height as i32 > mh as i32 {
-        return Err(AppError::Msg(format!(
-            "录制区域超出显示器范围（区域 {width}×{height}，偏移 {ox},{oy}，显示器 {mw}×{mh}）"
-        )));
-    }
-
-    // 桌面复制是独占资源：上一次会话刚释放时，马上再抢会返回 E_INVALIDARG。
-    // 用户"录完马上再录一段"是很常见的操作，所以这里重试几次再报错。
+    // 桌面复制是独占资源。虽然我们自己的会话是 Drop 即释放，但别的录屏软件
+    // 或者系统刚切过分辨率时，头一次可能起不来 —— 给几次短重试。
     let mut attempt = 0;
-    let (recorder, rx) = loop {
-        match monitor.video_recorder() {
-            Ok(v) => break v,
+    let mut dup = loop {
+        match dxgi::Duplicator::new(opts.rect.x, opts.rect.y, width, height) {
+            Ok(d) => break d,
             Err(e) => {
                 attempt += 1;
                 if attempt >= 4 {
-                    return Err(AppError::Msg(format!(
-                        "启动屏幕采集失败（桌面复制被占用，请稍后重试）: {e}"
-                    )));
+                    return Err(AppError::Msg(format!("启动屏幕采集失败: {e}")));
                 }
                 log::warn!("屏幕采集启动失败，{}ms 后重试: {e}", 150 * attempt);
                 std::thread::sleep(Duration::from_millis(150 * attempt as u64));
             }
         }
     };
-    recorder
-        .start()
-        .map_err(|e| AppError::Msg(format!("屏幕采集启动失败: {e}")))?;
+
+    // 区域相对这块显示器左上角的偏移（坐标以 DXGI 输出的桌面原点为准）
+    let ox = (opts.rect.x - dup.origin_x).max(0);
+    let oy = (opts.rect.y - dup.origin_y).max(0);
+    if ox + width as i32 > dup.width as i32 || oy + height as i32 > dup.height as i32 {
+        return Err(AppError::Msg(format!(
+            "录制区域超出显示器范围（区域 {width}×{height}，偏移 {ox},{oy}，显示器 {}×{}）",
+            dup.width, dup.height
+        )));
+    }
 
     let mut writer = if opts.write_mp4 {
         Some(mf::Mp4Writer::new(
@@ -416,7 +408,6 @@ fn run(
 
     let frame_dur = Duration::from_nanos(1_000_000_000u64 / opts.fps.max(1) as u64);
     let mut next_tick = Instant::now();
-    let mut last_frame: Option<Vec<u8>> = None;
     let mut cropped = vec![0u8; (width * height * 4) as usize];
     let mut tracker = CursorTracker::default();
     let stride = (width * 4) as usize;
@@ -431,8 +422,8 @@ fn run(
         height,
         opts.fps,
         path.display(),
-        mw,
-        mh
+        dup.width,
+        dup.height
     );
 
     loop {
@@ -448,26 +439,28 @@ fn run(
             continue;
         }
 
-        // 在下一个节拍到来之前，把队列里的帧全部收掉，只留最新的一个。
+        // 在下一个节拍到来之前，把能拿到的帧都取掉，只留最新的一帧。
         // 不这么做的话，60Hz 的屏幕更新会把 30fps 的时间轴拖乱。
+        // （桌面复制只在画面变化时出帧，`acquire` 超时返回 false 就是"没动"）
         while Instant::now() < next_tick {
             let left = next_tick.saturating_duration_since(Instant::now());
-            match rx.recv_timeout(left) {
-                Ok(f) => last_frame = Some(f.raw),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    log::warn!("屏幕采集通道断开");
-                    last_frame = last_frame.take();
-                    break;
+            let wait = left.as_millis().clamp(1, 40) as u32;
+            match dup.acquire(wait) {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(e) => {
+                    // 切分辨率 / 会话失效：这里直接报错结束，控制条会给出提示
+                    return Err(e);
                 }
             }
         }
 
-        if let Some(raw) = &last_frame {
+        if dup.has_frame() {
+            let raw = &dup.frame;
             // 裁出区域。整屏帧是 RGBA、自上而下、无行填充
             for y in 0..height {
                 let sy = (oy as u32 + y) as usize;
-                let src_off = (sy * mw as usize + ox as usize) * 4;
+                let src_off = (sy * dup.width as usize + ox as usize) * 4;
                 let dst_off = y as usize * stride;
                 if src_off + stride <= raw.len() {
                     cropped[dst_off..dst_off + stride]
@@ -518,7 +511,6 @@ fn run(
                 }
                 if let Some(w) = writer.as_mut() {
                     if let Err(e) = w.write_rgba(&cropped) {
-                        let _ = recorder.stop();
                         return Err(e);
                     }
                 }
@@ -567,7 +559,6 @@ fn run(
     if let Some(mut w) = writer.take() {
         w.finish()?;
     }
-    let _ = recorder.stop();
 
     // GIF 收尾放在 MP4 之后：它要多写一帧 + 文件尾，别让它拖慢 MP4 的落盘
     let mut gif_out: Option<(String, u64, u64, u32, u32)> = None;

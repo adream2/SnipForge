@@ -77,7 +77,7 @@ async fn run_capture(app: &AppHandle, mode: &str) -> AppResult<()> {
                 .find(|d| crate::windows::rect_contains(&d.bounds, cx, cy))
                 .unwrap_or(first);
 
-            win::open_selector(app, target.bounds, target.id, false)?;
+            win::open_selector(app, target.bounds, target.id, None)?;
         }
     }
     Ok(())
@@ -127,7 +127,7 @@ pub fn capture_start(
             Ok(_) => {
                 if let Some(payload) = capture::payload_of(&inner) {
                     if let Some(first) = payload.displays.first() {
-                        let _ = win::open_selector(&handle, first.bounds, first.id, false);
+                        let _ = win::open_selector(&handle, first.bounds, first.id, None);
                     }
                 }
             }

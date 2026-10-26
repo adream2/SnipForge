@@ -67,11 +67,13 @@ pub fn emit_to_main(app: &AppHandle, event: &str, payload: impl serde::Serialize
 /// 打开区域选择覆盖层。
 ///
 /// `for_record` 为 true 时前端走"录屏"分支：框完直接开录，不进编辑器。
+/// `record_fmt`：空串 = 截图模式；"mp4" / "gif" = 录屏模式，决定选区里显示
+/// 什么，以及回车后录成什么。格式跟着"动作"走，而不是去设置里预选。
 pub fn open_selector(
     app: &AppHandle,
     display_rect: Rect,
     display_id: u32,
-    for_record: bool,
+    record_fmt: Option<&str>,
 ) -> AppResult<()> {
     close_selector(app);
 
@@ -79,10 +81,10 @@ pub fn open_selector(
         .cursor_position()
         .map_err(|e| AppError::Msg(format!("读取鼠标位置失败: {e}")))?;
 
-    let url = if for_record {
-        WebviewUrl::App("selector.html?mode=record".into())
-    } else {
-        WebviewUrl::App("selector.html".into())
+    let for_record = record_fmt.is_some();
+    let url = match record_fmt {
+        Some(fmt) => WebviewUrl::App(format!("selector.html?mode=record&fmt={fmt}").into()),
+        None => WebviewUrl::App("selector.html".into()),
     };
     let builder = WebviewWindowBuilder::new(app, SELECTOR, url)
         .title(if for_record {

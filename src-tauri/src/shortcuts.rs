@@ -59,25 +59,28 @@ pub fn register_all(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     bind!(cfg.active_window_capture, "窗口截图", "active-window");
     bind!(cfg.scroll_capture, "长截图", "scroll");
 
-    // 录屏：按一下进选区，再按一下停止
-    {
-        let accel = cfg.toggle_recording.clone();
-        if !accel.trim().is_empty() {
-            let outcome = gs.on_shortcut(accel.as_str(), |app, _sc, event| {
-                if event.state() == ShortcutState::Pressed {
-                    crate::commands::record::toggle(app);
-                }
-            });
-            if let Err(e) = &outcome {
-                log::warn!("快捷键 录屏 ({accel}) 注册失败: {e}");
-            }
-            results.push(HotkeyResult {
-                action: "录屏".into(),
-                accelerator: accel,
-                ok: outcome.is_ok(),
-                reason: outcome.err().map(|e| format!("注册失败: {e}")),
-            });
+    // 录屏：视频和 GIF 各一个键，按哪个就录哪种；录着的时候两个键都是"停止"
+    for (label, accel, fmt) in [
+        ("录屏", cfg.toggle_recording.clone(), crate::commands::record::Fmt::Mp4),
+        ("录屏 GIF", cfg.toggle_recording_gif.clone(), crate::commands::record::Fmt::Gif),
+    ] {
+        if accel.trim().is_empty() {
+            continue;
         }
+        let outcome = gs.on_shortcut(accel.as_str(), move |app, _sc, event| {
+            if event.state() == ShortcutState::Pressed {
+                crate::commands::record::toggle(app, fmt);
+            }
+        });
+        if let Err(e) = &outcome {
+            log::warn!("快捷键 {label} ({accel}) 注册失败: {e}");
+        }
+        results.push(HotkeyResult {
+            action: label.into(),
+            accelerator: accel,
+            ok: outcome.is_ok(),
+            reason: outcome.err().map(|e| format!("注册失败: {e}")),
+        });
     }
 
     // 面板类快捷键动作不同，单独处理

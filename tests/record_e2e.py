@@ -8,11 +8,11 @@
   3. 停止后产出文件，能读出时长 / 解出帧（容器没写坏）
   4. 覆盖层与录制区域等大，这是整套"所见即所得"的前提
 
-产物按 settings.json 里的 record.format 判定：
-  mp4  → 只出 mp4；gif → 只出 gif；both → 两个都要有，且同名不同扩展。
+格式不再是全局设置，而是跟着"动作"走：Ctrl+Alt+R = 录视频，Ctrl+Alt+G = 录 GIF。
+所以这里也用第二个参数指定要测哪种：
 
 跑法：先启动 snipforge.exe，再
-    python tests/record_e2e.py [录制秒数]
+    python tests/record_e2e.py [录制秒数] [mp4|gif]
 """
 
 import ctypes
@@ -65,18 +65,19 @@ def tap(vk):
     time.sleep(0.05)
 
 
-def record_hotkey():
-    """Ctrl+Alt+R —— 默认录屏快捷键。
+def record_hotkey(fmt="mp4"):
+    """Ctrl+Alt+R = 录视频，Ctrl+Alt+G = 录 GIF。
 
     不用 Alt+R 是因为它在不少机器上被别的软件占着（本机就是），
     RegisterHotKey 直接失败，测出来像是功能坏了。
     """
+    letter = 0x47 if fmt == "gif" else 0x52  # G / R
     key(0x11)  # Ctrl
     key(0x12)  # Alt
     time.sleep(0.03)
-    key(0x52)  # R
+    key(letter)
     time.sleep(0.05)
-    key(0x52, True)
+    key(letter, True)
     time.sleep(0.03)
     key(0x12, True)
     key(0x11, True)
@@ -199,8 +200,11 @@ def main():
     print(f"snipforge pid={pid}", flush=True)
 
     cfg = read_cfg()
-    fmt = ((cfg.get("record") or {}).get("format") or "mp4").lower()
-    print(f"输出格式（settings.json）：{fmt}", flush=True)
+    fmt = (sys.argv[2] if len(sys.argv) > 2 else "mp4").lower()
+    if fmt not in ("mp4", "gif"):
+        print("格式只能是 mp4 或 gif")
+        return 2
+    print(f"本次录制格式：{fmt}", flush=True)
 
     started_at = time.time()
 
@@ -208,8 +212,8 @@ def main():
     subprocess.Popen(["notepad.exe"])
     time.sleep(1.2)
 
-    print("== 1. Ctrl+Alt+R 进入录制选区 ==", flush=True)
-    record_hotkey()
+    print(f"== 1. {'Ctrl+Alt+G' if fmt == 'gif' else 'Ctrl+Alt+R'} 进入录制选区 ==", flush=True)
+    record_hotkey(fmt)
     sel = wait_window(pid, "Record Region", timeout=6)
     check("选区窗口以录屏模式打开", sel is not None,
           f"{sel['title']} {sel['w']}x{sel['h']}" if sel else "没出现")
@@ -244,10 +248,10 @@ def main():
     u32.SetCursorPos((x1 + x2) // 2, (y1 + y2) // 2)
     time.sleep(4 + seconds)
 
-    print("== 4. 再按一次 Ctrl+Alt+R 停止 ==", flush=True)
+    print("== 4. 再按一次快捷键停止 ==", flush=True)
     # 控制条故意不抢焦点（不然用户没法边录边操作别的程序），
     # 所以停止走全局快捷键；控制条自己聚焦时按 Esc 也能停。
-    record_hotkey()
+    record_hotkey(fmt)
     time.sleep(2.5)
 
     outdir = save_dir(cfg)
@@ -257,7 +261,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     produced = []
 
-    if fmt in ("mp4", "both"):
+    if fmt == "mp4":
         mp4 = newest(outdir, "mp4", started_at)
         check("生成了 mp4", mp4 is not None, mp4 or f"在 {outdir} 下没找到")
         if mp4:
@@ -271,7 +275,7 @@ def main():
             check("mp4 能解出帧（容器完好）", "ok" in r.stdout,
                   r.stdout.strip() or r.stderr.strip())
 
-    if fmt in ("gif", "both"):
+    else:
         gif = newest(outdir, "gif", started_at)
         check("生成了 gif", gif is not None, gif or f"在 {outdir} 下没找到")
         if gif:
@@ -283,13 +287,9 @@ def main():
                                capture_output=True, text=True)
             check("gif 能解出帧（编码完好）", "ok" in r.stdout,
                   r.stdout.strip() or r.stderr.strip())
-            pair = mp4_gif_pair(outdir, started_at) if fmt == "both" else None
-            if pair:
-                a, b = pair
-                check("mp4 与 gif 同名不同扩展",
-                      os.path.splitext(os.path.basename(a))[0]
-                      == os.path.splitext(os.path.basename(b))[0],
-                      f"{os.path.basename(a)} / {os.path.basename(b)}")
+            # 只出 GIF 时不应该再多出一个 mp4
+            stray = newest(outdir, "mp4", started_at)
+            check("没有多余的同名 mp4", stray is None, stray or "干净")
 
     print(flush=True)
     ok = sum(1 for _, v in results if v)

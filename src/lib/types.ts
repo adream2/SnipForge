@@ -74,8 +74,6 @@ export interface AppSettings {
     cursorHighlight: boolean
     magnifier: boolean
     annotate: boolean
-    /** mp4 | gif | both */
-    format: string
     gifFps: number
     /** GIF 输出最大宽度，0 = 原尺寸 */
     gifWidth: number
@@ -250,6 +248,9 @@ export interface PinInit {
 }
 
 /* ---------------- 录屏 ---------------- */
+
+/** 录制格式：跟着录制动作走，不是全局设置 */
+export type RecordFormat = 'mp4' | 'gif'
 
 export interface RecordStatus {
   running: boolean
