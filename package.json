@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
+    "portable": "node scripts/make-portable.mjs",
     "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {

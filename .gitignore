@@ -6,6 +6,9 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 
+# 绿色包输出（npm run portable）
+dist-portable/
+
 # 本地工具链缓存
 .tools/
 

@@ -338,9 +338,22 @@ npm run app:dev
 
 # 打包安装程序
 npm run app:build
+
+# 打绿色包（免安装 zip）
+npm run portable
 ```
 
-产物在 `src-tauri/target/release/bundle/nsis/`。
+产物：
+- 安装包 → `src-tauri/target/release/bundle/nsis/SnipForge_<版本>_x64-setup.exe`（NSIS，当前用户级安装，中文+英文）
+- 绿色包 → `dist-portable/SnipForge_<版本>_x64_portable.zip`
+
+**绿色包不能只拷 exe。** `plugins/*.uploader.json`（内置声明式图床）是 exe 外部的资源，
+打包后由 `app.path().resource_dir()` 定位——Windows 上就是 exe 所在目录。
+只拿 exe 出去，插件页里那两个内置图床会**静默消失**（加载逻辑里 `read_dir` 失败是 `continue`，
+不报错），所以 `npm run portable` 会把 `plugins/` 一起放进 zip。
+
+绿色版与安装版共用同一份数据目录 `%APPDATA%\fun.lxzt.snipforge`（配置、剪贴板历史、日志），
+换形态不用重新配置，卸载也只需删掉程序目录。
 
 ### 自检
 
