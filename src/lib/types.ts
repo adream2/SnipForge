@@ -22,6 +22,12 @@ export interface ConfigField {
   visibleWhen?: { key: string; equals: unknown }
 }
 
+/** 图床里的一个目录（浏览用） */
+export interface DirEntry {
+  name: string
+  path: string
+}
+
 export interface ProviderMeta {
   id: string
   name: string
@@ -29,6 +35,10 @@ export interface ProviderMeta {
   description?: string
   fields: ConfigField[]
   requiresNetwork: boolean
+  /** 能否给单次上传指定目录 */
+  supportsDir?: boolean
+  /** 能否列出已有目录 */
+  canBrowse?: boolean
 }
 
 export interface AppSettings {

@@ -626,6 +626,7 @@ pub fn run() {
             commands::upload::upload_set_active,
             commands::upload::upload_image,
             commands::upload::upload_test,
+            commands::upload::upload_list_dirs,
             // 插件
             commands::plugins::plugins_state,
             commands::plugins::plugins_toggle,

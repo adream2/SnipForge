@@ -10,7 +10,7 @@
 pub mod providers;
 
 use crate::error::{AppError, AppResult};
-use crate::types::{ProviderMeta, UploadOutcome, UploadResult};
+use crate::types::{DirEntry, ProviderMeta, UploadOutcome, UploadResult};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,11 +23,19 @@ pub struct UploadFile {
     pub file_name: String,
     pub mime_type: String,
     pub buffer: Vec<u8>,
+    /// 单次上传的目录覆盖。None = 用配置里的路径。
+    /// 已经在命令层按模板渲染过（{yyyy}/{MM} 之类），到这儿就是最终值。
+    pub dir: Option<String>,
 }
 
 pub trait Provider: Send + Sync {
     fn meta(&self) -> ProviderMeta;
     fn upload(&self, file: &UploadFile, cfg: &Cfg) -> AppResult<UploadResult>;
+
+    /// 列某个目录下的子目录。只有 can_browse 的图床需要实现。
+    fn list_dirs(&self, _cfg: &Cfg, _path: &str) -> AppResult<Vec<DirEntry>> {
+        Err(AppError::Msg("这个图床不支持浏览目录".into()))
+    }
 }
 
 pub struct UploaderRegistry {
@@ -193,4 +201,30 @@ pub fn build_registry() -> UploaderRegistry {
     registry.register(Arc::new(providers::LocalFolderProvider));
     log::info!("已注册内置图床 {} 个", registry.list().len());
     registry
+}
+
+/// 展开目录模板：{yyyy} {MM} {dd} {HH} {mm} {ss}，并去掉首尾斜杠、合并多余斜杠。
+///
+/// 和文件名的模板是同一套占位符，方便用户写 `blog/{yyyy}/{MM}` 这种"按年月归档"。
+pub fn render_dir(template: &str) -> String {
+    let now = chrono::Local::now();
+    let mut out = template.trim().to_string();
+    for (key, value) in [
+        ("{yyyy}", now.format("%Y").to_string()),
+        ("{yy}", now.format("%y").to_string()),
+        ("{MM}", now.format("%m").to_string()),
+        ("{dd}", now.format("%d").to_string()),
+        ("{HH}", now.format("%H").to_string()),
+        ("{mm}", now.format("%M").to_string()),
+        ("{ss}", now.format("%S").to_string()),
+    ] {
+        out = out.replace(key, &value);
+    }
+    // 干掉空段（a//b → a/b），别让远端出现奇怪的路径
+    let parts: Vec<&str> = out
+        .split('/')
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect();
+    parts.join("/")
 }

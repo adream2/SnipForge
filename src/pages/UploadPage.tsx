@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { api } from '../lib/api'
-import type { AppSettings, ProviderMeta, UploadOutcome } from '../lib/types'
+import type { AppSettings, DirEntry, ProviderMeta, UploadOutcome } from '../lib/types'
 import { dataUrlBytes, extOf, prepareForUpload, type PreparedImage } from '../lib/compress'
 import { IconCheck, IconClipboard, IconCopy, IconImage, IconLoader, IconUpload } from '../components/Icons'
 import { useToast } from '../components/Toast'
@@ -26,6 +26,14 @@ const EDGES = [
   { v: 1920, label: '1920' },
   { v: 1280, label: '1280' }
 ]
+
+/** 上一级目录；已在根则返回 null */
+function parentOf(path: string): string | null {
+  const clean = path.replace(/\/+$/, '')
+  if (!clean) return null
+  const i = clean.lastIndexOf('/')
+  return i < 0 ? '' : clean.slice(0, i)
+}
 
 function kb(n: number): string {
   if (n >= 1024 * 1024) return `${(n / 1048576).toFixed(2)} MB`
@@ -55,9 +63,31 @@ export default function UploadPage({
   const [dragging, setDragging] = useState(false)
   const [sent, setSent] = useState<Sent[]>([])
   const [copied, setCopied] = useState<string | null>(null)
+  /** 单次上传的目录覆盖（空 = 用配置里的路径）；支持 {yyyy}/{MM} 占位符 */
+  const [dirInput, setDirInput] = useState('')
+  /** 目录选择器 */
+  const [browse, setBrowse] = useState<{
+    open: boolean
+    path: string
+    dirs: DirEntry[]
+    loading: boolean
+    newName: string
+  }>({ open: false, path: '', dirs: [], loading: false, newName: '' })
   const fileRef = useRef<HTMLInputElement>(null)
 
   const up = settings?.uploader
+
+  const current = providers.find((p) => p.id === provider)
+
+  /** 配置里那个"默认路径"字段：各家 key 不一样 */
+  const cfgPath = (() => {
+    const c = (settings?.uploader.providers?.[provider] ?? {}) as Record<string, unknown>
+    for (const k of ['path', 'pathPrefix', 'dir']) {
+      const v = c[k]
+      if (typeof v === 'string' && v.trim()) return v.trim()
+    }
+    return ''
+  })()
 
   useEffect(() => {
     void api.uploadProviders().then((list) => {
@@ -144,6 +174,37 @@ export default function UploadPage({
     setSrc({ dataUrl, name: file.name })
   }
 
+  const loadDirs = useCallback(
+    async (path: string) => {
+      if (!provider) return
+      setBrowse((b) => ({ ...b, loading: true }))
+      try {
+        const dirs = await api.uploadListDirs(provider, path)
+        setBrowse((b) => ({ ...b, path, dirs, loading: false }))
+      } catch (e) {
+        toast.push(String(e), 'error')
+        setBrowse((b) => ({ ...b, dirs: [], loading: false }))
+      }
+    },
+    [provider, toast]
+  )
+
+  const openBrowse = () => {
+    // 浏览用的 path 永远是"相对该图床根"的：
+    // 本地图床配置的是绝对磁盘路径，直接拿来当相对路径会把面包屑拆成 E:/WorkBuddy/…
+    const start =
+      dirInput.trim() || (provider === 'local-folder' ? '' : cfgPath)
+    setBrowse({ open: true, path: start, dirs: [], loading: true, newName: '' })
+    void loadDirs(start)
+  }
+
+  /** 用新建的目录（还没建也能用 —— 各图床上传时都会自动创建） */
+  const useNewDir = () => {
+    const v = browse.newName.trim()
+    setDirInput(v ? [browse.path, v].filter(Boolean).join('/') : browse.path)
+    setBrowse((b) => ({ ...b, open: false, newName: '' }))
+  }
+
   const upload = async () => {
     if (!prepared || !provider) return
     setBusy(true)
@@ -151,7 +212,12 @@ export default function UploadPage({
     try {
       const ext = extOf(prepared.format)
       const base = (src?.name ?? 'image').replace(/\.[^.]+$/, '')
-      const out = await api.uploadImage(prepared.dataUrl, provider, `${base}.${ext}`)
+      const out = await api.uploadImage(
+        prepared.dataUrl,
+        provider,
+        `${base}.${ext}`,
+        dirInput.trim() || undefined
+      )
       setSent((prev) => [
         {
           ...out,
@@ -278,6 +344,40 @@ export default function UploadPage({
                 </select>
               </div>
             </div>
+
+            {current?.supportsDir && (
+              <div className="setting-card">
+                <header>上传路径</header>
+                <div
+                  style={{
+                    padding: '10px 16px 16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      className="input"
+                      style={{ flex: 1, minWidth: 0 }}
+                      placeholder={cfgPath || '（根目录）'}
+                      value={dirInput}
+                      onChange={(e) => setDirInput(e.target.value)}
+                    />
+                    {current?.canBrowse && (
+                      <button className="btn sm" onClick={openBrowse} title="选已有目录或新建">
+                        浏览
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6 }}>
+                    留空 = 用配置里的 {cfgPath ? <code>{cfgPath}</code> : '根目录'}；支持{' '}
+                    <code>{'{yyyy}'}</code> <code>{'{MM}'}</code> <code>{'{dd}'}</code> 占位符，
+                    比如 <code>blog/{'{yyyy}/{MM}'}</code>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 右栏只有 300px，用上下堆叠的 field；setting-row 是给宽页面的左右布局 */}
             <div className="setting-card">
@@ -462,6 +562,103 @@ export default function UploadPage({
           <div className="empty" style={{ height: 120, marginTop: 14 }}>
             <span>还没有可用的图床，去「图床配置」配一个</span>
           </div>
+        )}
+
+        {/* 目录选择器：列已有目录，也能当场输入新目录 */}
+        {browse.open && (
+          <>
+            <div className="ctx-shade" onClick={() => setBrowse((b) => ({ ...b, open: false }))} />
+            <div className="dir-picker">
+              <div className="dir-head">
+                <strong>选择上传目录</strong>
+                <span style={{ flex: 1 }} />
+                <button className="btn sm" onClick={() => setBrowse((b) => ({ ...b, open: false }))}>
+                  关闭
+                </button>
+              </div>
+
+              <div className="dir-path">
+                <button className="dir-crumb" onClick={() => void loadDirs('')} title="回到根目录">
+                  {current?.name ?? provider}
+                </button>
+                {browse.path
+                  .split('/')
+                  .filter(Boolean)
+                  .map((seg, i, arr) => {
+                    const segPath = arr.slice(0, i + 1).join('/')
+                    return (
+                      <span key={segPath} style={{ display: 'contents' }}>
+                        <span className="dir-sep">/</span>
+                        <button className="dir-crumb" onClick={() => void loadDirs(segPath)}>
+                          {seg}
+                        </button>
+                      </span>
+                    )
+                  })}
+              </div>
+
+              <div className="dir-body">
+                {parentOf(browse.path) !== null && (
+                  <button
+                    className="dir-item"
+                    onClick={() => void loadDirs(parentOf(browse.path) ?? '')}
+                  >
+                    <span className="dir-icon">↩</span> 上一级
+                  </button>
+                )}
+                {browse.loading && <div className="dir-empty">读取中…</div>}
+                {!browse.loading && browse.dirs.length === 0 && (
+                  <div className="dir-empty">这个目录下还没有子目录 —— 可以在下面新建一个</div>
+                )}
+                {browse.dirs.map((d) => (
+                  <button key={d.path} className="dir-item" onClick={() => void loadDirs(d.path)}>
+                    <span className="dir-icon">📁</span>
+                    <span
+                      style={{
+                        flex: 1,
+                        textAlign: 'left',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}
+                    >
+                      {d.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="dir-new">
+                <input
+                  className="input"
+                  placeholder="新建子目录名，如 2026 或 blog"
+                  value={browse.newName}
+                  onChange={(e) => setBrowse((b) => ({ ...b, newName: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') useNewDir()
+                  }}
+                />
+                <button className="btn sm" onClick={useNewDir}>
+                  用这个
+                </button>
+              </div>
+
+              <div className="dir-foot">
+                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                  目录不存在也没关系，上传时自动创建
+                </span>
+                <span style={{ flex: 1 }} />
+                <button
+                  className="btn primary sm"
+                  onClick={() => {
+                    setDirInput(browse.path)
+                    setBrowse((b) => ({ ...b, open: false }))
+                  }}
+                >
+                  就用{browse.path ? ` ${browse.path}` : '根目录'}
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </div>
     </>

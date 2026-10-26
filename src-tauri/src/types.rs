@@ -224,6 +224,22 @@ pub struct ProviderMeta {
     pub description: Option<String>,
     pub fields: Vec<ConfigField>,
     pub requires_network: bool,
+    /// 能否给单次上传指定目录（GitHub / S3 / 本地目录这类有路径概念的）
+    #[serde(default)]
+    pub supports_dir: bool,
+    /// 能否列出远端已有目录（用于"选已有文件夹"）
+    #[serde(default)]
+    pub can_browse: bool,
+}
+
+/// 图床里的一个目录（浏览用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntry {
+    /// 显示名（最后一段）
+    pub name: String,
+    /// 相对该图床根的完整路径
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

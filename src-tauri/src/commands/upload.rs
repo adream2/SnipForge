@@ -1,6 +1,6 @@
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::types::{ProviderMeta, UploadOutcome};
+use crate::types::{DirEntry, ProviderMeta, UploadOutcome};
 use crate::uploader::{data_url_to_bytes, mime_to_ext, render_file_name, UploadFile, UploaderRegistry};
 use std::sync::Arc;
 use tauri::Manager;
@@ -56,6 +56,8 @@ pub async fn upload_image(
     data_url: String,
     provider_id: Option<String>,
     file_name: Option<String>,
+    // 单次上传的目录（可含 {yyyy}/{MM} 之类的日期占位符）。空 = 用配置里的路径
+    dir: Option<String>,
 ) -> AppResult<UploadOutcome> {
     let registry = registry(&app)?;
     let state = state.inner().clone();
@@ -79,6 +81,11 @@ pub async fn upload_image(
         .cloned()
         .unwrap_or_default();
 
+    // 目录模板在这里就展开，图床层拿到的永远是最终路径
+    let dir = dir
+        .map(|d| crate::uploader::render_dir(&d))
+        .filter(|d| !d.is_empty());
+
     tauri::async_runtime::spawn_blocking(move || {
         registry.upload(
             &target,
@@ -86,6 +93,7 @@ pub async fn upload_image(
                 file_name: name,
                 mime_type: mime,
                 buffer: bytes,
+                dir,
             },
             &provider_cfg,
         )
@@ -118,10 +126,41 @@ pub async fn upload_test(
                 file_name: format!("snipforge-probe-{}.png", chrono::Utc::now().format("%Y%m%d%H%M%S")),
                 mime_type: "image/png".into(),
                 buffer: bytes,
+                dir: None,
             },
             &provider_cfg,
         )
     })
     .await
     .map_err(|e| AppError::Msg(format!("测试任务失败: {e}")))?
+}
+
+/// 列某个图床的目录（供「图床」页选路径用）。
+///
+/// `path` 为空 = 该图床的根。
+#[tauri::command]
+pub async fn upload_list_dirs(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    provider_id: String,
+    path: Option<String>,
+) -> AppResult<Vec<DirEntry>> {
+    let registry = registry(&app)?;
+    let cfg = state.settings.read().clone();
+    let provider_cfg = cfg
+        .uploader
+        .providers
+        .get(&provider_id)
+        .cloned()
+        .unwrap_or_default();
+    let path = path.unwrap_or_default();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = registry
+            .get(&provider_id)
+            .ok_or_else(|| AppError::Msg(format!("未找到图床: {provider_id}")))?;
+        p.list_dirs(&provider_cfg, &path)
+    })
+    .await
+    .map_err(|e| AppError::Msg(format!("浏览任务失败: {e}")))?
 }

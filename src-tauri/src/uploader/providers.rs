@@ -5,7 +5,7 @@
 
 use super::{cfg_bool, cfg_str, Cfg, Provider, UploadFile};
 use crate::error::{AppError, AppResult};
-use crate::types::{ConfigField, FieldOption, ProviderMeta, UploadResult};
+use crate::types::{ConfigField, DirEntry, FieldOption, ProviderMeta, UploadResult};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -77,6 +77,8 @@ impl Provider for GithubProvider {
             origin: "builtin".into(),
             description: Some("图片提交到 GitHub 仓库，用 jsDelivr 或 raw 当 CDN".into()),
             requires_network: true,
+            supports_dir: true,
+            can_browse: true,
             fields: vec![
                 hint(
                     required(f("token", "Personal Access Token", "password")),
@@ -111,7 +113,13 @@ impl Provider for GithubProvider {
             let b = cfg_str(cfg, "branch");
             if b.is_empty() { "main".to_string() } else { b }
         };
-        let dir = cfg_str(cfg, "path").trim_matches('/').to_string();
+        // 单次上传可以带目录（在「图床」页选的或新建的）；没带就用配置里的
+        let dir = file
+            .dir
+            .clone()
+            .unwrap_or_else(|| cfg_str(cfg, "path"))
+            .trim_matches('/')
+            .to_string();
         let key = if dir.is_empty() {
             file.file_name.clone()
         } else {
@@ -172,6 +180,63 @@ impl Provider for GithubProvider {
             })),
         })
     }
+
+    /// 列仓库里某个目录下的子目录。
+    ///
+    /// 目录不存在时 GitHub 返回 404 —— 这时候不该报错：用户很可能就是要
+    /// 新建这个目录（GitHub 上传文件时会自动建），所以当成"空目录"返回。
+    fn list_dirs(&self, cfg: &Cfg, path: &str) -> AppResult<Vec<DirEntry>> {
+        let token = cfg_str(cfg, "token");
+        let owner = cfg_str(cfg, "owner");
+        let repo = cfg_str(cfg, "repo");
+        if token.is_empty() || owner.is_empty() || repo.is_empty() {
+            return Err(AppError::Msg("GitHub 图床配置不完整".into()));
+        }
+        let branch = {
+            let b = cfg_str(cfg, "branch");
+            if b.is_empty() { "main".to_string() } else { b }
+        };
+        let dir = path.trim_matches('/');
+        let api = if dir.is_empty() {
+            format!("https://api.github.com/repos/{owner}/{repo}/contents?ref={branch}")
+        } else {
+            format!("https://api.github.com/repos/{owner}/{repo}/contents/{dir}?ref={branch}")
+        };
+
+        let res = client(25)?
+            .get(&api)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .map_err(|e| AppError::Msg(format!("GitHub 请求失败: {e}")))?;
+
+        let status = res.status().as_u16();
+        if status == 404 {
+            return Ok(Vec::new());
+        }
+        let text = res.text().unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(http_err(status, &text));
+        }
+
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        let mut out = Vec::new();
+        if let Some(items) = parsed.as_array() {
+            for it in items {
+                if it["type"].as_str() != Some("dir") {
+                    continue;
+                }
+                let name = it["name"].as_str().unwrap_or_default().to_string();
+                let p = it["path"].as_str().unwrap_or(&name).to_string();
+                if !name.is_empty() {
+                    out.push(DirEntry { name, path: p });
+                }
+            }
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
 }
 
 /* ============================ S3 兼容 ============================ */
@@ -212,6 +277,8 @@ impl Provider for S3Provider {
             origin: "builtin".into(),
             description: Some("AWS S3 / Cloudflare R2 / MinIO / B2 / 七牛 / OSS / COS 的 S3 端点".into()),
             requires_network: true,
+            supports_dir: true,
+            can_browse: false,
             fields: vec![
                 hint(
                     required(f("endpoint", "Endpoint", "string")),
@@ -243,12 +310,23 @@ impl Provider for S3Provider {
             return Err(AppError::Msg("S3 配置不完整".into()));
         }
 
-        let prefix = cfg_str(cfg, "pathPrefix").trim_matches('/').to_string();
-        let date_dir = chrono::Utc::now().format("%Y/%m").to_string();
-        let key = if prefix.is_empty() {
-            format!("{date_dir}/{}", file.file_name)
+        let prefix = file
+            .dir
+            .clone()
+            .unwrap_or_else(|| cfg_str(cfg, "pathPrefix"))
+            .trim_matches('/')
+            .to_string();
+        // 没指定目录时才按年月自动分层（S3 没有真目录，前缀就是目录）
+        let date_dir = if prefix.is_empty() && file.dir.is_none() {
+            chrono::Utc::now().format("%Y/%m").to_string()
         } else {
-            format!("{prefix}/{date_dir}/{}", file.file_name)
+            String::new()
+        };
+        let key = match (prefix.is_empty(), date_dir.is_empty()) {
+            (true, true) => file.file_name.clone(),
+            (true, false) => format!("{date_dir}/{}", file.file_name),
+            (false, true) => format!("{prefix}/{}", file.file_name),
+            (false, false) => format!("{prefix}/{date_dir}/{}", file.file_name),
         };
 
         let host = endpoint
@@ -368,6 +446,8 @@ impl Provider for SmmsProvider {
             origin: "builtin".into(),
             description: Some("免费公共图床，注册后在 API Token 页面生成令牌".into()),
             requires_network: true,
+            supports_dir: false,
+            can_browse: false,
             fields: vec![hint(
                 required(f("token", "API Token", "password")),
                 "在 sm.ms/home/apitoken 获取",
@@ -436,6 +516,8 @@ impl Provider for CustomHttpProvider {
             origin: "builtin".into(),
             description: Some("对接自己的上传接口，支持 multipart / JSON-Base64".into()),
             requires_network: true,
+            supports_dir: false,
+            can_browse: false,
             fields: vec![
                 required(f("url", "上传地址", "string")),
                 with_default(
@@ -602,6 +684,8 @@ impl Provider for LocalFolderProvider {
             origin: "builtin".into(),
             description: Some("存到指定文件夹，返回 file:// 链接（配同步盘可当私有图床）".into()),
             requires_network: false,
+            supports_dir: true,
+            can_browse: true,
             fields: vec![
                 required(f("dir", "目标目录", "string")),
                 hint(f("publicBaseUrl", "对外访问前缀", "string"), "留空则返回本地 file:// 路径"),
@@ -610,10 +694,17 @@ impl Provider for LocalFolderProvider {
     }
 
     fn upload(&self, file: &UploadFile, cfg: &Cfg) -> AppResult<UploadResult> {
-        let dir = cfg_str(cfg, "dir");
-        if dir.is_empty() {
+        let root = cfg_str(cfg, "dir");
+        if root.is_empty() {
             return Err(AppError::Msg("请设置目标目录".into()));
         }
+        // 子目录相对根目录，别让用户填个绝对路径就跑出去了
+        let dir = match file.dir.as_deref().map(|d| d.trim_matches(&['/', '\\'][..])) {
+            Some(sub) if !sub.is_empty() => {
+                std::path::Path::new(&root).join(sub).to_string_lossy().to_string()
+            }
+            _ => root.clone(),
+        };
         std::fs::create_dir_all(&dir)?;
         let target = std::path::Path::new(&dir).join(&file.file_name);
         std::fs::write(&target, &file.buffer)?;
@@ -635,6 +726,43 @@ impl Provider for LocalFolderProvider {
             thumb_url: None,
             meta: Some(serde_json::json!({ "path": target.to_string_lossy() })),
         })
+    }
+
+    /// 列根目录下某个子目录里的目录。`path` 为空 = 列根目录本身。
+    fn list_dirs(&self, cfg: &Cfg, path: &str) -> AppResult<Vec<DirEntry>> {
+        let root = cfg_str(cfg, "dir");
+        if root.is_empty() {
+            return Err(AppError::Msg("请先设置目标目录".into()));
+        }
+        let sub = path.trim_matches(&['/', '\\'][..]);
+        let abs = if sub.is_empty() {
+            std::path::PathBuf::from(&root)
+        } else {
+            std::path::Path::new(&root).join(sub)
+        };
+        if !abs.exists() {
+            // 目录还不存在 = 用户想新建，返回空列表而不是报错
+            return Ok(Vec::new());
+        }
+
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(&abs)?.flatten() {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let rel = if sub.is_empty() {
+                name.clone()
+            } else {
+                format!("{sub}/{name}")
+            };
+            out.push(DirEntry { name, path: rel });
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
     }
 }
 

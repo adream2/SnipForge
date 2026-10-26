@@ -130,8 +130,10 @@ export const api = {
   uploadProviderSave: (providerId: string, values: Record<string, unknown>) =>
     invoke<void>('upload_provider_save', { providerId, values }),
   uploadSetActive: (providerId: string) => invoke<void>('upload_set_active', { providerId }),
-  uploadImage: (dataUrl: string, providerId?: string, fileName?: string) =>
-    invoke<UploadOutcome>('upload_image', { dataUrl, providerId, fileName }),
+  uploadImage: (dataUrl: string, providerId?: string, fileName?: string, dir?: string) =>
+    invoke<UploadOutcome>('upload_image', { dataUrl, providerId, fileName, dir }),
+  uploadListDirs: (providerId: string, path?: string) =>
+    invoke<import('./types').DirEntry[]>('upload_list_dirs', { providerId, path: path ?? null }),
   uploadTest: (providerId: string) => invoke<UploadOutcome>('upload_test', { providerId }),
 
   /* 插件 */

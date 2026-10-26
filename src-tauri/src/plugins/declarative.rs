@@ -152,6 +152,8 @@ pub fn load_all(app: &AppHandle, state: &Arc<AppState>) -> usize {
                         origin: "declarative".into(),
                         description: spec.description.clone(),
                         requires_network: true,
+                        supports_dir: false,
+                        can_browse: false,
                         fields,
                     };
 
