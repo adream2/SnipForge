@@ -32,6 +32,7 @@ export const api = {
   captureStart: (mode: string) => invoke<void>('capture_start', { mode }),
   captureFrame: () => invoke<FramePayload>('capture_frame'),
   captureWindows: () => invoke<import('./types').NativeWindowInfo[]>('capture_windows'),
+  cursorPos: () => invoke<[number, number]>('cursor_pos'),
   captureCommit: (displayId: number, rect: Rect) =>
     invoke<CaptureResult>('capture_commit', { displayId, rect }),
   captureCancel: () => invoke<void>('capture_cancel'),

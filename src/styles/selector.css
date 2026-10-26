@@ -127,3 +127,29 @@
 body {
   background: transparent;
 }
+
+/* 悬停窗口的标题标签：比只有描边更容易让人确认"识别到的是这个窗口" */
+.selector-win-tag {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 60vw;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(108, 92, 231, 0.95);
+  color: #fff;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.selector-win-tag b {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.selector-win-tag span {
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}

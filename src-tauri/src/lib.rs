@@ -563,6 +563,7 @@ pub fn run() {
             commands::capture::capture_start,
             commands::capture::capture_frame,
             commands::capture::capture_windows,
+            commands::capture::cursor_pos,
             commands::capture::capture_commit,
             commands::capture::capture_cancel,
             commands::capture::capture_pending,

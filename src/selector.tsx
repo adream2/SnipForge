@@ -99,6 +99,27 @@ export default function Selector() {
     [display, scale, windows]
   )
 
+  // 覆盖层刚出现时就把光标下的窗口高亮出来。
+  // 只靠 mousemove 的话，用户不动鼠标就永远看不到高亮，会觉得"识别不到窗口"。
+  useEffect(() => {
+    if (!SMART_WINDOW || !display || windows.length === 0) return
+    let alive = true
+    void api
+      .cursorPos()
+      .then((pos) => {
+        if (!alive) return
+        const [px, py] = pos
+        const r = rootRef.current?.getBoundingClientRect()
+        const x = (px - display.bounds.x) / scale - (r?.left ?? 0)
+        const y = (py - display.bounds.y) / scale - (r?.top ?? 0)
+        setHoverWindow(hitTest(x, y))
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [display, windows, scale, hitTest])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -280,15 +301,34 @@ export default function Selector() {
       )}
 
       {(hoverRect && !selection && (mode === 'window' || SMART_WINDOW)) && (
-        <div
-          className="selector-win-hint"
-          style={{
-            left: hoverRect.left,
-            top: hoverRect.top,
-            width: hoverRect.width,
-            height: hoverRect.height
-          }}
-        />
+        <>
+          <div
+            className="selector-win-hint"
+            style={{
+              left: hoverRect.left,
+              top: hoverRect.top,
+              width: hoverRect.width,
+              height: hoverRect.height
+            }}
+          />
+          {/* 标签：让"识别到了哪个窗口"这件事看得见，而不只是一圈描边 */}
+          <div
+            className="selector-win-tag"
+            style={{
+              left: hoverRect.left,
+              top: hoverRect.top > 26 ? hoverRect.top - 24 : hoverRect.top + 4
+            }}
+          >
+            {hoverWindow && (
+              <>
+                <b>{hoverWindow.title}</b>
+                <span>
+                  {Math.round(hoverWindow.rect.width)} × {Math.round(hoverWindow.rect.height)}
+                </span>
+              </>
+            )}
+          </div>
+        </>
       )}
 
       {selection && (

@@ -22,7 +22,7 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect,
     GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, GWL_EXSTYLE,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 /// 进程级 DPI 感知。幂等，重复调用无害。
@@ -183,7 +183,13 @@ pub fn list_top_level_windows(self_pid: u32) -> Vec<NativeWindowInfo> {
                 continue;
             }
             let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+            // TOOLWINDOW / NOACTIVATE：工具浮窗、各种 HUD
             if style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_EX_NOACTIVATE.0 != 0 {
+                continue;
+            }
+            // TRANSPARENT：鼠标穿透的透明叠层（各种屏显、水印层）——
+            // 用户看不见它，也就不该被它抢走命中，否则鼠标扫过去什么都不亮
+            if style & WS_EX_TRANSPARENT.0 != 0 {
                 continue;
             }
         }
@@ -195,10 +201,12 @@ pub fn list_top_level_windows(self_pid: u32) -> Vec<NativeWindowInfo> {
         }
     }
 
-    // 大窗口优先 —— 命中测试时用户想选的是后面的大窗口，不是浮在上面的小浮窗
-    out.sort_by(|a, b| {
-        (b.rect.width * b.rect.height).cmp(&(a.rect.width * a.rect.height))
-    });
+    // **保持 EnumWindows 的 z 序（上层在前），不要按面积排。**
+    //
+    // 曾经为了"优先选后面的大窗口"按面积降序排过，结果命中测试永远选中
+    // 某个铺满屏幕的背景窗口（最大化浏览器 / 设置页），鼠标移到小窗口上
+    // 也高亮整屏 —— 用户的感受就是"根本识别不到窗口"。
+    // 用户指的是光标底下**看得见**的那个窗口，那就是 z 序最上面那个。
     out
 }
 

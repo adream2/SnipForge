@@ -149,6 +149,21 @@ pub fn capture_windows() -> AppResult<Vec<NativeWindowInfo>> {
     Ok(crate::win32::window::list_top_level_windows(std::process::id()))
 }
 
+/// 当前光标位置（物理像素）。
+///
+/// 选区覆盖层刚打开时用它把光标下的窗口立刻高亮出来 —— 否则要等用户
+/// 抖一下鼠标才有反馈，看起来像"识别不到窗口"。
+///
+/// 必须是 `async`：`cursor_position()` 内部要把调用投递回主线程，
+/// 同步命令本来就在主线程上跑，会自锁（钉图冻死应用就是踩的这条）。
+#[tauri::command]
+pub async fn cursor_pos(app: tauri::AppHandle) -> AppResult<(i32, i32)> {
+    let p = app
+        .cursor_position()
+        .map_err(|e| AppError::Msg(format!("读取鼠标位置失败: {e}")))?;
+    Ok((p.x as i32, p.y as i32))
+}
+
 /// selector 提交框选。
 ///
 /// 注意：覆盖层窗口自己要关掉，如果先关再 return，发起 invoke 的 webview 已经被销毁，
