@@ -317,6 +317,21 @@ pub struct ImageInfoView {
     pub bytes: u64,
 }
 
+/// 从磁盘读一张图片交给「图片工具」。
+///
+/// 为什么不走 `convertFileSrc` + fetch：
+/// 那需要开 asset 协议并把它加进 CSP 的 connect-src，等于给 webview 开一个
+/// 任意文件读取口子；而且默认配置下根本不通 —— 图片工具"点了没反应"就是这个。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageFileView {
+    pub data_url: String,
+    pub width: u32,
+    pub height: u32,
+    pub format: String,
+    pub bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveOutcome {

@@ -573,6 +573,7 @@ pub fn run() {
             commands::capture::capture_close_editor,
             // 图片
             commands::image::image_save,
+            commands::image::image_load_file,
             commands::image::image_save_as,
             // 录屏
             commands::record::record_start,

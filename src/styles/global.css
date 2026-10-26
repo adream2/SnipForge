@@ -1004,3 +1004,68 @@ select.input {
   background: linear-gradient(90deg, var(--accent), #a29bfe);
   transition: width 0.25s ease;
 }
+
+/* ---------------- 右键快捷菜单 ---------------- */
+
+.ctx-shade {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 61;
+  min-width: 190px;
+  padding: 5px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 40px rgba(16, 16, 24, 0.18);
+  animation: ctx-in 0.1s ease-out;
+}
+
+@keyframes ctx-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+.ctx-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.ctx-menu button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.ctx-menu kbd {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.ctx-menu button:hover kbd {
+  color: var(--accent);
+}
+
+.ctx-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}

@@ -1,6 +1,6 @@
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::types::{ImageInfoView, OcrResult, SaveOutcome};
+use crate::types::{ImageFileView, ImageInfoView, OcrResult, SaveOutcome};
 use crate::uploader::{data_url_to_bytes, mime_to_ext, render_file_name};
 use std::sync::Arc;
 use tauri::Manager;
@@ -142,12 +142,81 @@ pub fn ocr_open_engine_dir(app: tauri::AppHandle, state: tauri::State<'_, Arc<Ap
 #[tauri::command]
 pub fn image_info(data_url: String) -> AppResult<ImageInfoView> {
     let (bytes, mime) = data_url_to_bytes(&data_url)?;
-    let img = image::load_from_memory(&bytes)
-        .map_err(|e| AppError::Msg(format!("图片解码失败: {e}")))?;
+    let (width, height) = decode_size(&bytes, &mime)?;
     Ok(ImageInfoView {
-        width: img.width(),
-        height: img.height(),
+        width,
+        height,
         format: mime,
+        bytes: bytes.len() as u64,
+    })
+}
+
+/// 按魔数认格式。前端拖进来的文件只有字节，没有可靠的 mime。
+fn sniff_mime(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "image/png"
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else if bytes.starts_with(b"GIF8") {
+        "image/gif"
+    } else if bytes.starts_with(b"BM") {
+        "image/bmp"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+/// 取图片尺寸。GIF 交给 gif 解码器（image crate 没开 gif feature，解码不了，
+/// 但预览要靠浏览器直接把原图显示出来，所以只补尺寸这一件事）。
+fn decode_size(bytes: &[u8], mime: &str) -> AppResult<(u32, u32)> {
+    if mime == "image/gif" || bytes.starts_with(b"GIF8") {
+        let mut opts = gif::DecodeOptions::new();
+        opts.set_color_output(gif::ColorOutput::RGBA);
+        let dec = opts
+            .read_info(std::io::Cursor::new(bytes))
+            .map_err(|e| AppError::Msg(format!("GIF 解析失败: {e}")))?;
+        return Ok((dec.width() as u32, dec.height() as u32));
+    }
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| AppError::Msg(format!("图片解码失败: {e}")))?;
+    Ok((img.width(), img.height()))
+}
+
+/// 把磁盘上的图片读成 data URL 交给图片工具。
+///
+/// 走后端读文件而不是 webview 直接 fetch `asset://`：后者要么被 CSP 拦、
+/// 要么得给 asset 协议开任意路径 —— 都不如一个明确的命令干净。
+#[tauri::command]
+pub fn image_load_file(path: String) -> AppResult<ImageFileView> {
+    use base64::Engine;
+
+    const MAX_BYTES: u64 = 128 * 1024 * 1024;
+    let p = std::path::PathBuf::from(&path);
+    let meta = std::fs::metadata(&p).map_err(|e| AppError::Msg(format!("读不到文件: {e}")))?;
+    if !meta.is_file() {
+        return Err(AppError::Msg("不是文件".into()));
+    }
+    if meta.len() > MAX_BYTES {
+        return Err(AppError::Msg("图片超过 128MB，先压缩一下吧".into()));
+    }
+
+    let bytes = std::fs::read(&p)?;
+    let mime = sniff_mime(&bytes);
+    if mime == "application/octet-stream" {
+        return Err(AppError::Msg("认不出这个格式（支持 PNG / JPEG / WebP / BMP / GIF）".into()));
+    }
+    let (width, height) = decode_size(&bytes, mime)?;
+    let data_url = format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    );
+    Ok(ImageFileView {
+        data_url,
+        width,
+        height,
+        format: mime.to_string(),
         bytes: bytes.len() as u64,
     })
 }

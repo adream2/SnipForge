@@ -11,6 +11,8 @@ interface LoadedImage {
   height: number
   bytes: number
   format: string
+  /** 从磁盘载入时的原始路径（拖进来的没有）——"在资源管理器打开"要用 */
+  path?: string
 }
 
 const FORMATS = [
@@ -39,10 +41,12 @@ export default function ToolsPage() {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ dataUrl: string; bytes: number; w: number; h: number } | null>(null)
   const [dragging, setDragging] = useState(false)
+  /** 右键菜单的屏幕坐标；null = 不显示 */
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const loadFromDataUrl = useCallback(async (dataUrl: string, name: string) => {
+  const loadFromDataUrl = useCallback(async (dataUrl: string, name: string, path?: string) => {
     const info = await api.imageInfo(dataUrl)
     setImg({
       dataUrl,
@@ -50,7 +54,8 @@ export default function ToolsPage() {
       width: info.width,
       height: info.height,
       bytes: info.bytes,
-      format: guessFormat(info.format)
+      format: guessFormat(info.format),
+      path
     })
     setFormat(info.format.includes('png') ? 'image/webp' : guessFormat(info.format))
     setScale(100)
@@ -63,20 +68,23 @@ export default function ToolsPage() {
       filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }]
     })
     if (typeof picked !== 'string') return
-    // 主进程不开放任意文件读取，这里借系统对话框拿到路径后由后端读取为 data URL
+    // 由后端读文件并转成 data URL。别用 convertFileSrc + fetch：
+    // 那条路要开 asset 协议、还要把 asset 放进 CSP 的 connect-src，
+    // 默认配置下走不通 —— 表现就是"选了图片没反应"。
     try {
-      const png = await import('@tauri-apps/api/core').then((m) =>
-        m.convertFileSrc(picked)
-      )
-      const res = await fetch(png)
-      const blob = await res.blob()
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result))
-        reader.onerror = reject
-        reader.readAsDataURL(blob)
+      const f = await api.imageLoadFile(picked)
+      setImg({
+        dataUrl: f.dataUrl,
+        name: picked.split(/[\\/]/).pop() ?? 'image',
+        width: f.width,
+        height: f.height,
+        bytes: f.bytes,
+        format: guessFormat(f.format),
+        path: picked
       })
-      await loadFromDataUrl(dataUrl, picked.split(/[\\/]/).pop() ?? 'image')
+      setFormat(f.format.includes('png') ? 'image/webp' : guessFormat(f.format))
+      setScale(100)
+      setResult(null)
     } catch (e) {
       toast.push(`读取失败：${e}`, 'error')
     }
@@ -95,6 +103,115 @@ export default function ToolsPage() {
     })
     await loadFromDataUrl(dataUrl, file.name)
   }
+
+  /* ---------------- 右键菜单里的快捷操作 ---------------- */
+
+  /** 有转换结果就操作结果，否则操作原图 */
+  const activeUrl = result?.dataUrl ?? img?.dataUrl ?? null
+  const activeName = img
+    ? `${img.name.replace(/\.[^.]+$/, '')}.${FORMATS.find((f) => f.id === format)?.ext ?? 'png'}`
+    : 'image.png'
+
+  const doCopy = async () => {
+    if (!activeUrl) return
+    try {
+      await api.imageCopy(activeUrl)
+      toast.push('已复制到剪贴板', 'success')
+    } catch (e) {
+      toast.push(String(e), 'error')
+    }
+  }
+
+  const doSaveAs = async () => {
+    if (!activeUrl) return
+    try {
+      const p = await api.imageSaveAs(activeUrl, activeName)
+      if (p) toast.push(`已保存到 ${p}`, 'success')
+    } catch (e) {
+      toast.push(String(e), 'error')
+    }
+  }
+
+  const doPin = async () => {
+    if (!activeUrl) return
+    try {
+      await api.imagePin(activeUrl)
+    } catch (e) {
+      toast.push(String(e), 'error')
+    }
+  }
+
+  const doUpload = async () => {
+    if (!activeUrl) return
+    try {
+      const out = await api.uploadImage(activeUrl)
+      await api.clipboardCopyText(out.result.url)
+      toast.push(`已上传并复制链接：${out.result.url}`, 'success')
+    } catch (e) {
+      toast.push(String(e), 'error')
+    }
+  }
+
+  const doOcr = async () => {
+    if (!activeUrl) return
+    try {
+      const r = await api.imageOcr(activeUrl)
+      const text = (r.text ?? '').trim()
+      if (!text) {
+        toast.push('没识别到文字', 'info')
+        return
+      }
+      await api.clipboardCopyText(text)
+      toast.push(`已识别 ${text.length} 字并复制`, 'success')
+    } catch (e) {
+      toast.push(String(e), 'error')
+    }
+  }
+
+  const doOpenFolder = async () => {
+    if (!img?.path) return
+    try {
+      await api.openImageFolder(img.path)
+    } catch (e) {
+      toast.push(String(e), 'error')
+    }
+  }
+
+  const resetAll = () => {
+    setImg(null)
+    setResult(null)
+    setMenu(null)
+  }
+
+  /** 右键唤出菜单（坐标要夹在视口内，否则贴边会跑出去） */
+  const openMenu = (e: React.MouseEvent) => {
+    if (!img) return
+    e.preventDefault()
+    setMenu({
+      x: Math.min(e.clientX, window.innerWidth - 208),
+      y: Math.min(e.clientY, window.innerHeight - 268)
+    })
+  }
+
+  // 菜单开着时：Esc 关、点别处关、Ctrl+C / Ctrl+S 走快捷键
+  useEffect(() => {
+    if (!menu && !img) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null)
+      if (!img) return
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        e.preventDefault()
+        void doCopy()
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        void doSaveAs()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menu, img, result, format])
 
   /** 重新编码：canvas 重采样 + 目标格式导出 */
   const convert = useCallback(async () => {
@@ -147,13 +264,13 @@ export default function ToolsPage() {
         <h1>图片工具</h1>
         <div className="spacer" />
         {img && (
-          <button className="btn sm" onClick={() => { setImg(null); setResult(null) }}>
+          <button className="btn sm" onClick={resetAll}>
             换一张
           </button>
         )}
       </div>
 
-      <div className="page-body">
+      <div className="page-body" onContextMenu={openMenu}>
         {!img ? (
           <div
             className={`tool-drop ${dragging ? 'dragging' : ''}`}
@@ -187,6 +304,8 @@ export default function ToolsPage() {
               <img
                 src={result?.dataUrl ?? img.dataUrl}
                 alt=""
+                onContextMenu={openMenu}
+                title="右键：复制 / 另存为 / 钉图 / 上传 / 取字"
                 style={{ maxWidth: '100%', maxHeight: 460, borderRadius: 6, display: 'block' }}
               />
             </div>
@@ -330,6 +449,49 @@ export default function ToolsPage() {
           </div>
         )}
       </div>
+
+      {/* 右键快捷菜单：不占版面，操作完自动消失 */}
+      {menu && img && (
+        <>
+          <div
+            className="ctx-shade"
+            onClick={() => setMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setMenu(null)
+            }}
+          />
+          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }}>
+            <button onClick={() => { setMenu(null); void doCopy() }}>
+              <span>复制图片</span>
+              <kbd>Ctrl+C</kbd>
+            </button>
+            <button onClick={() => { setMenu(null); void doSaveAs() }}>
+              <span>另存为…</span>
+              <kbd>Ctrl+S</kbd>
+            </button>
+            <button onClick={() => { setMenu(null); void doPin() }}>
+              <span>钉在屏幕上</span>
+            </button>
+            <div className="ctx-sep" />
+            <button onClick={() => { setMenu(null); void doOcr() }}>
+              <span>OCR 取字</span>
+            </button>
+            <button onClick={() => { setMenu(null); void doUpload() }}>
+              <span>上传并复制链接</span>
+            </button>
+            {img.path && (
+              <button onClick={() => { setMenu(null); void doOpenFolder() }}>
+                <span>在资源管理器中打开</span>
+              </button>
+            )}
+            <div className="ctx-sep" />
+            <button onClick={resetAll}>
+              <span>换一张</span>
+            </button>
+          </div>
+        </>
+      )}
     </>
   )
 }

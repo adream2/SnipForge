@@ -286,6 +286,15 @@ export interface RecordResult {
   gifHeight: number
 }
 
+/** 后端从磁盘读出来的图片（带 data URL，前端直接显示） */
+export interface LoadedImageFile {
+  dataUrl: string
+  width: number
+  height: number
+  format: string
+  bytes: number
+}
+
 export interface RecordCursorEvt {
   /** 区域相对坐标（物理像素） */
   x: number

@@ -45,6 +45,8 @@ export const api = {
   closeEditor: () => invoke<void>('capture_close_editor'),
 
   /* 图片 */
+  imageLoadFile: (path: string) =>
+    invoke<import('./types').LoadedImageFile>('image_load_file', { path }),
   imageSave: (dataUrl: string, fileName?: string, openFolder?: boolean) =>
     invoke<{ path: string; bytes: number; format: string }>('image_save', {
       dataUrl,
