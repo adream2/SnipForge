@@ -176,11 +176,16 @@ pub fn show(app: &AppHandle) {
     // 记目标必须放在弹窗之前 —— 弹窗一出现，前台窗口就变成我们自己了
     if !is_visible(app) {
         let fg = crate::win32::focus::foreground_hwnd();
-        if fg != 0 && !crate::win32::focus::is_own_window(fg) {
+        // 只排除「面板自己」（那是上一次呼出留下的残留）。
+        //
+        // 以前这里用的是 is_own_window，把**整个进程**的窗口都排除了，
+        // 于是从 SnipForge 主窗口呼出面板时 target 被置 0 → 只复制、不粘贴。
+        // 而"在自己软件里把复制过的 token/链接粘进输入框"恰恰是最常见的用法，
+        // 用户看到的就是"点了没反应 / 粘不上"。
+        if fg != 0 && fg != panel_hwnd(app) {
             set_target(fg);
             log::debug!("剪贴板面板目标窗口: {fg:#x}");
         } else {
-            // 从 SnipForge 自己的界面呼出，没有外部窗口可粘，退化成「只复制」
             set_target(0);
         }
     }
@@ -395,6 +400,37 @@ pub fn paste_item(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<Strin
     let kind = crate::clipboard::paste(&svc, id)?;
 
     if copy_only || target == 0 {
+        return Ok(kind);
+    }
+
+    // 目标是 SnipForge 自己的窗口：不能靠键盘注入。
+    //
+    // Chromium（WebView2）把「程序模拟的粘贴」当成安全风险，合成的 Ctrl+V
+    // 会被丢掉 —— 记事本那类 Win32 编辑框照收，所以以前只在记事本里测是通的。
+    // 这类情况把文本推给前端，由页面自己插到焦点输入框里。
+    if crate::win32::focus::is_own_window(target) {
+        let text = svc.store.find_by_id(id).and_then(|it| it.text);
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            // 等面板真的收起，再把主窗口拉回前台，最后把内容交给页面
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+            while is_visible(&handle) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if !crate::win32::focus::activate_wait(target, 450) {
+                log::warn!("还原焦点失败（内容已在剪贴板，可手动粘贴）");
+                return;
+            }
+            match text {
+                Some(t) => {
+                    if let Err(e) = handle.emit_to("main", "clipboard://paste-self", t) {
+                        log::warn!("把内容推给主窗口失败: {e}");
+                    }
+                }
+                // 图片/文件条目没有文本，插不进输入框；内容已在剪贴板里
+                None => log::debug!("非文本条目，只写剪贴板"),
+            }
+        });
         return Ok(kind);
     }
 

@@ -204,5 +204,8 @@ export const events = {
   onRecordLens: (handler: (p: import('./types').RecordLensEvt) => void) =>
     listen<import('./types').RecordLensEvt>('record://lens', (e) => handler(e.payload)),
   onRecordStop: (handler: (p: import('./types').RecordResult) => void) =>
-    listen<import('./types').RecordResult>('record://stopped', (e) => handler(e.payload))
+    listen<import('./types').RecordResult>('record://stopped', (e) => handler(e.payload)),
+  /** 面板选中后要粘到 SnipForge 自己的输入框（Chromium 不吃模拟的 Ctrl+V） */
+  onPasteSelf: (handler: (text: string) => void) =>
+    listen<string>('clipboard://paste-self', (e) => handler(e.payload))
 }

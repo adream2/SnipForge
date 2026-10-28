@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { api, events } from './lib/api'
 import type { AppSettings, ClipboardStats } from './lib/types'
@@ -20,6 +20,29 @@ import UploadPage from './pages/UploadPage'
 import PluginsPage from './pages/PluginsPage'
 import SettingsPage from './pages/SettingsPage'
 import { ToastProvider, useToast } from './components/Toast'
+
+/**
+ * 把文本插到输入框的光标处。
+ *
+ * React 的受控输入框直接改 value 不会触发 onChange（React 记着自己那份值），
+ * 必须走原型上的原生 setter，再手动派发 input 事件，React 才会同步状态。
+ */
+function insertIntoInput(el: HTMLInputElement | HTMLTextAreaElement, text: string) {
+  const proto =
+    el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+  const start = el.selectionStart ?? el.value.length
+  const end = el.selectionEnd ?? start
+  setter?.call(el, el.value.slice(0, start) + text + el.value.slice(end))
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  const pos = start + text.length
+  try {
+    el.focus()
+    el.setSelectionRange(pos, pos)
+  } catch {
+    /* number / email 这类 input 不支持 setSelectionRange */
+  }
+}
 
 type Page =
   | 'clipboard'
@@ -43,6 +66,20 @@ function Shell() {
   const [stats, setStats] = useState<ClipboardStats | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const toast = useToast()
+
+  /** 最近聚焦过的输入框。面板粘贴时窗口会短暂失焦，document.activeElement 可能已经跑了 */
+  const lastInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
+
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) {
+        lastInputRef.current = t as HTMLInputElement | HTMLTextAreaElement
+      }
+    }
+    document.addEventListener('focusin', onFocusIn)
+    return () => document.removeEventListener('focusin', onFocusIn)
+  }, [])
 
   useEffect(() => {
     void api.settingsGet().then((r) => setSettings(r.settings))
@@ -75,6 +112,19 @@ function Shell() {
       .then((u) => unsubs.push(u))
     void events
       .on<string>('record://error', (msg) => toast.push(`录制失败：${msg}`, 'error'))
+      .then((u) => unsubs.push(u))
+    // 面板选中后要粘到 SnipForge 自己的输入框。
+    // Chromium 会丢弃程序模拟的 Ctrl+V（安全策略），所以后端把文本推过来，
+    // 由页面插进最近聚焦的那个输入框。
+    void events
+      .onPasteSelf((text) => {
+        const el = lastInputRef.current
+        if (!el || !el.isConnected) {
+          toast.push('内容已复制，手动 Ctrl+V 即可', 'info')
+          return
+        }
+        insertIntoInput(el, text)
+      })
       .then((u) => unsubs.push(u))
 
     return () => unsubs.forEach((u) => u())
