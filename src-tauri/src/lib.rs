@@ -627,6 +627,9 @@ pub fn run() {
             commands::upload::upload_image,
             commands::upload::upload_test,
             commands::upload::upload_list_dirs,
+            commands::upload::upload_history_list,
+            commands::upload::upload_history_remove,
+            commands::upload::upload_history_clear,
             // 插件
             commands::plugins::plugins_state,
             commands::plugins::plugins_toggle,

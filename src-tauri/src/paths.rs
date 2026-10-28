@@ -73,4 +73,9 @@ impl Paths {
     pub fn settings_file(&self) -> PathBuf {
         self.data.join("settings.json")
     }
+
+    /// 上传历史（图床页的"上传记录"）
+    pub fn uploads_file(&self) -> PathBuf {
+        self.data.join("uploads.json")
+    }
 }

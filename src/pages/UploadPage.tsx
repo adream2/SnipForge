@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { api } from '../lib/api'
-import type { AppSettings, DirEntry, ProviderMeta, UploadOutcome } from '../lib/types'
+import type { AppSettings, DirEntry, ProviderMeta, UploadOutcome, UploadRecord } from '../lib/types'
 import { dataUrlBytes, extOf, prepareForUpload, type PreparedImage } from '../lib/compress'
 import { IconCheck, IconClipboard, IconCopy, IconImage, IconLoader, IconUpload } from '../components/Icons'
 import { useToast } from '../components/Toast'
 
-/** 本次会话的上传记录（不落库，够用就行） */
-interface Sent extends UploadOutcome {
-  name: string
-  bytes: number
-  saved?: number
-  at: number
+/** 只有 http(s) 的图能直接当缩略图；本地目录图床是 file://，webview 加载不了 */
+const isRemote = (u: string) => /^https?:\/\//i.test(u)
+
+/** 今天只显示时分，跨天带日期 —— 列表里最常看的是"刚传的那张" */
+function fmtTime(ms: number): string {
+  if (!ms) return ''
+  const d = new Date(ms)
+  const now = new Date()
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  if (d.toDateString() === now.toDateString()) return hm
+  const md = `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')}`
+  if (d.getFullYear() === now.getFullYear()) return `${md} ${hm}`
+  return `${d.getFullYear()}-${md}`
 }
 
 const FORMAT_OPTS = [
@@ -61,7 +68,10 @@ export default function UploadPage({
   const [busy, setBusy] = useState(false)
   const [preparing, setPreparing] = useState(false)
   const [dragging, setDragging] = useState(false)
-  const [sent, setSent] = useState<Sent[]>([])
+  /** 上传记录：后端落盘（uploads.json），重启后还在 */
+  const [records, setRecords] = useState<UploadRecord[]>([])
+  /** 清空的两段式确认 */
+  const [confirmClear, setConfirmClear] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   /** 单次上传的目录覆盖（空 = 用配置里的路径）；支持 {yyyy}/{MM} 占位符 */
   const [dirInput, setDirInput] = useState('')
@@ -88,6 +98,19 @@ export default function UploadPage({
     }
     return ''
   })()
+
+  const loadHistory = useCallback(async () => {
+    try {
+      setRecords(await api.uploadHistoryList(undefined, 200))
+    } catch (e) {
+      // 历史读不出来不该挡住上传，记一笔就好
+      console.warn('读取上传记录失败', e)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadHistory()
+  }, [loadHistory])
 
   useEffect(() => {
     void api.uploadProviders().then((list) => {
@@ -208,7 +231,6 @@ export default function UploadPage({
   const upload = async () => {
     if (!prepared || !provider) return
     setBusy(true)
-    const started = Date.now()
     try {
       const ext = extOf(prepared.format)
       const base = (src?.name ?? 'image').replace(/\.[^.]+$/, '')
@@ -216,18 +238,11 @@ export default function UploadPage({
         prepared.dataUrl,
         provider,
         `${base}.${ext}`,
-        dirInput.trim() || undefined
+        dirInput.trim() || undefined,
+        prepared.srcBytes
       )
-      setSent((prev) => [
-        {
-          ...out,
-          name: `${base}.${ext}`,
-          bytes: prepared.bytes,
-          saved: prepared.changed ? 1 - prepared.bytes / prepared.srcBytes : undefined,
-          at: started
-        },
-        ...prev
-      ])
+      // 记录由后端落盘，这里只需要重新拉一次列表
+      await loadHistory()
       if (settings?.uploader.copyAsMarkdown) {
         await api.clipboardCopyText(`![${base}](${out.result.url})`)
         toast.push('已上传并复制 Markdown', 'success')
@@ -501,62 +516,126 @@ export default function UploadPage({
           </div>
         </div>
 
-        {/* ---------------- 本次会话的上传记录 ---------------- */}
-        {sent.length > 0 && (
-          <div className="setting-card" style={{ marginTop: 14 }}>
-            <header>刚才传的</header>
-            {sent.map((s, i) => (
-              <div
-                key={`${s.at}-${i}`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '9px 16px',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--border)',
-                  fontSize: 12
+        {/* ---------------- 上传记录（落盘，重启后还在） ---------------- */}
+        <div className="setting-card" style={{ marginTop: 14 }}>
+          <header style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 8 }}>
+            <span>上传记录</span>
+            <span style={{ fontWeight: 400, textTransform: 'none' }}>{records.length}</span>
+            <div style={{ flex: 1 }} />
+            {records.length > 0 && (
+              <button
+                className={`btn sm danger ${confirmClear ? 'armed' : ''}`}
+                onClick={async () => {
+                  // 两段式：先变红，3 秒内不再点就自动撤销
+                  if (!confirmClear) {
+                    setConfirmClear(true)
+                    window.setTimeout(() => setConfirmClear(false), 3000)
+                    return
+                  }
+                  try {
+                    await api.uploadHistoryClear()
+                    setConfirmClear(false)
+                    await loadHistory()
+                    toast.push('记录已清空（远端图片不受影响）', 'success')
+                  } catch (e) {
+                    toast.push(String(e), 'error')
+                  }
                 }}
               >
-                <span style={{ color: 'var(--text-3)', width: 92, flex: 'none' }}>{s.providerName}</span>
-                <span
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    color: 'var(--text-2)'
-                  }}
-                  title={s.result.url}
-                >
-                  {s.name} · {kb(s.bytes)}
-                  {s.saved !== undefined && s.saved > 0.01 && (
-                    <span style={{ color: 'var(--accent)', marginLeft: 6 }}>
-                      省 {Math.round(s.saved * 100)}%
-                    </span>
-                  )}
-                </span>
-                <button
-                  className="btn sm"
-                  onClick={() => void copy(s.result.url, `u${i}`)}
-                  title="复制链接"
-                >
-                  {copied === `u${i}` ? <IconCheck size={12} /> : <IconCopy size={12} />}
-                </button>
-                <button
-                  className="btn sm"
-                  onClick={() => void copy(`![${s.name}](${s.result.url})`, `m${i}`)}
-                  title="复制 Markdown"
-                >
-                  {copied === `m${i}` ? <IconCheck size={12} /> : 'MD'}
-                </button>
-                <button className="btn sm" onClick={() => void api.openPath(s.result.url)} title="在浏览器打开">
-                  ↗
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+                {confirmClear ? '确认清空' : '清空'}
+              </button>
+            )}
+          </header>
+
+          {records.length === 0 ? (
+            <div style={{ padding: '2px 16px 16px', fontSize: 11.5, color: 'var(--text-3)' }}>
+              传过的图会记在这里，重启也还在。
+            </div>
+          ) : (
+            records.map((r, i) => {
+              const saved = r.origBytes > 0 && r.bytes < r.origBytes ? 1 - r.bytes / r.origBytes : 0
+              return (
+                <div className="up-row" key={r.id}>
+                  <div className="up-thumb">
+                    <span className="up-thumb-fallback">{isRemote(r.url) ? '🖼' : '🗂'}</span>
+                    {isRemote(r.url) && (
+                      <img
+                        src={r.url}
+                        alt=""
+                        loading="lazy"
+                        onError={(e) => {
+                          // 图床删了 / 防盗链 / 离线：露出底层占位，别显示破图标
+                          e.currentTarget.style.display = 'none'
+                        }}
+                      />
+                    )}
+                  </div>
+
+                  <div className="up-info">
+                    <div className="up-name" title={r.url}>
+                      {r.name}
+                    </div>
+                    <div className="up-meta">
+                      <span>{r.providerName}</span>
+                      <span className="dot">·</span>
+                      <span>{kb(r.bytes)}</span>
+                      {saved > 0.01 && (
+                        <>
+                          <span className="dot">·</span>
+                          <span style={{ color: 'var(--accent)' }}>
+                            省 {Math.round(saved * 100)}%
+                          </span>
+                        </>
+                      )}
+                      <span className="dot">·</span>
+                      <span>{fmtTime(r.createdAt)}</span>
+                    </div>
+                  </div>
+
+                  <div className="up-acts">
+                    <button
+                      className="btn sm"
+                      title="复制链接"
+                      onClick={() => void copy(r.url, `u${i}`)}
+                    >
+                      {copied === `u${i}` ? <IconCheck size={12} /> : <IconCopy size={12} />}
+                    </button>
+                    <button
+                      className="btn sm"
+                      title="复制 Markdown"
+                      onClick={() => void copy(`![${r.name}](${r.url})`, `m${i}`)}
+                    >
+                      {copied === `m${i}` ? <IconCheck size={12} /> : 'MD'}
+                    </button>
+                    <button
+                      className="btn sm"
+                      title={r.localPath ? '在资源管理器中显示' : '在浏览器打开'}
+                      onClick={() =>
+                        void (r.localPath ? api.openImageFolder(r.localPath) : api.openPath(r.url))
+                      }
+                    >
+                      ↗
+                    </button>
+                    <button
+                      className="btn sm danger"
+                      title="从记录里删掉（不会删除远端图片）"
+                      onClick={async () => {
+                        try {
+                          await api.uploadHistoryRemove(r.id)
+                          await loadHistory()
+                        } catch (e) {
+                          toast.push(String(e), 'error')
+                        }
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
 
         {providers.length === 0 && (
           <div className="empty" style={{ height: 120, marginTop: 14 }}>

@@ -7,6 +7,7 @@
 //!
 //! 三者共用同一套 ProviderMeta，UI 侧不需要区分来源。
 
+pub mod history;
 pub mod providers;
 
 use crate::error::{AppError, AppResult};

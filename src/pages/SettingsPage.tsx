@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, events } from '../lib/api'
 import type { AppInfo, AppSettings, OcrDownloadProgress, OcrEngineInfo } from '../lib/types'
 import { useToast } from '../components/Toast'
+import { HotkeyInput } from '../components/HotkeyInput'
 
 function Row({
   title,
@@ -91,8 +92,9 @@ export default function SettingsPage({
 
   if (!settings) return <div className="empty">载入中…</div>
 
-  const hotkeyState = (label: string) =>
-    info?.hotkeyResults.find((h) => h.action === label)
+  // 按配置字段名匹配。以前按 action 文案匹配，"长截图" vs "滚动长截图" 对不上，
+  // 那一行就永远显示"未生效"——文案一改就失联，这种设计本身是错的。
+  const hotkeyState = (id: string) => info?.hotkeyResults.find((h) => h.id === id)
 
   return (
     <>
@@ -139,23 +141,29 @@ export default function SettingsPage({
           <div className="setting-card">
             <header>快捷键</header>
             {HOTKEY_FIELDS.map((f) => {
-              const st = hotkeyState(f.label)
+              const st = hotkeyState(f.key)
               return (
-                <Row key={f.key} title={f.label} desc={st && !st.ok ? st.reason : undefined}>
-                  <input
-                    className="input"
-                    style={{ width: 150, fontFamily: 'var(--mono)' }}
+                <Row
+                  key={f.key}
+                  title={f.label}
+                  desc={st && !st.ok ? st.reason : undefined}
+                >
+                  <HotkeyInput
                     value={settings.hotkeys[f.key] ?? ''}
-                    onChange={(e) => void onChange({ hotkeys: { [f.key]: e.target.value } })}
+                    ok={st?.ok}
+                    onChange={(v) => void onChange({ hotkeys: { [f.key]: v } })}
                   />
                   <span className={`hotkey-chip ${st && !st.ok ? 'fail' : ''}`}>
-                    {st?.ok ? '已生效' : '未生效'}
+                    {st?.ok ? '已生效' : st?.reason === '未设置' ? '已停用' : '未生效'}
                   </span>
                 </Row>
               )
             })}
-            <div style={{ padding: '4px 16px 14px', fontSize: 11.5, color: 'var(--text-3)' }}>
-              修改后立即生效。加速键格式：Alt+Q、Ctrl+Shift+A、F9 等。
+            <div style={{ padding: '4px 16px 14px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.7 }}>
+              点一下方框，直接按下想用的组合键即可，改完立即生效。
+              <br />
+              <kbd>Esc</kbd> 取消，<kbd>Delete</kbd> 清空（等于不用快捷键）。
+              显示"未生效"通常是被别的软件占用了，换一个组合即可。
             </div>
           </div>
 

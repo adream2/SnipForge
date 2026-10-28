@@ -37,10 +37,14 @@ pub struct AppState {
     pub capture: Mutex<Option<CaptureSession>>,
     /// 已经裁剪好、等待编辑器取走的截图
     pub pending: Mutex<Option<crate::types::CaptureResult>>,
+    /// 上传历史（落盘，重启后还在）
+    pub uploads: Mutex<crate::uploader::history::UploadHistory>,
 }
 
 impl AppState {
     pub fn new(settings: AppSettings, paths: Paths) -> Arc<Self> {
+        let uploads =
+            crate::uploader::history::UploadHistory::load(paths.uploads_file());
         Arc::new(Self {
             settings: RwLock::new(settings),
             paths,
@@ -48,6 +52,7 @@ impl AppState {
             hooks: Arc::new(HookRegistry::new()),
             capture: Mutex::new(None),
             pending: Mutex::new(None),
+            uploads: Mutex::new(uploads),
         })
     }
 

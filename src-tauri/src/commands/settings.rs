@@ -21,14 +21,26 @@ pub fn settings_get(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppRes
 /// 局部更新配置。前端只提交改动的字段，后端做深度合并后落盘。
 #[tauri::command]
 pub fn settings_patch(
+    app: tauri::AppHandle,
     state: tauri::State<'_, std::sync::Arc<AppState>>,
     patch: serde_json::Value,
 ) -> AppResult<AppSettingsView> {
+    // 快捷键是"注册到系统"的东西，光改配置不重新注册等于没改：
+    // 以前只有启动时注册一遍，界面却写着"修改后立即生效"，
+    // 用户改完按下去毫无反应，只能重启应用 —— 这是最典型的"设置不生效"。
+    let hotkeys_changed = patch.get("hotkeys").is_some();
     {
         let mut guard = state.settings.write();
         guard.apply_patch(&patch);
     }
     state.persist_settings()?;
+
+    if hotkeys_changed {
+        if let Err(e) = crate::shortcuts::register_all(&app, state.inner()) {
+            log::warn!("快捷键重新注册失败: {e}");
+        }
+    }
+
     Ok(AppSettingsView {
         settings: state.settings_snapshot(),
     })
@@ -36,7 +48,10 @@ pub fn settings_patch(
 
 /// 恢复默认配置（保留 provider 凭据，避免用户手滑把 token 清了）
 #[tauri::command]
-pub fn settings_reset(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppResult<AppSettingsView> {
+pub fn settings_reset(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+) -> AppResult<AppSettingsView> {
     {
         let mut guard = state.settings.write();
         let providers = guard.uploader.providers.clone();
@@ -47,6 +62,10 @@ pub fn settings_reset(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppR
         *guard = fresh;
     }
     state.persist_settings()?;
+    // 快捷键回到默认值，同样要重新注册
+    if let Err(e) = crate::shortcuts::register_all(&app, state.inner()) {
+        log::warn!("恢复默认后重新注册快捷键失败: {e}");
+    }
     Ok(AppSettingsView {
         settings: state.settings_snapshot(),
     })

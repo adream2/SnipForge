@@ -108,6 +108,8 @@ export interface AppSettings {
 }
 
 export interface HotkeyResult {
+  /** 配置字段名（regionCapture 等），匹配用这个，别用 action 文案 */
+  id: string
   action: string
   accelerator: string
   ok: boolean
@@ -228,6 +230,26 @@ export interface UploadResult {
   deleteUrl?: string
   thumbUrl?: string
   meta?: unknown
+}
+
+/** 一条上传记录（落盘，重启后还在） */
+export interface UploadRecord {
+  id: string
+  url: string
+  deleteUrl?: string
+  name: string
+  /** 实际传上去的体积 */
+  bytes: number
+  /** 压缩前的体积，0 = 未知 */
+  origBytes: number
+  format: string
+  providerId: string
+  providerName: string
+  dir?: string
+  /** 毫秒时间戳 */
+  createdAt: number
+  /** 本地目录图床的真实磁盘路径 */
+  localPath?: string
 }
 
 export interface UploadOutcome {

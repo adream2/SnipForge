@@ -27,7 +27,7 @@ crash.log
 .vscode/
 .idea/
 .DS_Store
-
+.workbuddy/
 # 环境变量
 .env
 .env.local

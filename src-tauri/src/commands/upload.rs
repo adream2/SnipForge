@@ -58,6 +58,8 @@ pub async fn upload_image(
     file_name: Option<String>,
     // 单次上传的目录（可含 {yyyy}/{MM} 之类的日期占位符）。空 = 用配置里的路径
     dir: Option<String>,
+    // 压缩前的体积，只为在历史里显示"省了多少"，拿不到就不传
+    orig_bytes: Option<u64>,
 ) -> AppResult<UploadOutcome> {
     let registry = registry(&app)?;
     let state = state.inner().clone();
@@ -86,7 +88,13 @@ pub async fn upload_image(
         .map(|d| crate::uploader::render_dir(&d))
         .filter(|d| !d.is_empty());
 
-    tauri::async_runtime::spawn_blocking(move || {
+    // 下面这些东西会被 move 进上传线程，历史记录需要留一份
+    let hist_name = name.clone();
+    let hist_bytes = bytes.len() as u64;
+    let hist_mime = mime.clone();
+    let hist_dir = dir.clone();
+
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         registry.upload(
             &target,
             UploadFile {
@@ -99,7 +107,85 @@ pub async fn upload_image(
         )
     })
     .await
-    .map_err(|e| AppError::Msg(format!("上传任务失败: {e}")))?
+    .map_err(|e| AppError::Msg(format!("上传任务失败: {e}")))??;
+
+    // 记历史。写盘失败只记日志 —— 图已经传上去了，不能因为本地落盘出错
+    // 就让用户看到"上传失败"，那样他会重传一遍。
+    let rec = crate::types::UploadRecord {
+        id: new_record_id(),
+        url: outcome.result.url.clone(),
+        delete_url: outcome.result.delete_url.clone(),
+        name: hist_name,
+        bytes: hist_bytes,
+        orig_bytes: orig_bytes.unwrap_or(0),
+        format: hist_mime,
+        provider_id: outcome.provider_id.clone(),
+        provider_name: outcome.provider_name.clone(),
+        dir: hist_dir,
+        created_at: now_ms(),
+        local_path: local_path_of(&outcome.result.url),
+    };
+    if let Err(e) = state.uploads.lock().push(rec) {
+        log::warn!("写入上传历史失败: {e}");
+    }
+
+    Ok(outcome)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 同一毫秒内连传两张也要区分开，所以后面缀一个微秒余数
+fn new_record_id() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}-{:04}", now.as_millis(), (now.subsec_micros() / 100) % 10_000)
+}
+
+/// 本地目录图床返回的是 `file:///E:/...`，这种链接在 webview 里既显示不了缩略图、
+/// 也没法右键"打开文件位置"。转回真实路径备用。
+fn local_path_of(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("file:///")?;
+    let decoded = urlencoding::decode(rest)
+        .map(|c| c.into_owned())
+        .unwrap_or_else(|_| rest.to_string());
+    Some(if cfg!(windows) {
+        decoded.replace('/', "\\")
+    } else {
+        format!("/{decoded}")
+    })
+}
+
+/* ---------------- 上传历史 ---------------- */
+
+#[tauri::command]
+pub fn upload_history_list(
+    state: tauri::State<'_, Arc<AppState>>,
+    keyword: Option<String>,
+    limit: Option<usize>,
+) -> AppResult<Vec<crate::types::UploadRecord>> {
+    Ok(state
+        .uploads
+        .lock()
+        .list(keyword.as_deref(), limit.unwrap_or(200)))
+}
+
+#[tauri::command]
+pub fn upload_history_remove(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+) -> AppResult<bool> {
+    state.uploads.lock().remove(&id)
+}
+
+#[tauri::command]
+pub fn upload_history_clear(state: tauri::State<'_, Arc<AppState>>) -> AppResult<()> {
+    state.uploads.lock().clear()
 }
 
 /// 测试图床配置：上传一张 1x1 的探针图，确认凭据和权限都对

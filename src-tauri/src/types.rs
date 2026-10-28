@@ -254,6 +254,33 @@ pub struct UploadResult {
     pub meta: Option<serde_json::Value>,
 }
 
+/// 一条上传记录。落盘在 `uploads.json`，重启后还在。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadRecord {
+    pub id: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_url: Option<String>,
+    pub name: String,
+    /// 实际传上去的体积
+    pub bytes: u64,
+    /// 压缩前的体积（0 = 不知道，比如从编辑器直接传）
+    #[serde(default)]
+    pub orig_bytes: u64,
+    pub format: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    /// 毫秒时间戳
+    pub created_at: i64,
+    /// 本地目录图床的实际磁盘路径。`file://` 链接在 webview 里显示不了缩略图，
+    /// 有它才能"在资源管理器里定位"。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadOutcome {
@@ -317,6 +344,9 @@ pub struct AppInfo {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyResult {
+    /// 配置字段名（如 regionCapture）。前端靠它匹配 ——
+    /// 用 action 文案匹配会随文案改动悄悄失联（曾导致"滚动长截图"永远显示未生效）
+    pub id: String,
     pub action: String,
     pub accelerator: String,
     pub ok: bool,
