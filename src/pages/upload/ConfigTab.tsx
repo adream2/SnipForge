@@ -181,6 +181,57 @@ export default function ConfigTab({
                 {testing ? <IconLoader /> : null} 测试连通性
               </button>
             </div>
+
+            {/* GitHub 的「自定义域名」光一个输入框谁也看不懂，给一段能照着做的说明 */}
+            {current.id === 'github' && (
+              <details className="cfg-help">
+                <summary>「自定义域名」怎么配？</summary>
+                <div className="cfg-help-body">
+                  <p>
+                    上传永远走 GitHub API，这个域名只决定<strong>生成什么链接</strong>。
+                    最终链接 = 前缀 + <code>/存储路径/文件名</code>：
+                  </p>
+                  <pre>https://img.example.com/snipforge/20261029_001.png</pre>
+                  <p>
+                    所以要让这个域名能按<strong>同样的路径</strong>访问到仓库里的文件。
+                    常见三种做法：
+                  </p>
+
+                  <p className="cfg-help-h">1. Cloudflare Worker 反代（推荐：免费、能缓存、国内可访问）</p>
+                  <pre>{`export default {
+  async fetch(request) {
+    const url = new URL(request.url)
+    const base = 'https://raw.githubusercontent.com/用户名/仓库/分支'
+    const res = await fetch(base + url.pathname, {
+      cf: { cacheTtl: 86400, cacheEverything: true }
+    })
+    return res
+  }
+}`}</pre>
+                  <p>建好 Worker 后在「设置 → 域和路由 → 自定义域」绑定 img.example.com。</p>
+
+                  <p className="cfg-help-h">2. 自己的服务器 Nginx 反代</p>
+                  <pre>{`location / {
+  proxy_pass https://raw.githubusercontent.com/用户名/仓库/分支/;
+  proxy_cache_valid 200 7d;
+}`}</pre>
+
+                  <p className="cfg-help-h">3. GitHub Pages</p>
+                  <p>
+                    仓库开了 Pages（图片放在发布目录下）的话，
+                    <code>https://用户名.github.io/仓库名</code> 也能直接当前缀。
+                  </p>
+
+                  <p className="cfg-help-h">注意</p>
+                  <ul>
+                    <li>jsDelivr <strong>不支持</strong>把自己的域名 CNAME 过去，想用自己的域名就得自己反代</li>
+                    <li>前缀要带 <code>https://</code>，末尾斜杠可有可无（会自动去掉）</li>
+                    <li>图片是 <code>&lt;img&gt;</code> 直接加载，不需要配 CORS</li>
+                    <li>域名没配好只会让<strong>链接</strong>打不开，上传本身是成功的</li>
+                  </ul>
+                </div>
+              </details>
+            )}
           </div>
         ) : (
           <div className="empty" style={{ height: 220 }}>

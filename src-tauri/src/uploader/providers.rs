@@ -5,7 +5,9 @@
 
 use super::{cfg_bool, cfg_str, Cfg, Provider, UploadFile};
 use crate::error::{AppError, AppResult};
-use crate::types::{ConfigField, DirEntry, FieldOption, ProviderMeta, RemoteImage, UploadResult};
+use crate::types::{
+    ConfigField, DirEntry, FieldOption, ProviderMeta, RemoteImage, UploadResult, VisibleWhen,
+};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -33,6 +35,16 @@ fn required(mut field: ConfigField) -> ConfigField {
 
 fn hint(mut field: ConfigField, text: &str) -> ConfigField {
     field.description = Some(text.into());
+    field
+}
+
+/// 只在另一个字段取某个值时才显示这个字段。
+/// 「自定义域名」这种只在特定选项下才有意义的字段，一直摆着只会让人困惑。
+fn visible_when(mut field: ConfigField, key: &str, value: serde_json::Value) -> ConfigField {
+    field.visible_when = Some(VisibleWhen {
+        key: key.into(),
+        equals: value,
+    });
     field
 }
 
@@ -100,19 +112,42 @@ impl Provider for GithubProvider {
                     required(f("token", "Personal Access Token", "password")),
                     "需要 repo 权限，或 fine-grained token 的 Contents: Read & Write",
                 ),
-                required(f("owner", "用户名 / 组织", "string")),
-                required(f("repo", "仓库名", "string")),
-                with_default(f("branch", "分支", "string"), serde_json::json!("main")),
-                with_default(f("path", "存储路径", "string"), serde_json::json!("snipforge")),
-                with_default(
-                    options(f("cdn", "访问方式", "select"), &[
-                        ("jsDelivr CDN", "jsdelivr"),
-                        ("GitHub Raw", "raw"),
-                        ("自定义域名", "custom"),
-                    ]),
-                    serde_json::json!("jsdelivr"),
+                hint(
+                    required(f("owner", "用户名 / 组织", "string")),
+                    "仓库所在的账号，例如 github.com/adream2/xxx 里的 adream2",
                 ),
-                f("customDomain", "自定义域名", "string"),
+                hint(
+                    required(f("repo", "仓库名", "string")),
+                    "只填仓库名，不带账号前缀",
+                ),
+                hint(
+                    with_default(f("branch", "分支", "string"), serde_json::json!("main")),
+                    "仓库的默认分支。老仓库多是 master，新建的默认 main",
+                ),
+                hint(
+                    with_default(f("path", "存储路径", "string"), serde_json::json!("snipforge")),
+                    "文件放在仓库里的哪个目录。留空则放在仓库根目录",
+                ),
+                hint(
+                    with_default(
+                        options(f("cdn", "访问方式", "select"), &[
+                            ("jsDelivr CDN", "jsdelivr"),
+                            ("GitHub Raw", "raw"),
+                            ("自定义域名", "custom"),
+                        ]),
+                        serde_json::json!("jsdelivr"),
+                    ),
+                    "决定上传后给你什么链接。jsDelivr 有国内加速但是缓存不好刷；raw 实时但国内常被墙",
+                ),
+                hint(
+                    visible_when(
+                        f("customDomain", "自定义域名", "string"),
+                        "cdn",
+                        serde_json::json!("custom"),
+                    ),
+                    "填完整前缀（含 https://）。最终链接 = 这个前缀 + /存储路径/文件名，
+所以这个域名下必须能按同样路径访问到仓库里的文件",
+                ),
             ],
         }
     }
