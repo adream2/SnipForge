@@ -132,21 +132,25 @@ impl Provider for GithubProvider {
                     with_default(
                         options(f("cdn", "访问方式", "select"), &[
                             ("jsDelivr CDN", "jsdelivr"),
+                            ("Statically", "statically"),
                             ("GitHub Raw", "raw"),
-                            ("自定义域名", "custom"),
+                            ("gh-proxy（国内加速）", "ghproxy"),
+                            ("自定义加速链接", "custom"),
                         ]),
                         serde_json::json!("jsdelivr"),
                     ),
-                    "决定上传后给你什么链接。jsDelivr 有国内加速但是缓存不好刷；raw 实时但国内常被墙",
+                    "决定上传后给你什么链接。jsDelivr 国内可用但缓存难刷；Statically 次选；
+raw 实时但国内常被墙；gh-proxy 是国内公共反代，随时可能换域名或失效",
                 ),
                 hint(
                     visible_when(
-                        f("customDomain", "自定义域名", "string"),
+                        f("customDomain", "自定义加速链接", "string"),
                         "cdn",
                         serde_json::json!("custom"),
                     ),
-                    "填完整前缀（含 https://）。最终链接 = 这个前缀 + /存储路径/文件名，
-所以这个域名下必须能按同样路径访问到仓库里的文件",
+                    "两种写法：
+① 只填前缀（如 https://img.example.com），后面自动拼 /存储路径/文件名
+② 填完整模板，支持 {owner} {repo} {branch} {path} {file} 五个占位符",
                 ),
             ],
         }
@@ -356,14 +360,32 @@ fn github_public_url(cfg: &Cfg, key: &str) -> AppResult<String> {
         let b = cfg_str(cfg, "branch");
         if b.is_empty() { "main".to_string() } else { b }
     };
+    let raw = format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{key}");
+
     Ok(match cfg_str(cfg, "cdn").as_str() {
-        "raw" => format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{key}"),
+        "raw" => raw,
+        // 第三方代理：把 raw 地址整个套进它们的转发前缀
+        "ghproxy" => format!("https://gh-proxy.com/{raw}"),
+        "statically" => format!("https://cdn.statically.io/gh/{owner}/{repo}/{branch}/{key}"),
         "custom" => {
-            let domain = cfg_str(cfg, "customDomain");
-            if domain.is_empty() {
-                return Err(AppError::Msg("选了自定义域名但没填地址".into()));
+            let tpl = cfg_str(cfg, "customDomain");
+            let tpl = tpl.trim();
+            if tpl.is_empty() {
+                return Err(AppError::Msg("选了自定义加速链接，但没填地址".into()));
             }
-            format!("{}/{key}", domain.trim_end_matches('/'))
+            if tpl.contains('{') {
+                // 模板模式：{owner} {repo} {branch} {path} {file}
+                // 用它可以把任意加速源的 URL 规则搬过来，也能只替换掉其中一段。
+                let file = key.rsplit('/').next().unwrap_or(key);
+                tpl.replace("{owner}", &owner)
+                    .replace("{repo}", &repo)
+                    .replace("{branch}", &branch)
+                    .replace("{path}", key)
+                    .replace("{file}", file)
+            } else {
+                // 纯前缀模式：老配置就是这个写法（填域名、后面自动拼路径），保持兼容
+                format!("{}/{}", tpl.trim_end_matches('/'), key)
+            }
         }
         _ => format!("https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{key}"),
     })
@@ -1077,4 +1099,84 @@ fn interpolate(template: &str, cfg: &Cfg) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn cfg(pairs: &[(&str, &str)]) -> Cfg {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), json!(v)))
+            .collect()
+    }
+
+    /// 一套典型配置：owner / repo / branch 都有，额外项按需覆盖
+    fn base(extra: &[(&str, &str)]) -> Cfg {
+        let mut pairs = vec![("owner", "adream2"), ("repo", "pics"), ("branch", "master")];
+        pairs.extend_from_slice(extra);
+        cfg(&pairs)
+    }
+
+    const KEY: &str = "snipforge/a.png";
+
+    #[test]
+    fn default_is_jsdelivr() {
+        assert_eq!(
+            github_public_url(&base(&[]), KEY).unwrap(),
+            "https://cdn.jsdelivr.net/gh/adream2/pics@master/snipforge/a.png"
+        );
+    }
+
+    #[test]
+    fn raw_and_mirrors() {
+        assert_eq!(
+            github_public_url(&base(&[("cdn", "raw")]), KEY).unwrap(),
+            "https://raw.githubusercontent.com/adream2/pics/master/snipforge/a.png"
+        );
+        assert_eq!(
+            github_public_url(&base(&[("cdn", "statically")]), KEY).unwrap(),
+            "https://cdn.statically.io/gh/adream2/pics/master/snipforge/a.png"
+        );
+        assert_eq!(
+            github_public_url(&base(&[("cdn", "ghproxy")]), KEY).unwrap(),
+            "https://gh-proxy.com/https://raw.githubusercontent.com/adream2/pics/master/snipforge/a.png"
+        );
+    }
+
+    /// 老配置填的是纯前缀，行为不能变
+    #[test]
+    fn custom_prefix_keeps_old_behaviour() {
+        let c = base(&[("cdn", "custom"), ("customDomain", "https://img.example.com/")]);
+        assert_eq!(
+            github_public_url(&c, KEY).unwrap(),
+            "https://img.example.com/snipforge/a.png"
+        );
+    }
+
+    #[test]
+    fn custom_template_substitutes_placeholders() {
+        let c = base(&[
+            ("cdn", "custom"),
+            ("customDomain", "https://x.com/{owner}/{repo}@{branch}/{path}"),
+        ]);
+        assert_eq!(
+            github_public_url(&c, KEY).unwrap(),
+            "https://x.com/adream2/pics@master/snipforge/a.png"
+        );
+
+        let c2 = base(&[("cdn", "custom"), ("customDomain", "https://x.com/img/{file}")]);
+        assert_eq!(
+            github_public_url(&c2, KEY).unwrap(),
+            "https://x.com/img/a.png"
+        );
+    }
+
+    #[test]
+    fn custom_without_value_errors() {
+        let c = base(&[("cdn", "custom"), ("customDomain", "   ")]);
+        assert!(github_public_url(&c, KEY).is_err());
+    }
 }

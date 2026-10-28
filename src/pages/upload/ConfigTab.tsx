@@ -182,19 +182,57 @@ export default function ConfigTab({
               </button>
             </div>
 
-            {/* GitHub 的「自定义域名」光一个输入框谁也看不懂，给一段能照着做的说明 */}
+            {/* 访问方式和自定义链接是这个图床最容易卡住的地方，直接给能照着做的说明 */}
             {current.id === 'github' && (
               <details className="cfg-help">
-                <summary>「自定义域名」怎么配？</summary>
+                <summary>访问方式怎么选？自定义链接怎么写？</summary>
                 <div className="cfg-help-body">
+                  <p className="cfg-help-h">四种内置访问方式</p>
+                  <ul>
+                    <li>
+                      <strong>jsDelivr</strong>（默认）：国内能直连，但缓存要手动刷 ——
+                      同名文件覆盖后链接不会立刻更新
+                    </li>
+                    <li>
+                      <strong>Statically</strong>：备用 CDN，jsDelivr 出问题时可以换过来试
+                    </li>
+                    <li>
+                      <strong>GitHub Raw</strong>：直连官方源，实时，但国内经常打不开
+                    </li>
+                    <li>
+                      <strong>gh-proxy</strong>：国内公共反代，能用但随时可能换域名或失效，
+                      别长期依赖
+                    </li>
+                  </ul>
+
+                  <p className="cfg-help-h">「自定义加速链接」的两种写法</p>
                   <p>
-                    上传永远走 GitHub API，这个域名只决定<strong>生成什么链接</strong>。
-                    最终链接 = 前缀 + <code>/存储路径/文件名</code>：
+                    <strong>① 只填前缀</strong>：最终链接 = 前缀 + <code>/存储路径/文件名</code>
                   </p>
-                  <pre>https://img.example.com/snipforge/20261029_001.png</pre>
+                  <pre>{`填 https://img.example.com
+→ https://img.example.com/snipforge/20261029_001.png`}</pre>
                   <p>
-                    所以要让这个域名能按<strong>同样的路径</strong>访问到仓库里的文件。
-                    常见三种做法：
+                    <strong>② 填模板</strong>：只要值里带 <code>{'{'}</code> 就按模板处理，
+                    可用这些占位符：
+                  </p>
+                  <pre>{`{owner}   用户名/组织
+{repo}    仓库名
+{branch}  分支
+{path}    存储路径/文件名（带目录）
+{file}    只有文件名`}</pre>
+                  <pre>{`例：https://x.com/{owner}/{repo}@{branch}/{path}
+→ https://x.com/adream2/pics@master/snipforge/a.png
+
+例：https://x.com/img/{file}
+→ https://x.com/img/a.png`}</pre>
+                  <p>
+                    想接别家的 CDN 或反代，把它的 URL 规则照抄成模板即可，
+                    不用等软件支持。
+                  </p>
+
+                  <p className="cfg-help-h">想用自己的域名（img.example.com）</p>
+                  <p>
+                    需要让这个域名能按<strong>同样的路径</strong>访问到仓库文件。常见三种做法：
                   </p>
 
                   <p className="cfg-help-h">1. Cloudflare Worker 反代（推荐：免费、能缓存、国内可访问）</p>
@@ -224,10 +262,10 @@ export default function ConfigTab({
 
                   <p className="cfg-help-h">注意</p>
                   <ul>
-                    <li>jsDelivr <strong>不支持</strong>把自己的域名 CNAME 过去，想用自己的域名就得自己反代</li>
-                    <li>前缀要带 <code>https://</code>，末尾斜杠可有可无（会自动去掉）</li>
+                    <li>jsDelivr <strong>不支持</strong>把自己的域名 CNAME 过去，想用自己的域名就得反代</li>
+                    <li>链接里要带 <code>https://</code>，末尾斜杠可有可无（会自动去掉）</li>
                     <li>图片是 <code>&lt;img&gt;</code> 直接加载，不需要配 CORS</li>
-                    <li>域名没配好只会让<strong>链接</strong>打不开，上传本身是成功的</li>
+                    <li>链接规则改错只会让<strong>链接</strong>打不开，上传本身是成功的</li>
                   </ul>
                 </div>
               </details>
