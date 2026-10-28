@@ -246,6 +246,17 @@ export interface UploadResult {
   meta?: unknown
 }
 
+/** 一个已录好的文件 */
+export interface RecordFile {
+  name: string
+  path: string
+  bytes: number
+  /** 毫秒时间戳 */
+  createdAt: number
+  /** mp4 | gif */
+  format: string
+}
+
 /** 一条上传记录（落盘，重启后还在） */
 export interface UploadRecord {
   id: string

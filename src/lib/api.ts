@@ -112,6 +112,8 @@ export const api = {
   recordStop: () => invoke<RecordResult>('record_stop'),
   recordCancel: () => invoke<void>('record_cancel'),
   recordStatus: () => invoke<RecordStatus | null>('record_status'),
+  recordRecent: (limit?: number) =>
+    invoke<import('./types').RecordFile[]>('record_recent', { limit: limit ?? null }),
   recordSetLens: (on: boolean) => invoke<void>('record_set_lens', { on }),
   /** 标注模式：覆盖层开始接收鼠标 */
   recordSetInteractive: (interactive: boolean) =>

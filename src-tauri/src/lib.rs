@@ -587,6 +587,7 @@ pub fn run() {
             commands::record::record_stop,
             commands::record::record_cancel,
             commands::record::record_status,
+            commands::record::record_recent,
             commands::record::record_set_lens,
             commands::record::record_set_interactive,
             commands::image::image_copy,

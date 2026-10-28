@@ -1527,3 +1527,109 @@ select.input {
   color: #fff;
   font-size: 11.5px;
 }
+
+/* ---------------- 录屏：录制卡片与最近文件 ---------------- */
+
+.rec-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 16px 0;
+}
+
+.rec-head strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.rec-sum {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-hotkey kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+
+.rec-btns {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px 0;
+}
+
+.rec-btns .btn {
+  flex: 1;
+  height: 54px;
+  font-size: 13.5px;
+}
+
+.rec-note {
+  padding: 10px 16px 14px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.7;
+}
+
+.rec-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.rec-badge {
+  flex: none;
+  width: 34px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.rec-badge.mp4 {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.rec-badge.gif {
+  background: rgba(214, 138, 0, 0.14);
+  color: #9a6200;
+}
+
+.rec-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.rec-name {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rec-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}

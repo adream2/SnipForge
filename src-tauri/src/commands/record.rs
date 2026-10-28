@@ -390,3 +390,57 @@ pub fn toggle(app: &tauri::AppHandle, fmt: Fmt) {
         log::warn!("开始录制失败: {e}");
     }
 }
+
+/// 列最近的录制文件（mp4 / gif）。
+///
+/// 录完找不到文件是真实痛点：控制条一消失，用户不知道存在哪。
+/// 这里直接扫保存目录，按修改时间倒序给前 N 个。
+#[tauri::command]
+pub fn record_recent(
+    state: tauri::State<'_, Arc<AppState>>,
+    limit: Option<usize>,
+) -> AppResult<Vec<crate::types::RecordFile>> {
+    let cfg = state.settings.read().clone();
+    let dir = if cfg.save.dir.trim().is_empty() {
+        state.paths.pictures.clone()
+    } else {
+        std::path::PathBuf::from(&cfg.save.dir)
+    };
+    let limit = limit.unwrap_or(12).max(1);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(Vec::new());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let format = match name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()) {
+            Some(e) if e == "mp4" => "mp4",
+            Some(e) if e == "gif" => "gif",
+            _ => continue,
+        };
+        let meta = entry.metadata().ok();
+        out.push(crate::types::RecordFile {
+            name,
+            path: path.to_string_lossy().to_string(),
+            bytes: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            created_at: meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+            format: format.to_string(),
+        });
+    }
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    out.truncate(limit);
+    Ok(out)
+}

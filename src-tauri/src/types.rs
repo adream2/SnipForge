@@ -279,6 +279,19 @@ pub struct UploadResult {
     pub meta: Option<serde_json::Value>,
 }
 
+/// 一个已录好的文件（录屏页的"最近录制"）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordFile {
+    pub name: String,
+    pub path: String,
+    pub bytes: u64,
+    /// 毫秒时间戳
+    pub created_at: i64,
+    /// mp4 / gif
+    pub format: String,
+}
+
 /// 一条上传记录。落盘在 `uploads.json`，重启后还在。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

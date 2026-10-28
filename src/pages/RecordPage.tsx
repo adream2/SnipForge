@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
-import type { AppSettings } from '../lib/types'
+import type { AppSettings, RecordFile } from '../lib/types'
 import { useToast } from '../components/Toast'
+import { IconLoader } from '../components/Icons'
 
 function Row({
   title,
@@ -38,42 +39,70 @@ const GIF_WIDTHS = [
   { v: 0, label: '原尺寸' }
 ]
 
-/** 视频 / GIF 共用的一组"开始录制"按钮：点哪个就录哪种，格式不再是全局设置 */
-function StartButtons({
-  format,
+function kb(n: number): string {
+  if (!n) return '—'
+  if (n >= 1024 * 1024) return `${(n / 1048576).toFixed(1)} MB`
+  return `${(n / 1024).toFixed(0)} KB`
+}
+
+function fmtTime(ms: number): string {
+  if (!ms) return ''
+  const d = new Date(ms)
+  const now = new Date()
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  if (d.toDateString() === now.toDateString()) return hm
+  const md = `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')}`
+  return d.getFullYear() === now.getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}-${md}`
+}
+
+type Tab = 'record' | 'settings'
+
+/**
+ * 录制入口的卡片：格式写在头上，参数只放摘要，点进去改在「设置」。
+ *
+ * 以前五种参数（帧率/画质/GIF 帧率/GIF 宽度/倒计时）和两个录制入口堆在一屏，
+ * 想按一下"开始录"得先越过一堆开关 —— 这里把"开始"和"怎么录"分开。
+ */
+function StartCard({
+  title,
+  summary,
+  hotkey,
+  note,
   busy,
-  onStart,
-  hotkey
+  onStart
 }: {
-  format: 'mp4' | 'gif'
-  busy: boolean
-  onStart: (format: 'mp4' | 'gif', region: boolean) => void
+  title: string
+  summary: string
   hotkey?: string
+  note: string
+  busy: boolean
+  onStart: (region: boolean) => void
 }) {
   return (
-    <>
-      <div style={{ padding: '14px 16px 4px', display: 'flex', gap: 10 }}>
-        <button
-          className="btn"
-          disabled={busy}
-          style={{ flex: 1, height: 58, fontSize: 14 }}
-          onClick={() => onStart(format, true)}
-        >
+    <div className="setting-card">
+      <div className="rec-head">
+        <div>
+          <strong>{title}</strong>
+          <span className="rec-sum">{summary}</span>
+        </div>
+        {hotkey && (
+          <span className="rec-hotkey">
+            <kbd>{hotkey}</kbd>
+          </span>
+        )}
+      </div>
+
+      <div className="rec-btns">
+        <button className="btn" disabled={busy} onClick={() => onStart(true)}>
           录制区域…
         </button>
-        <button
-          className="btn"
-          disabled={busy}
-          style={{ flex: 1, height: 58, fontSize: 14 }}
-          onClick={() => onStart(format, false)}
-        >
+        <button className="btn" disabled={busy} onClick={() => onStart(false)}>
           录制全屏
         </button>
       </div>
-      <div style={{ padding: '0 16px 14px', fontSize: 11.5, color: 'var(--text-3)' }}>
-        选区里回车即开录{hotkey && <> · 快捷键 <kbd>{hotkey}</kbd>：没在录时进选区，录制中则停止</>}
-      </div>
-    </>
+
+      <div className="rec-note">{note}</div>
+    </div>
   )
 }
 
@@ -85,8 +114,30 @@ export default function RecordPage({
   onChange: (patch: unknown) => Promise<AppSettings>
 }) {
   const toast = useToast()
+  const [tab, setTab] = useState<Tab>('record')
   const [busy, setBusy] = useState(false)
+  const [recent, setRecent] = useState<RecordFile[]>([])
+  const [loadingRecent, setLoadingRecent] = useState(false)
   const rec = settings.record
+
+  const bitrateLabel = BITRATES.find((b) => b.v === rec.videoBitsPerSecond)?.label ?? '标准'
+  const gifWidthLabel = GIF_WIDTHS.find((w) => w.v === rec.gifWidth)?.label ?? '900'
+
+  const loadRecent = useCallback(async () => {
+    setLoadingRecent(true)
+    try {
+      setRecent(await api.recordRecent(12))
+    } catch {
+      setRecent([])
+    } finally {
+      setLoadingRecent(false)
+    }
+  }, [])
+
+  // 切回「录制」tab 时刷新：刚录完回来就能看到新文件
+  useEffect(() => {
+    if (tab === 'record') void loadRecent()
+  }, [tab, loadRecent])
 
   /** 唯一的录制入口：格式由按钮决定，不再先去设置里选 */
   const start = async (format: 'mp4' | 'gif', region: boolean) => {
@@ -111,6 +162,17 @@ export default function RecordPage({
     <>
       <div className="page-head">
         <h1>录屏</h1>
+        <div className="page-tabs">
+          <button className={tab === 'record' ? 'active' : ''} onClick={() => setTab('record')}>
+            录制
+          </button>
+          <button
+            className={tab === 'settings' ? 'active' : ''}
+            onClick={() => setTab('settings')}
+          >
+            设置
+          </button>
+        </div>
         <div className="spacer" />
         <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
           视频 <kbd>{settings.hotkeys.toggleRecording}</kbd> · GIF{' '}
@@ -119,141 +181,204 @@ export default function RecordPage({
       </div>
 
       <div className="page-body">
-        <div className="settings-wrap">
-          <div className="setting-card">
-            <header>录制视频</header>
-            <StartButtons
-              format="mp4"
-              busy={busy}
-              onStart={start}
+        {tab === 'record' ? (
+          <div className="settings-wrap">
+            <StartCard
+              title="录制视频"
+              summary={`${rec.fps} fps · ${bitrateLabel}画质 · ${rec.countdown > 0 ? `${rec.countdown} 秒倒计时` : '立即开始'}`}
               hotkey={settings.hotkeys.toggleRecording}
-            />
-            <div style={{ padding: '0 16px 14px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.7 }}>
-              H.264 / MP4，体积小、兼容性好，剪辑软件能直接吃。区域 / 窗口 / 全屏都支持：
-              选区里鼠标移到窗口上单击即可选中整个窗口。
-            </div>
-          </div>
-
-          <div className="setting-card">
-            <header>录制 GIF</header>
-            <StartButtons
-              format="gif"
+              note="H.264 / MP4，体积小、兼容性好，剪辑软件能直接吃。区域里鼠标移到窗口上单击即可选中整个窗口。"
               busy={busy}
-              onStart={start}
-              hotkey={settings.hotkeys.toggleRecordingGif}
+              onStart={(region) => void start('mp4', region)}
             />
-            <Row title="GIF 帧率" desc="GIF 以 1/100 秒计时，超过 15 基本只剩体积在涨">
-              <div className="seg">
-                {GIF_FPS.map((f) => (
-                  <button
-                    key={f}
-                    className={rec.gifFps === f ? 'active' : ''}
-                    onClick={() => void onChange({ record: { gifFps: f } })}
-                  >
-                    {f}
-                  </button>
-                ))}
+
+            <StartCard
+              title="录制 GIF"
+              summary={`${rec.gifFps} fps · 宽 ${gifWidthLabel} · ${rec.countdown > 0 ? `${rec.countdown} 秒倒计时` : '立即开始'}`}
+              hotkey={settings.hotkeys.toggleRecordingGif}
+              note="直接从原始帧编码，不经过「先录 MP4 再转」；静止画面自动合并，所以录桌面操作体积通常很小。GIF 没有声音。"
+              busy={busy}
+              onStart={(region) => void start('gif', region)}
+            />
+
+            {/* 录完不知道文件在哪是真实痛点，直接列出来 */}
+            <div className="setting-card">
+              <div className="rec-head" style={{ alignItems: 'center', paddingBottom: 10 }}>
+                <div>
+                  <strong>最近录制</strong>
+                  <span className="rec-sum">
+                    {settings.save.dir.trim() || '默认：图片\\SnipForge'}
+                  </span>
+                </div>
+                <button className="btn sm" onClick={() => void loadRecent()} disabled={loadingRecent}>
+                  {loadingRecent ? <IconLoader /> : null} 刷新
+                </button>
               </div>
-            </Row>
-            <Row title="GIF 宽度" desc="贴在聊天窗口里 900 够用；原尺寸很容易几十 MB">
-              <div className="seg">
-                {GIF_WIDTHS.map((w) => (
-                  <button
-                    key={w.v}
-                    className={rec.gifWidth === w.v ? 'active' : ''}
-                    onClick={() => void onChange({ record: { gifWidth: w.v } })}
-                  >
-                    {w.label}
-                  </button>
-                ))}
-              </div>
-            </Row>
-            <div style={{ padding: '4px 16px 14px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.7 }}>
-              录制时直接从原始帧编码，不经过"先录 MP4 再转"，画面和视频完全一致；
-              静止画面会自动合并，所以录桌面操作体积通常很小。GIF 没有声音。
+
+              {recent.length === 0 ? (
+                <div style={{ padding: '2px 16px 16px', fontSize: 11.5, color: 'var(--text-3)' }}>
+                  这个目录里还没有录制文件。
+                </div>
+              ) : (
+                recent.map((f) => (
+                  <div className="rec-file" key={f.path}>
+                    <span className={`rec-badge ${f.format}`}>
+                      {f.format === 'gif' ? 'GIF' : 'MP4'}
+                    </span>
+                    <div className="rec-info">
+                      <div className="rec-name" title={f.path}>
+                        {f.name}
+                      </div>
+                      <div className="rec-meta">
+                        {kb(f.bytes)} <span className="dot">·</span> {fmtTime(f.createdAt)}
+                      </div>
+                    </div>
+                    <button
+                      className="btn sm"
+                      title="用默认程序打开"
+                      onClick={() => void api.openPath(f.path)}
+                    >
+                      播放
+                    </button>
+                    <button
+                      className="btn sm"
+                      title="在资源管理器中显示"
+                      onClick={() => void api.openImageFolder(f.path)}
+                    >
+                      定位
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
+        ) : (
+          <div className="settings-wrap">
+            <div className="setting-card">
+              <header>画面</header>
+              <Row title="帧率" desc="越高越流畅，文件也越大（视频）">
+                <div className="seg">
+                  {FPS.map((f) => (
+                    <button
+                      key={f}
+                      className={rec.fps === f ? 'active' : ''}
+                      onClick={() => void onChange({ record: { fps: f } })}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+              <Row title="画质" desc="对应码率，屏幕内容越花越吃码率（只影响视频）">
+                <div className="seg">
+                  {BITRATES.map((b) => (
+                    <button
+                      key={b.v}
+                      className={rec.videoBitsPerSecond === b.v ? 'active' : ''}
+                      onClick={() => void onChange({ record: { videoBitsPerSecond: b.v } })}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+            </div>
 
-          <div className="setting-card">
-            <header>画面</header>
-            <Row title="帧率" desc="越高越流畅，文件也越大">
-              <div className="seg">
-                {FPS.map((f) => (
-                  <button
-                    key={f}
-                    className={rec.fps === f ? 'active' : ''}
-                    onClick={() => void onChange({ record: { fps: f } })}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
-            </Row>
-            <Row title="画质" desc="对应码率，屏幕内容越花越吃码率（只影响视频）">
-              <div className="seg">
-                {BITRATES.map((b) => (
-                  <button
-                    key={b.v}
-                    className={rec.videoBitsPerSecond === b.v ? 'active' : ''}
-                    onClick={() => void onChange({ record: { videoBitsPerSecond: b.v } })}
-                  >
-                    {b.label}
-                  </button>
-                ))}
-              </div>
-            </Row>
-            <Row title="倒计时" desc="给操作留出准备时间，这段不会录进去">
-              <div className="seg">
-                {COUNTDOWNS.map((c) => (
-                  <button
-                    key={c}
-                    className={rec.countdown === c ? 'active' : ''}
-                    onClick={() => void onChange({ record: { countdown: c } })}
-                  >
-                    {c === 0 ? '关闭' : `${c} 秒`}
-                  </button>
-                ))}
-              </div>
-            </Row>
-          </div>
+            <div className="setting-card">
+              <header>GIF</header>
+              <Row title="帧率" desc="GIF 以 1/100 秒计时，超过 15 基本只剩体积在涨">
+                <div className="seg">
+                  {GIF_FPS.map((f) => (
+                    <button
+                      key={f}
+                      className={rec.gifFps === f ? 'active' : ''}
+                      onClick={() => void onChange({ record: { gifFps: f } })}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+              <Row title="宽度" desc="贴在聊天窗口里 900 够用；原尺寸很容易几十 MB">
+                <div className="seg">
+                  {GIF_WIDTHS.map((w) => (
+                    <button
+                      key={w.v}
+                      className={rec.gifWidth === w.v ? 'active' : ''}
+                      onClick={() => void onChange({ record: { gifWidth: w.v } })}
+                    >
+                      {w.label}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+            </div>
 
-          <div className="setting-card">
-            <header>鼠标与标注</header>
-            <Row title="录制鼠标光标" desc="离开系统光标位图合进画面，和屏幕上看到的一致">
-              <button
-                className={`switch ${rec.showCursor ? 'on' : ''}`}
-                onClick={() => void onChange({ record: { showCursor: !rec.showCursor } })}
-              />
-            </Row>
-            <Row title="鼠标高亮环" desc="光标外面一圈紫色描边，录像里更容易找到视线焦点">
-              <button
-                className={`switch ${rec.cursorHighlight ? 'on' : ''}`}
-                onClick={() => void onChange({ record: { cursorHighlight: !rec.cursorHighlight } })}
-              />
-            </Row>
-            <Row title="放大镜" desc="跟进鼠标，把周围一小块放大显示（录制时也能开关）">
-              <button
-                className={`switch ${rec.magnifier ? 'on' : ''}`}
-                onClick={() => void onChange({ record: { magnifier: !rec.magnifier } })}
-              />
-            </Row>
-            <Row title="允许标注" desc="录制中可以在画面上画箭头、框重点，6 秒后自动淡出">
-              <button
-                className={`switch ${rec.annotate ? 'on' : ''}`}
-                onClick={() => void onChange({ record: { annotate: !rec.annotate } })}
-              />
-            </Row>
-          </div>
+            <div className="setting-card">
+              <header>录制时</header>
+              <Row title="倒计时" desc="给操作留出准备时间，这段不会录进去">
+                <div className="seg">
+                  {COUNTDOWNS.map((c) => (
+                    <button
+                      key={c}
+                      className={rec.countdown === c ? 'active' : ''}
+                      onClick={() => void onChange({ record: { countdown: c } })}
+                    >
+                      {c === 0 ? '关闭' : `${c} 秒`}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+              <Row title="录制鼠标光标" desc="把系统光标位图合进画面，和屏幕上看到的一致">
+                <button
+                  className={`switch ${rec.showCursor ? 'on' : ''}`}
+                  onClick={() => void onChange({ record: { showCursor: !rec.showCursor } })}
+                />
+              </Row>
+              <Row title="鼠标高亮环" desc="光标外面一圈紫色描边，录像里更容易找到视线焦点">
+                <button
+                  className={`switch ${rec.cursorHighlight ? 'on' : ''}`}
+                  onClick={() =>
+                    void onChange({ record: { cursorHighlight: !rec.cursorHighlight } })
+                  }
+                />
+              </Row>
+              <Row title="放大镜" desc="跟进鼠标，把周围一小块放大显示（录制时也能开关）">
+                <button
+                  className={`switch ${rec.magnifier ? 'on' : ''}`}
+                  onClick={() => void onChange({ record: { magnifier: !rec.magnifier } })}
+                />
+              </Row>
+              <Row title="允许标注" desc="录制中可以在画面上画箭头、框重点，6 秒后自动淡出">
+                <button
+                  className={`switch ${rec.annotate ? 'on' : ''}`}
+                  onClick={() => void onChange({ record: { annotate: !rec.annotate } })}
+                />
+              </Row>
+            </div>
 
-          <div className="setting-card">
-            <header>说明</header>
-            <div style={{ padding: '12px 16px 16px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.8 }}>
-              编码走 Windows 自带的 H.264 编码器（Media Foundation），不占安装体积。
-              <br />
-              控制条本身被排除在捕获之外，所以它放在屏幕哪个位置都不会出现在画面里。
+            <div className="setting-card">
+              <header>保存与编码</header>
+              <Row title="保存目录" desc={settings.save.dir || '默认：图片\\SnipForge'}>
+                <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>在「设置」页可改</span>
+              </Row>
+              <div
+                style={{
+                  padding: '10px 16px 16px',
+                  fontSize: 11.5,
+                  color: 'var(--text-3)',
+                  lineHeight: 1.8
+                }}
+              >
+                编码走 Windows 自带的 H.264 编码器（Media Foundation），不占安装体积。
+                <br />
+                控制条本身被排除在捕获之外，放在屏幕哪个位置都不会出现在画面里。
+                <br />
+                录完如果开了「保存后复制」，文件已经在剪贴板里，可以直接粘进聊天窗口。
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </>
   )
