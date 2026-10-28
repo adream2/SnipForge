@@ -46,6 +46,8 @@ export default function SettingsPage({
   const [engines, setEngines] = useState<OcrEngineInfo[]>([])
   const [sysHistory, setSysHistory] = useState<boolean | null>(null)
   const [downloading, setDownloading] = useState(false)
+  /** 设置项太多，按主题分 tab：通用 / 快捷键 / 输出与识别 */
+  const [tab, setTab] = useState<'general' | 'hotkeys' | 'output'>('general')
   const [dl, setDl] = useState<OcrDownloadProgress | null>(null)
   const toast = useToast()
 
@@ -100,6 +102,23 @@ export default function SettingsPage({
     <>
       <div className="page-head">
         <h1>设置</h1>
+        <div className="page-tabs">
+          <button
+            className={tab === 'general' ? 'active' : ''}
+            onClick={() => setTab('general')}
+          >
+            通用
+          </button>
+          <button
+            className={tab === 'hotkeys' ? 'active' : ''}
+            onClick={() => setTab('hotkeys')}
+          >
+            快捷键
+          </button>
+          <button className={tab === 'output' ? 'active' : ''} onClick={() => setTab('output')}>
+            输出与识别
+          </button>
+        </div>
         <div className="spacer" />
         <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
           v{info?.version ?? '0.1.0'} · 数据目录 {info?.dataDir}
@@ -108,6 +127,8 @@ export default function SettingsPage({
 
       <div className="page-body">
         <div className="settings-wrap">
+          {tab === 'general' && (
+            <>
           {/* 通用 */}
           <div className="setting-card">
             <header>通用</header>
@@ -137,75 +158,6 @@ export default function SettingsPage({
             </Row>
           </div>
 
-          {/* 快捷键 */}
-          <div className="setting-card">
-            <header>快捷键</header>
-            {HOTKEY_FIELDS.map((f) => {
-              const st = hotkeyState(f.key)
-              return (
-                <Row
-                  key={f.key}
-                  title={f.label}
-                  desc={st && !st.ok ? st.reason : undefined}
-                >
-                  <HotkeyInput
-                    value={settings.hotkeys[f.key] ?? ''}
-                    ok={st?.ok}
-                    onChange={(v) => void onChange({ hotkeys: { [f.key]: v } })}
-                  />
-                  <span className={`hotkey-chip ${st && !st.ok ? 'fail' : ''}`}>
-                    {st?.ok ? '已生效' : st?.reason === '未设置' ? '已停用' : '未生效'}
-                  </span>
-                </Row>
-              )
-            })}
-            <div style={{ padding: '4px 16px 14px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.7 }}>
-              点一下方框，直接按下想用的组合键即可，改完立即生效。
-              <br />
-              <kbd>Esc</kbd> 取消，<kbd>Delete</kbd> 清空（等于不用快捷键）。
-              显示"未生效"通常是被别的软件占用了，换一个组合即可。
-            </div>
-          </div>
-
-          {/* 保存 */}
-          <div className="setting-card">
-            <header>保存</header>
-            <Row title="保存目录" desc={settings.save.dir || '默认：图片\\SnipForge'}>
-              <input
-                className="input"
-                value={settings.save.dir}
-                placeholder="使用默认目录"
-                onChange={(e) => void onChange({ save: { dir: e.target.value } })}
-              />
-              <button
-                className="btn sm"
-                onClick={async () => {
-                  const picked = await api.pickDir(settings.save.dir)
-                  if (picked) await onChange({ save: { dir: picked } })
-                }}
-              >
-                选择
-              </button>
-            </Row>
-            <Row title="文件名模板" desc="{yyyy} {MM} {dd} {HH} {mm} {ss} {rand}">
-              <input
-                className="input"
-                value={settings.save.nameTemplate}
-                onChange={(e) => void onChange({ save: { nameTemplate: e.target.value } })}
-              />
-            </Row>
-            <Row title="保存后" desc="保存完成后的动作">
-              <select
-                className="input"
-                value={settings.save.afterSave}
-                onChange={(e) => void onChange({ save: { afterSave: e.target.value } })}
-              >
-                <option value="none">不处理</option>
-                <option value="copy">复制到剪贴板</option>
-                <option value="open-folder">打开所在文件夹</option>
-              </select>
-            </Row>
-          </div>
 
           {/* 剪贴板 */}
           <div className="setting-card">
@@ -311,6 +263,7 @@ export default function SettingsPage({
             </div>
           </div>
 
+
           {/* 编辑器 */}
           <div className="setting-card">
             <header>编辑器</header>
@@ -343,6 +296,108 @@ export default function SettingsPage({
               />
             </Row>
           </div>
+
+
+          <div style={{ display: 'flex', gap: 8, paddingBottom: 20 }}>
+            <button
+              className="btn danger"
+              onClick={async () => {
+                try {
+                  await api.settingsReset()
+                  toast.push('已恢复默认设置（图床凭据保留）', 'success')
+                  void api.settingsGet().then((r) => onChange(r.settings))
+                } catch (e) {
+                  toast.push(String(e), 'error')
+                }
+              }}
+            >
+              恢复默认设置
+            </button>
+            <button className="btn" onClick={() => void api.openDir(info?.dataDir ?? '')}>
+              打开数据目录
+            </button>
+          </div>
+            </>
+          )}
+
+          {tab === 'hotkeys' && (
+            <>
+          {/* 快捷键 */}
+          <div className="setting-card">
+            <header>快捷键</header>
+            {HOTKEY_FIELDS.map((f) => {
+              const st = hotkeyState(f.key)
+              return (
+                <Row
+                  key={f.key}
+                  title={f.label}
+                  desc={st && !st.ok ? st.reason : undefined}
+                >
+                  <HotkeyInput
+                    value={settings.hotkeys[f.key] ?? ''}
+                    ok={st?.ok}
+                    onChange={(v) => void onChange({ hotkeys: { [f.key]: v } })}
+                  />
+                  <span className={`hotkey-chip ${st && !st.ok ? 'fail' : ''}`}>
+                    {st?.ok ? '已生效' : st?.reason === '未设置' ? '已停用' : '未生效'}
+                  </span>
+                </Row>
+              )
+            })}
+            <div style={{ padding: '4px 16px 14px', fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.7 }}>
+              点一下方框，直接按下想用的组合键即可，改完立即生效。
+              <br />
+              <kbd>Esc</kbd> 取消，<kbd>Delete</kbd> 清空（等于不用快捷键）。
+              显示"未生效"通常是被别的软件占用了，换一个组合即可。
+            </div>
+          </div>
+
+
+            </>
+          )}
+
+          {tab === 'output' && (
+            <>
+          {/* 保存 */}
+          <div className="setting-card">
+            <header>保存</header>
+            <Row title="保存目录" desc={settings.save.dir || '默认：图片\\SnipForge'}>
+              <input
+                className="input"
+                value={settings.save.dir}
+                placeholder="使用默认目录"
+                onChange={(e) => void onChange({ save: { dir: e.target.value } })}
+              />
+              <button
+                className="btn sm"
+                onClick={async () => {
+                  const picked = await api.pickDir(settings.save.dir)
+                  if (picked) await onChange({ save: { dir: picked } })
+                }}
+              >
+                选择
+              </button>
+            </Row>
+            <Row title="文件名模板" desc="{yyyy} {MM} {dd} {HH} {mm} {ss} {rand}">
+              <input
+                className="input"
+                value={settings.save.nameTemplate}
+                onChange={(e) => void onChange({ save: { nameTemplate: e.target.value } })}
+              />
+            </Row>
+            <Row title="保存后" desc="保存完成后的动作">
+              <select
+                className="input"
+                value={settings.save.afterSave}
+                onChange={(e) => void onChange({ save: { afterSave: e.target.value } })}
+              >
+                <option value="none">不处理</option>
+                <option value="copy">复制到剪贴板</option>
+                <option value="open-folder">打开所在文件夹</option>
+              </select>
+            </Row>
+          </div>
+
 
           {/* OCR */}
           <div className="setting-card">
@@ -462,25 +517,9 @@ export default function SettingsPage({
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 8, paddingBottom: 20 }}>
-            <button
-              className="btn danger"
-              onClick={async () => {
-                try {
-                  await api.settingsReset()
-                  toast.push('已恢复默认设置（图床凭据保留）', 'success')
-                  void api.settingsGet().then((r) => onChange(r.settings))
-                } catch (e) {
-                  toast.push(String(e), 'error')
-                }
-              }}
-            >
-              恢复默认设置
-            </button>
-            <button className="btn" onClick={() => void api.openDir(info?.dataDir ?? '')}>
-              打开数据目录
-            </button>
-          </div>
+
+            </>
+          )}
         </div>
       </div>
     </>
