@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/api'
 import type { AppSettings, DirEntry, ProviderMeta, RemoteImage, UploadRecord } from '../../lib/types'
-import { IconCheck, IconCopy, IconImage, IconLoader } from '../../components/Icons'
+import { IconCheck, IconImage, IconLoader } from '../../components/Icons'
 import { useToast } from '../../components/Toast'
 
 /**
@@ -252,7 +252,48 @@ export default function ListTab({ settings }: { settings: AppSettings | null }) 
                   <div className="img-meta">
                     {kb(h.bytes)} <span className="dot">·</span> {fmtTime(h.createdAt)}
                   </div>
-                  {copied === `h${i}` && <span className="img-copied">已复制</span>}
+
+                  <div className="img-acts">
+                    <button
+                      className="img-act"
+                      title="复制图片链接（URL）"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void copy(h.url, `h${i}`)
+                      }}
+                    >
+                      链接
+                    </button>
+                    <button
+                      className="img-act"
+                      title="复制 Markdown 图片语法"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void copyMarkdown(h, `hm${i}`)
+                      }}
+                    >
+                      MD
+                    </button>
+                    <button
+                      className="img-act"
+                      title={h.localPath ? '在资源管理器中显示' : '打开链接'}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void (h.localPath
+                          ? api.openImageFolder(h.localPath)
+                          : api.openPath(h.url))
+                      }}
+                    >
+                      ↗
+                    </button>
+                  </div>
+
+                  {copied === `h${i}` || copied === `hm${i}` ? (
+                    <span className="img-copied">
+                      <IconCheck size={11} />
+                      {copied === `h${i}` ? '已复制链接' : '已复制 MD'}
+                    </span>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -311,10 +352,21 @@ export default function ListTab({ settings }: { settings: AppSettings | null }) 
                   </div>
 
                   {/* hover 才出现的小动作，不占卡片空间 */}
+                  {/* 两个复制动作都摆出来：点卡片虽然也能复制链接，但那是个隐藏行为 */}
                   <div className="img-acts">
                     <button
                       className="img-act"
-                      title="复制 Markdown"
+                      title="复制图片链接（URL）"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void copy(r.url, `i${i}`)
+                      }}
+                    >
+                      链接
+                    </button>
+                    <button
+                      className="img-act"
+                      title="复制 Markdown 图片语法"
                       onClick={(e) => {
                         e.stopPropagation()
                         void copyMarkdown(r, `m${i}`)
@@ -336,15 +388,8 @@ export default function ListTab({ settings }: { settings: AppSettings | null }) 
 
                   {copied === `i${i}` || copied === `m${i}` ? (
                     <span className="img-copied">
-                      {copied === `i${i}` ? (
-                        <>
-                          <IconCheck size={11} /> 已复制
-                        </>
-                      ) : (
-                        <>
-                          <IconCopy size={11} /> MD
-                        </>
-                      )}
+                      <IconCheck size={11} />
+                      {copied === `i${i}` ? '已复制链接' : '已复制 MD'}
                     </span>
                   ) : null}
                 </div>

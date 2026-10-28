@@ -1480,39 +1480,38 @@ select.input {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 9px 8px;
+  padding: 2px 9px 6px;
   font-size: 10.5px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 
+/* 复制链接 / MD 是列表页最核心的两个动作，常驻显示 ——
+   藏在 hover 里等于没有：用户根本不知道有这个功能。 */
 .img-acts {
-  position: absolute;
-  top: 5px;
-  right: 5px;
   display: flex;
-  gap: 3px;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-
-.img-card:hover .img-acts {
-  opacity: 1;
+  gap: 4px;
+  padding: 0 9px 9px;
 }
 
 .img-act {
-  height: 20px;
-  min-width: 20px;
-  padding: 0 5px;
+  flex: 1;
+  height: 22px;
+  display: grid;
+  place-items: center;
   border-radius: 5px;
-  background: rgba(16, 16, 24, 0.62);
-  color: #fff;
-  font-size: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 10.5px;
   cursor: pointer;
+  transition: all 0.1s;
 }
 
 .img-act:hover {
-  background: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* 复制成功的整卡反馈 */
