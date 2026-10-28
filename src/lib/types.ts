@@ -22,6 +22,18 @@ export interface ConfigField {
   visibleWhen?: { key: string; equals: unknown }
 }
 
+/** 图床里已有的一张图 */
+export interface RemoteImage {
+  name: string
+  /** 图床里的完整路径 / 对象键 */
+  path: string
+  url: string
+  size: number
+  /** GitHub contents API 不返回时间，可能为空 */
+  modifiedAt?: number
+  sha?: string
+}
+
 /** 图床里的一个目录（浏览用） */
 export interface DirEntry {
   name: string
@@ -39,6 +51,8 @@ export interface ProviderMeta {
   supportsDir?: boolean
   /** 能否列出已有目录 */
   canBrowse?: boolean
+  /** 能否列出已有图片 */
+  canListImages?: boolean
 }
 
 export interface AppSettings {

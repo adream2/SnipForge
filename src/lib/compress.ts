@@ -70,7 +70,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 }
 
 /**
- * 按当前「图床配置」里的压缩设置处理一张图。
+ * 按当前「图床 → 配置」里的压缩设置处理一张图。
  *
  * 给编辑器、图片工具这些"顺手传一下"的入口用 —— 它们拿不到 settings 对象，
  * 与其把配置一层层传下去，不如就地读一次（本地 IPC，几毫秒）。

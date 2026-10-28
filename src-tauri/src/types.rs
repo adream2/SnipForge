@@ -230,6 +230,31 @@ pub struct ProviderMeta {
     /// 能否列出远端已有目录（用于"选已有文件夹"）
     #[serde(default)]
     pub can_browse: bool,
+    /// 能否列出远端已有的图片（图床页的"列表"）
+    #[serde(default)]
+    pub can_list_images: bool,
+}
+
+/// 图床里已有的一张图。
+///
+/// 这是"浏览图床"的核心：用户想找上周传的那张、或者直接复制个旧链接，
+/// 不该逼他打开 GitHub 网页一页页翻。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteImage {
+    /// 文件名（最后一段）
+    pub name: String,
+    /// 在图床里的完整路径 / 对象键
+    pub path: String,
+    /// 可直接访问的链接
+    pub url: String,
+    pub size: u64,
+    /// 毫秒时间戳。GitHub contents API 不返回时间，只能为空
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<i64>,
+    /// GitHub 删除文件时要用
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
 }
 
 /// 图床里的一个目录（浏览用）

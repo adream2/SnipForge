@@ -151,8 +151,17 @@ export const api = {
     }),
   uploadHistoryRemove: (id: string) => invoke<boolean>('upload_history_remove', { id }),
   uploadHistoryClear: () => invoke<void>('upload_history_clear'),
+  /** 本地图片的缩略图（后端缩小转 base64） */
+  uploadThumb: (path: string, max?: number) =>
+    invoke<string>('upload_thumb', { path, max: max ?? null }),
   uploadListDirs: (providerId: string, path?: string) =>
     invoke<import('./types').DirEntry[]>('upload_list_dirs', { providerId, path: path ?? null }),
+  uploadListImages: (providerId: string, path?: string, limit?: number) =>
+    invoke<import('./types').RemoteImage[]>('upload_list_images', {
+      providerId,
+      path: path ?? null,
+      limit: limit ?? null
+    }),
   uploadTest: (providerId: string) => invoke<UploadOutcome>('upload_test', { providerId }),
 
   /* 插件 */

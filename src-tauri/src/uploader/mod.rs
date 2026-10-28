@@ -11,7 +11,7 @@ pub mod history;
 pub mod providers;
 
 use crate::error::{AppError, AppResult};
-use crate::types::{DirEntry, ProviderMeta, UploadOutcome, UploadResult};
+use crate::types::{DirEntry, ProviderMeta, RemoteImage, UploadOutcome, UploadResult};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,6 +36,13 @@ pub trait Provider: Send + Sync {
     /// 列某个目录下的子目录。只有 can_browse 的图床需要实现。
     fn list_dirs(&self, _cfg: &Cfg, _path: &str) -> AppResult<Vec<DirEntry>> {
         Err(AppError::Msg("这个图床不支持浏览目录".into()))
+    }
+
+    /// 列某个目录下的图片。只有 can_list_images 的图床需要实现。
+    ///
+    /// `dir` 为空 = 图床根目录。返回结果按时间/名称排序，前端不再排。
+    fn list_images(&self, _cfg: &Cfg, _dir: &str, _limit: usize) -> AppResult<Vec<RemoteImage>> {
+        Err(AppError::Msg("这个图床不支持浏览已有图片".into()))
     }
 }
 

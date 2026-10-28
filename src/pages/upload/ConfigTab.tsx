@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { api } from '../lib/api'
-import type { AppSettings, ConfigField, ProviderMeta } from '../lib/types'
-import { IconCheck, IconLoader, IconPlugin } from '../components/Icons'
-import { useToast } from '../components/Toast'
+import { api } from '../../lib/api'
+import type { AppSettings, ConfigField, ProviderMeta } from '../../lib/types'
+import { IconCheck, IconLoader, IconPlugin } from '../../components/Icons'
+import { useToast } from '../../components/Toast'
 
 function FieldInput({
   field,
@@ -58,8 +58,8 @@ function FieldInput({
   )
 }
 
-/** 图床配置：只管"往哪儿传"。真正的上传在「图床」页。 */
-export default function UploadConfigPage({
+/** 图床「配置」tab：只管"往哪儿传"。传图在「上传」，看已传的在「列表」。 */
+export default function ConfigTab({
   settings,
   onChange
 }: {
@@ -119,17 +119,19 @@ export default function UploadConfigPage({
   }
 
   return (
-    <>
-      <div className="page-head">
-        <h1>图床配置</h1>
-        <div className="spacer" />
-        <button className="btn sm" onClick={() => void save()} disabled={!current}>
-          {saved ? <IconCheck size={13} /> : null} 保存并设为默认
-        </button>
-      </div>
-
-      <div className="page-body">
-        <div className="provider-tabs">
+    <div className="settings-wrap">
+      <div className="setting-card">
+        {/* 图床切换 + 保存，合成一行 —— 配置页只有一个动作，不值得占一个页头 */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flexWrap: 'wrap',
+            padding: '10px 14px',
+            borderBottom: '1px solid var(--border)'
+          }}
+        >
           {providers.map((p) => (
             <button
               key={p.id}
@@ -144,10 +146,14 @@ export default function UploadConfigPage({
               )}
             </button>
           ))}
+          <div style={{ flex: 1 }} />
+          <button className="btn sm" onClick={() => void save()} disabled={!current}>
+            {saved ? <IconCheck size={13} /> : null} 保存并设为默认
+          </button>
         </div>
 
         {current ? (
-          <div className="provider-form">
+          <div className="provider-form" style={{ padding: '14px 16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <strong style={{ fontSize: 13.5 }}>{current.name}</strong>
               {active === settings?.uploader.activeProvider && (
@@ -183,11 +189,18 @@ export default function UploadConfigPage({
           </div>
         )}
 
-        <div style={{ marginTop: 18, maxWidth: 560, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.7 }}>
-          没找到合适的图床？到「插件」页放一个 <code>.uploader.json</code> 就能接入任意 HTTP 图床，无需写代码。
-          传图请到「图床」页。
+        <div
+          style={{
+            padding: '0 16px 16px',
+            fontSize: 12,
+            color: 'var(--text-3)',
+            lineHeight: 1.7
+          }}
+        >
+          没找到合适的图床？到「插件」页放一个 <code>.uploader.json</code>
+          就能接入任意 HTTP 图床，无需写代码。
         </div>
       </div>
-    </>
+    </div>
   )
 }

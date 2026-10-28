@@ -17,7 +17,6 @@ import ClipboardPage from './pages/ClipboardPage'
 import RecordPage from './pages/RecordPage'
 import ToolsPage from './pages/ToolsPage'
 import UploadPage from './pages/UploadPage'
-import UploadConfigPage from './pages/UploadConfigPage'
 import PluginsPage from './pages/PluginsPage'
 import SettingsPage from './pages/SettingsPage'
 import { ToastProvider, useToast } from './components/Toast'
@@ -27,7 +26,6 @@ type Page =
   | 'record'
   | 'tools'
   | 'upload'
-  | 'upload-config'
   | 'plugins'
   | 'settings'
 
@@ -36,7 +34,6 @@ const NAV: Array<{ id: Page; label: string; icon: React.ReactNode }> = [
   { id: 'record', label: '录屏', icon: <IconVideo size={16} /> },
   { id: 'tools', label: '图片工具', icon: <IconImage size={16} /> },
   { id: 'upload', label: '图床', icon: <IconUpload size={16} /> },
-  { id: 'upload-config', label: '图床配置', icon: <IconSettings size={16} /> },
   { id: 'plugins', label: '插件', icon: <IconPlugin size={16} /> },
   { id: 'settings', label: '设置', icon: <IconSettings size={16} /> }
 ]
@@ -150,9 +147,6 @@ function Shell() {
             )}
             {page === 'tools' && <ToolsPage />}
             {page === 'upload' && <UploadPage settings={settings} onChange={updateSettings} />}
-            {page === 'upload-config' && (
-              <UploadConfigPage settings={settings} onChange={updateSettings} />
-            )}
             {page === 'plugins' && <PluginsPage />}
             {page === 'settings' && <SettingsPage settings={settings} onChange={updateSettings} />}
           </main>

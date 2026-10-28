@@ -5,7 +5,7 @@
 
 use super::{cfg_bool, cfg_str, Cfg, Provider, UploadFile};
 use crate::error::{AppError, AppResult};
-use crate::types::{ConfigField, DirEntry, FieldOption, ProviderMeta, UploadResult};
+use crate::types::{ConfigField, DirEntry, FieldOption, ProviderMeta, RemoteImage, UploadResult};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -65,6 +65,21 @@ fn http_err(status: u16, body: &str) -> AppError {
     AppError::Msg(format!("HTTP {status}: {}", body.chars().take(300).collect::<String>()))
 }
 
+/// 是不是图片文件名（按扩展名判断，不读内容——浏览列表不该为此下载整张图）
+fn is_image_name(name: &str) -> bool {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    matches!(
+        ext.as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" | "avif" | "ico")
+    )
+}
+
+fn ms_from_system(t: std::time::SystemTime) -> i64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /* ============================ GitHub ============================ */
 
 pub struct GithubProvider;
@@ -79,6 +94,7 @@ impl Provider for GithubProvider {
             requires_network: true,
             supports_dir: true,
             can_browse: true,
+            can_list_images: true,
             fields: vec![
                 hint(
                     required(f("token", "Personal Access Token", "password")),
@@ -158,17 +174,7 @@ impl Provider for GithubProvider {
         }
 
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-        let url = match cfg_str(cfg, "cdn").as_str() {
-            "raw" => format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{key}"),
-            "custom" => {
-                let domain = cfg_str(cfg, "customDomain");
-                if domain.is_empty() {
-                    return Err(AppError::Msg("选了自定义域名但没填地址".into()));
-                }
-                format!("{}/{key}", domain.trim_end_matches('/'))
-            }
-            _ => format!("https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{key}"),
-        };
+        let url = github_public_url(cfg, &key)?;
 
         Ok(UploadResult {
             url,
@@ -237,6 +243,95 @@ impl Provider for GithubProvider {
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
     }
+
+    /// 列仓库里某个目录下的图片。
+    ///
+    /// contents API 一次最多返回 1000 项、按名称升序，且**不返回修改时间**，
+    /// 所以没法按时间排。这里的取舍是按名称倒序——图片文件名基本都带日期，
+    /// 倒序更可能把最近的排在前面。
+    fn list_images(&self, cfg: &Cfg, dir: &str, limit: usize) -> AppResult<Vec<RemoteImage>> {
+        let token = cfg_str(cfg, "token");
+        let owner = cfg_str(cfg, "owner");
+        let repo = cfg_str(cfg, "repo");
+        if token.is_empty() || owner.is_empty() || repo.is_empty() {
+            return Err(AppError::Msg("GitHub 图床配置不完整".into()));
+        }
+        let branch = {
+            let b = cfg_str(cfg, "branch");
+            if b.is_empty() { "main".to_string() } else { b }
+        };
+        let sub = dir.trim_matches('/');
+        let api = if sub.is_empty() {
+            format!("https://api.github.com/repos/{owner}/{repo}/contents?ref={branch}")
+        } else {
+            format!("https://api.github.com/repos/{owner}/{repo}/contents/{sub}?ref={branch}")
+        };
+
+        let res = client(30)?
+            .get(&api)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .map_err(|e| AppError::Msg(format!("GitHub 请求失败: {e}")))?;
+
+        let status = res.status().as_u16();
+        // 目录还不存在：当成空列表，比报错友好（用户可能刚配好还没传过）
+        if status == 404 {
+            return Ok(Vec::new());
+        }
+        let text = res.text().unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(http_err(status, &text));
+        }
+
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        let mut out = Vec::new();
+        if let Some(items) = parsed.as_array() {
+            for it in items {
+                if it["type"].as_str() != Some("file") {
+                    continue;
+                }
+                let name = it["name"].as_str().unwrap_or_default().to_string();
+                if name.is_empty() || !is_image_name(&name) {
+                    continue;
+                }
+                let path = it["path"].as_str().unwrap_or(&name).to_string();
+                out.push(RemoteImage {
+                    url: github_public_url(cfg, &path)?,
+                    name,
+                    path,
+                    size: it["size"].as_u64().unwrap_or(0),
+                    modified_at: None,
+                    sha: it["sha"].as_str().map(|s| s.to_string()),
+                });
+            }
+        }
+        out.sort_by(|a, b| b.name.cmp(&a.name));
+        out.truncate(limit.max(1));
+        Ok(out)
+    }
+}
+
+/// 仓库里的文件怎么访问。上传和浏览都要用，抽出来免得两处逻辑漂移。
+fn github_public_url(cfg: &Cfg, key: &str) -> AppResult<String> {
+    let owner = cfg_str(cfg, "owner");
+    let repo = cfg_str(cfg, "repo");
+    let branch = {
+        let b = cfg_str(cfg, "branch");
+        if b.is_empty() { "main".to_string() } else { b }
+    };
+    Ok(match cfg_str(cfg, "cdn").as_str() {
+        "raw" => format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{key}"),
+        "custom" => {
+            let domain = cfg_str(cfg, "customDomain");
+            if domain.is_empty() {
+                return Err(AppError::Msg("选了自定义域名但没填地址".into()));
+            }
+            format!("{}/{key}", domain.trim_end_matches('/'))
+        }
+        _ => format!("https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{key}"),
+    })
 }
 
 /* ============================ S3 兼容 ============================ */
@@ -279,6 +374,7 @@ impl Provider for S3Provider {
             requires_network: true,
             supports_dir: true,
             can_browse: false,
+            can_list_images: false,
             fields: vec![
                 hint(
                     required(f("endpoint", "Endpoint", "string")),
@@ -448,6 +544,7 @@ impl Provider for SmmsProvider {
             requires_network: true,
             supports_dir: false,
             can_browse: false,
+            can_list_images: false,
             fields: vec![hint(
                 required(f("token", "API Token", "password")),
                 "在 sm.ms/home/apitoken 获取",
@@ -518,6 +615,7 @@ impl Provider for CustomHttpProvider {
             requires_network: true,
             supports_dir: false,
             can_browse: false,
+            can_list_images: false,
             fields: vec![
                 required(f("url", "上传地址", "string")),
                 with_default(
@@ -686,6 +784,7 @@ impl Provider for LocalFolderProvider {
             requires_network: false,
             supports_dir: true,
             can_browse: true,
+            can_list_images: true,
             fields: vec![
                 required(f("dir", "目标目录", "string")),
                 hint(f("publicBaseUrl", "对外访问前缀", "string"), "留空则返回本地 file:// 路径"),
@@ -762,6 +861,69 @@ impl Provider for LocalFolderProvider {
             out.push(DirEntry { name, path: rel });
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    /// 列目录下的图片。
+    ///
+    /// 本地图床最实用的就是它：不用开资源管理器翻，直接在列表里看缩略图、
+    /// 复制链接。按修改时间倒序 —— 本地文件有真实 mtime，新的就该在最前面。
+    fn list_images(&self, cfg: &Cfg, dir: &str, limit: usize) -> AppResult<Vec<RemoteImage>> {
+        let root = cfg_str(cfg, "dir");
+        if root.is_empty() {
+            return Err(AppError::Msg("请先设置目标目录".into()));
+        }
+        let sub = dir.trim_matches(&['/', '\\'][..]);
+        let abs = if sub.is_empty() {
+            std::path::PathBuf::from(&root)
+        } else {
+            std::path::Path::new(&root).join(sub)
+        };
+        if !abs.exists() {
+            return Ok(Vec::new());
+        }
+
+        let base = cfg_str(cfg, "publicBaseUrl");
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(&abs)?.flatten() {
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || !is_image_name(&name) {
+                continue;
+            }
+            let full = entry.path();
+            let meta = entry.metadata().ok();
+            let rel = if sub.is_empty() {
+                name.clone()
+            } else {
+                format!("{sub}/{name}")
+            };
+            // 配了对外前缀就拼 URL（同步盘场景），否则给 file:// 本地路径
+            let url = if base.is_empty() {
+                format!("file:///{}", full.to_string_lossy().replace('\\', "/"))
+            } else {
+                let encoded: Vec<String> = rel
+                    .split('/')
+                    .map(|seg| urlencoding::encode(seg).to_string())
+                    .collect();
+                format!("{}/{}", base.trim_end_matches('/'), encoded.join("/"))
+            };
+            out.push(RemoteImage {
+                name,
+                path: rel,
+                url,
+                size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                modified_at: meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(ms_from_system),
+                sha: None,
+            });
+        }
+        out.sort_by(|a, b| b.modified_at.unwrap_or(0).cmp(&a.modified_at.unwrap_or(0)));
+        out.truncate(limit.max(1));
         Ok(out)
     }
 }

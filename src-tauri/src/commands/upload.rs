@@ -162,7 +162,6 @@ fn local_path_of(url: &str) -> Option<String> {
 }
 
 /* ---------------- 上传历史 ---------------- */
-
 #[tauri::command]
 pub fn upload_history_list(
     state: tauri::State<'_, Arc<AppState>>,
@@ -249,4 +248,93 @@ pub async fn upload_list_dirs(
     })
     .await
     .map_err(|e| AppError::Msg(format!("浏览任务失败: {e}")))?
+}
+
+/// 列图床里某个目录下的图片 —— 图床页的「列表」用的就是它。
+///
+/// 和上传一样丢进 spawn_blocking：GitHub 列目录是网络请求，卡在命令线程上
+/// 会把整个界面拖住。
+#[tauri::command]
+pub async fn upload_list_images(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    provider_id: String,
+    path: Option<String>,
+    limit: Option<usize>,
+) -> AppResult<Vec<crate::types::RemoteImage>> {
+    let registry = registry(&app)?;
+    let cfg = state.settings.read().clone();
+    let provider_cfg = cfg
+        .uploader
+        .providers
+        .get(&provider_id)
+        .cloned()
+        .unwrap_or_default();
+    let path = path.unwrap_or_default();
+    let limit = limit.unwrap_or(300);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = registry
+            .get(&provider_id)
+            .ok_or_else(|| AppError::Msg(format!("未找到图床: {provider_id}")))?;
+        p.list_images(&provider_cfg, &path, limit)
+    })
+    .await
+    .map_err(|e| AppError::Msg(format!("浏览任务失败: {e}")))?
+}
+
+/// 给本地图片生成一张缩略图的 data URL。
+///
+/// 本地目录图床返回的是 `file:///...`，webview 里既不能当 `<img src>`
+/// （CSP 没放行 `file:`），也不该为了这个把 asset 协议整个打开 ——
+/// 那等于给页面一个任意文件读取口子。所以由后端读图、缩小、转 base64。
+///
+/// 只接受图片扩展名 + 体积上限，别让它变成通用的任意文件读取接口。
+#[tauri::command]
+pub async fn upload_thumb(path: String, max: Option<u32>) -> AppResult<String> {
+    let max = max.unwrap_or(240).clamp(48, 512);
+    tauri::async_runtime::spawn_blocking(move || {
+        use base64::Engine;
+
+        let p = std::path::PathBuf::from(&path);
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let ext = name
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "bmp") {
+            return Err(AppError::Msg("这个格式不做缩略图".into()));
+        }
+        let meta = std::fs::metadata(&p).map_err(|e| AppError::Msg(format!("读不到文件: {e}")))?;
+        if meta.len() > 64 * 1024 * 1024 {
+            return Err(AppError::Msg("图片太大，跳过缩略图".into()));
+        }
+
+        let img = image::open(&p).map_err(|e| AppError::Msg(format!("解码失败: {e}")))?;
+        let thumb = img.thumbnail(max, max).to_rgba8();
+
+        // JPEG 没有透明通道，直接丢 alpha 会让图标类图片的透明底变黑，
+        // 所以合成到白底上
+        let (w, h) = thumb.dimensions();
+        let mut rgb = image::RgbImage::new(w, h);
+        for (x, y, px) in thumb.enumerate_pixels() {
+            let a = px[3] as f32 / 255.0;
+            let blend = |c: u8| (c as f32 * a + 255.0 * (1.0 - a)).round() as u8;
+            rgb.put_pixel(x, y, image::Rgb([blend(px[0]), blend(px[1]), blend(px[2])]));
+        }
+
+        let mut buf = Vec::new();
+        rgb.write_to(
+            &mut std::io::Cursor::new(&mut buf),
+            image::ImageFormat::Jpeg,
+        )
+        .map_err(|e| AppError::Msg(format!("编码缩略图失败: {e}")))?;
+
+        Ok(format!(
+            "data:image/jpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&buf)
+        ))
+    })
+    .await
+    .map_err(|e| AppError::Msg(format!("缩略图任务失败: {e}")))?
 }

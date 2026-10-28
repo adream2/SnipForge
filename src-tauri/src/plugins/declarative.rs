@@ -154,6 +154,7 @@ pub fn load_all(app: &AppHandle, state: &Arc<AppState>) -> usize {
                         requires_network: true,
                         supports_dir: false,
                         can_browse: false,
+                        can_list_images: false,
                         fields,
                     };
 
