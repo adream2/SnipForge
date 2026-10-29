@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, events } from './lib/api'
 import type { ClipboardItem, Secret } from './lib/types'
+import { autoName } from './lib/naming'
 import {
+  IconCheck,
   IconClipboard,
   IconImage,
   IconLayers,
@@ -81,6 +83,8 @@ function Panel() {
   const [items, setItems] = useState<ClipboardItem[]>([])
   /** 收藏（密钥/密码）：另一份数据，不在剪贴板历史里 */
   const [secrets, setSecrets] = useState<Secret[]>([])
+  /** 刚存为收藏的条目，按钮短暂变成勾 */
+  const [starred, setStarred] = useState<string | null>(null)
   const [keyword, setKeyword] = useState('')
   const [kind, setKind] = useState('all')
   const [index, setIndex] = useState(0)
@@ -203,6 +207,20 @@ function Panel() {
   }
 
   /* ---------------- 管理操作 ---------------- */
+
+  /** 把这条内容存进收藏。名字自动取，之后在剪贴板页的「收藏」里能改。 */
+  const saveToSecrets = async (item: ClipboardItem | undefined) => {
+    const text = item?.text?.trim()
+    if (!text) return
+    try {
+      await api.secretsSave({ name: autoName(text), value: text })
+      setStarred(item!.id)
+      window.setTimeout(() => setStarred((v) => (v === item!.id ? null : v)), 1500)
+    } catch {
+      /* 收藏失败不该打断粘贴流程，静默即可 */
+    }
+  }
+
 
   /** 置顶/取消置顶。列表里置顶项本来就排在最前，刷新后光标跟回这一条。 */
   const togglePin = async (item: ClipboardItem | undefined) => {
@@ -429,6 +447,18 @@ function Panel() {
                   }}
                 >
                   <IconLayers size={12} />
+                </button>
+              )}
+              {item.text?.trim() && (
+                <button
+                  className="p-act"
+                  title="存为收藏"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void saveToSecrets(item)
+                  }}
+                >
+                  {starred === item.id ? <IconCheck size={12} /> : <span>🔑</span>}
                 </button>
               )}
               <button

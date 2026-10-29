@@ -75,6 +75,12 @@ impl SecretStore {
             }
         }
 
+        // 新建时如果这份内容已经收藏过，直接返回已有的那条。
+        // 从剪贴板列表连点两次收藏是很自然的操作，不该出现两条一模一样的。
+        if let Some(existing) = self.items.iter().find(|s| s.value == value) {
+            return Ok(existing.clone());
+        }
+
         let item = Secret {
             id: format!("s_{now}_{}", self.items.len()),
             name: name.to_string(),

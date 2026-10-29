@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, events } from '../lib/api'
 import type { ClipboardItem, ClipboardStats } from '../lib/types'
-import { IconCopy, IconPin, IconSearch, IconTrash, IconClipboard, IconLoader } from '../components/Icons'
+import { IconCheck, IconCopy, IconPin, IconSearch, IconTrash, IconClipboard, IconLoader } from '../components/Icons'
+import { autoName } from '../lib/naming'
 import { useToast } from '../components/Toast'
 import SecretsDialog from '../components/SecretsDialog'
 
@@ -59,6 +60,8 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
   const [items, setItems] = useState<ClipboardItem[]>([])
   /** 密钥/密码收藏的管理弹窗 */
   const [showSecrets, setShowSecrets] = useState(false)
+  /** 刚存为收藏的条目，按钮短暂变成勾 */
+  const [starred, setStarred] = useState<string | null>(null)
   const [keyword, setKeyword] = useState('')
   const [kind, setKind] = useState('all')
   const [selected, setSelected] = useState<string | null>(null)
@@ -96,6 +99,21 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
       .then((u) => unsubs.push(u))
     return () => unsubs.forEach((u) => u())
   }, [refresh])
+
+  /** 把这条内容存进收藏。名字自动取，之后在收藏里可以改。 */
+  const saveToSecrets = async (item: ClipboardItem) => {
+    const text = item.text?.trim()
+    if (!text) return
+    const name = autoName(text)
+    try {
+      await api.secretsSave({ name, value: text })
+      setStarred(item.id)
+      window.setTimeout(() => setStarred((v) => (v === item.id ? null : v)), 1500)
+      toast.push(`已收藏：${name}`, 'success')
+    } catch (e) {
+      toast.push(String(e), 'error')
+    }
+  }
 
   const handlePaste = async (item: ClipboardItem, autoPaste: boolean) => {
     try {
@@ -192,6 +210,14 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
                 <button title="复制" onClick={() => void handlePaste(item, false)}>
                   <IconCopy />
                 </button>
+                {item.text?.trim() && (
+                  <button
+                    title="存为收藏（之后可在「收藏」里改名）"
+                    onClick={() => void saveToSecrets(item)}
+                  >
+                    {starred === item.id ? <IconCheck size={12} /> : <span>🔑</span>}
+                  </button>
+                )}
                 <button
                   title={item.pinned ? '取消置顶' : '置顶'}
                   onClick={() => void api.clipboardTogglePin(item.id).then(refresh)}
