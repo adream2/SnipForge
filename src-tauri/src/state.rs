@@ -39,12 +39,15 @@ pub struct AppState {
     pub pending: Mutex<Option<crate::types::CaptureResult>>,
     /// 上传历史（落盘，重启后还在）
     pub uploads: Mutex<crate::uploader::history::UploadHistory>,
+    /// 密钥/密码收藏（和剪贴板历史分开存）
+    pub secrets: Mutex<crate::secrets::SecretStore>,
 }
 
 impl AppState {
     pub fn new(settings: AppSettings, paths: Paths) -> Arc<Self> {
         let uploads =
             crate::uploader::history::UploadHistory::load(paths.uploads_file());
+        let secrets = crate::secrets::SecretStore::load(paths.secrets_file());
         Arc::new(Self {
             settings: RwLock::new(settings),
             paths,
@@ -53,6 +56,7 @@ impl AppState {
             capture: Mutex::new(None),
             pending: Mutex::new(None),
             uploads: Mutex::new(uploads),
+            secrets: Mutex::new(secrets),
         })
     }
 

@@ -46,6 +46,22 @@ impl ClipboardStore {
             Ok(text) => match serde_json::from_str::<IndexFile>(&text) {
                 Ok(idx) => {
                     let mut items = idx.items;
+                    // 老数据补分类：以前只有 text / color 两种，链接全被记成 text。
+                    // 这里按当前规则重判一次，"链接"分类一上线就有东西看，
+                    // 不用等用户重新复制一遍才生效。
+                    let mut retagged = 0;
+                    for item in items.iter_mut() {
+                        if item.kind == "text" {
+                            let k = super::detect_kind(item.text.as_deref().unwrap_or(""));
+                            if k != "text" {
+                                item.kind = k.to_string();
+                                retagged += 1;
+                            }
+                        }
+                    }
+                    if retagged > 0 {
+                        log::info!("补全 {retagged} 条历史的分类（链接/颜色）");
+                    }
                     items.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
                     let mut map = HashMap::new();
                     for item in &items {

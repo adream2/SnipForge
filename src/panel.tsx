@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, events } from './lib/api'
-import type { ClipboardItem } from './lib/types'
+import type { ClipboardItem, Secret } from './lib/types'
 import {
   IconClipboard,
   IconImage,
@@ -17,9 +17,11 @@ import './styles/panel.css'
 
 const KINDS = [
   { id: 'all', label: '全部' },
+  { id: 'link', label: '链接' },
   { id: 'text', label: '文本' },
   { id: 'image', label: '图片' },
-  { id: 'files', label: '文件' }
+  { id: 'files', label: '文件' },
+  { id: 'favorite', label: '收藏' }
 ]
 
 function relativeTime(ts: number): string {
@@ -62,6 +64,8 @@ function kindLabel(item: ClipboardItem): string {
       return `${item.files?.length ?? 0} 个文件`
     case 'color':
       return item.color ?? '颜色'
+    case 'link':
+      return '链接'
     default:
       return '文本'
   }
@@ -75,6 +79,8 @@ function previewOf(item: ClipboardItem): string {
 
 function Panel() {
   const [items, setItems] = useState<ClipboardItem[]>([])
+  /** 收藏（密钥/密码）：另一份数据，不在剪贴板历史里 */
+  const [secrets, setSecrets] = useState<Secret[]>([])
   const [keyword, setKeyword] = useState('')
   const [kind, setKind] = useState('all')
   const [index, setIndex] = useState(0)
@@ -91,6 +97,32 @@ function Panel() {
     // 那样旧列表会盖掉新列表 —— 面板上看到的条目和刚触发的同步结果不一致，
     // 用户就会「回车粘出来是上一次的内容」。用序号丢弃过期响应。
     const mine = ++reqSeq.current
+
+    // 收藏是另一份数据：它不在剪贴板历史里，也不该被「清空」按钮清掉
+    if (k === 'favorite') {
+      try {
+        const list = await api.secretsList()
+        if (mine !== reqSeq.current) return
+        const kwLower = kw.trim().toLowerCase()
+        setSecrets(
+          kwLower
+            ? list.filter(
+                (x) =>
+                  x.name.toLowerCase().includes(kwLower) ||
+                  x.note.toLowerCase().includes(kwLower)
+              )
+            : list
+        )
+        setIndex(0)
+        void api.clipboardPanelReady(null)
+      } catch {
+        if (mine === reqSeq.current) setSecrets([])
+      } finally {
+        if (mine === reqSeq.current) setLoading(false)
+      }
+      return
+    }
+
     try {
       const list = await api.clipboardList({
         keyword: kw || undefined,
@@ -149,6 +181,18 @@ function Panel() {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${index}"]`)
     el?.scrollIntoView({ block: 'nearest' })
   }, [index])
+
+  const isFav = kind === 'favorite'
+  /** 当前视图的条目：收藏走另一份数组，导航/计数都用它 */
+  const rows: Array<ClipboardItem | Secret> = isFav ? secrets : items
+
+  const pasteSecret = (secret: Secret | undefined, copyOnly: boolean) => {
+    if (!secret) return
+    // 后端负责写剪贴板 + 收面板 + 还原焦点，失败时内容也已经在剪贴板里
+    void api.secretPaste(secret.id, copyOnly).catch(() => {
+      /* 同 paste：失败不打断，用户可手动 Ctrl+V */
+    })
+  }
 
   const paste = (item: ClipboardItem | undefined, copyOnly: boolean) => {
     if (!item) return
@@ -221,12 +265,16 @@ function Panel() {
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setIndex((i) => Math.min(i + 1, items.length - 1))
+      setIndex((i) => Math.min(i + 1, rows.length - 1))
       return
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault()
       setIndex((i) => Math.max(i - 1, 0))
+      return
+    }
+    // 收藏项没有置顶/删除语义，这两个键留给输入框
+    if (isFav && (e.key === 'Delete' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p'))) {
       return
     }
     // Ctrl+P 置顶：不占用普通字符，输入框里也不会误触
@@ -243,7 +291,9 @@ function Panel() {
     }
     if (e.key === 'Enter') {
       e.preventDefault()
-      paste(items[index], e.shiftKey)
+      // Shift+Enter = 只复制不粘贴，两种视图一致
+      if (isFav) pasteSecret(secrets[index], e.shiftKey)
+      else paste(items[index], e.shiftKey)
     }
   }
 
@@ -275,7 +325,7 @@ function Panel() {
             {k.label}
           </button>
         ))}
-        <span className="p-count">{items.length}</span>
+        <span className="p-count">{rows.length}</span>
         <button
           className={`p-tool ${armed ? 'danger' : ''}`}
           title={
@@ -301,21 +351,29 @@ function Panel() {
       </div>
 
       <div className="p-list" ref={listRef}>
-        {loading && items.length === 0 && (
+        {loading && rows.length === 0 && (
           <div className="p-empty">
             <IconLoader size={16} />
             <span>读取中…</span>
           </div>
         )}
 
-        {!loading && items.length === 0 && (
+        {!loading && rows.length === 0 && (
           <div className="p-empty">
             <IconClipboard size={26} />
-            <span>{keyword ? '没有匹配的记录' : '还没有记录'}</span>
+            <span>
+              {isFav
+                ? keyword
+                  ? '没有匹配的收藏'
+                  : '还没有收藏，去剪贴板页添加'
+                : keyword
+                  ? '没有匹配的记录'
+                  : '还没有记录'}
+            </span>
           </div>
         )}
 
-        {items.map((item, i) => (
+        {!isFav && items.map((item, i) => (
           <div
             key={item.id}
             data-idx={i}
@@ -396,6 +454,38 @@ function Panel() {
             </div>
           </div>
         ))}
+
+        {/* 收藏：只显示名称和备注，内容打码 —— 面板是公共视线里会打开的东西 */}
+        {isFav &&
+          secrets.map((sec, i) => (
+            <div
+              key={sec.id}
+              data-idx={i}
+              className={`p-row ${i === index ? 'active' : ''}`}
+              onMouseEnter={() => setIndex(i)}
+              onClick={(e) => pasteSecret(sec, e.shiftKey)}
+              onAuxClick={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault()
+                  pasteSecret(sec, true)
+                }
+              }}
+            >
+              <span className="p-type p-secret-key">🔑</span>
+              <div className="p-body">
+                <div className="p-text">{sec.name}</div>
+                <div className="p-meta">
+                  <span className="p-secret-dots">••••••••</span>
+                  {sec.note && (
+                    <>
+                      <span className="dot">·</span>
+                      <span>{sec.note}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
       </div>
 
       <div className="p-foot" title="按住 Shift 再按 Enter（或中键点击）= 只复制不粘贴">

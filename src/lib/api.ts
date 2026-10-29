@@ -124,6 +124,19 @@ export const api = {
   clipboardPanelReady: (topId: string | null) =>
     invoke<void>('clipboard_panel_ready', { topId }),
   /** 记住的目标窗口进程名，用来显示「粘贴到 xxx」 */
+  /* 密钥/密码收藏 */
+  secretsList: () => invoke<import('./types').Secret[]>('secrets_list'),
+  secretsSave: (p: { id?: string; name: string; value: string; note?: string }) =>
+    invoke<import('./types').Secret>('secrets_save', {
+      id: p.id ?? null,
+      name: p.name,
+      value: p.value,
+      note: p.note ?? null
+    }),
+  secretsRemove: (id: string) => invoke<boolean>('secrets_remove', { id }),
+  secretPaste: (id: string, copyOnly?: boolean) =>
+    invoke<void>('secret_paste', { id, copyOnly: copyOnly ?? null }),
+
   clipboardPanelTarget: () => invoke<string>('clipboard_panel_target'),
   clipboardSystemHistoryGet: () => invoke<boolean>('clipboard_system_history_get'),
   clipboardSystemHistorySet: (enabled: boolean) =>

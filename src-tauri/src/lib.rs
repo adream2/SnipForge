@@ -19,6 +19,7 @@ mod panel;
 mod paths;
 mod plugins;
 mod record;
+mod secrets;
 mod shortcuts;
 mod state;
 mod tray;
@@ -629,6 +630,10 @@ pub fn run() {
             commands::clipboard::clipboard_takeover_win_v_status,
             // 剪贴板悬浮面板
             commands::clipboard::clipboard_panel_paste,
+            commands::clipboard::secrets_list,
+            commands::clipboard::secrets_save,
+            commands::clipboard::secrets_remove,
+            commands::clipboard::secret_paste,
             commands::clipboard::clipboard_panel_hide,
             commands::clipboard::clipboard_panel_ready,
             commands::clipboard::clipboard_panel_target,

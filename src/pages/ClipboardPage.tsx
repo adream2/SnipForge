@@ -3,9 +3,11 @@ import { api, events } from '../lib/api'
 import type { ClipboardItem, ClipboardStats } from '../lib/types'
 import { IconCopy, IconPin, IconSearch, IconTrash, IconClipboard, IconLoader } from '../components/Icons'
 import { useToast } from '../components/Toast'
+import SecretsDialog from '../components/SecretsDialog'
 
 const KINDS = [
   { id: 'all', label: '全部' },
+  { id: 'link', label: '链接' },
   { id: 'text', label: '文本' },
   { id: 'image', label: '图片' },
   { id: 'files', label: '文件' },
@@ -55,6 +57,8 @@ function Thumb({ id }: { id: string }) {
 
 export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats) => void }) {
   const [items, setItems] = useState<ClipboardItem[]>([])
+  /** 密钥/密码收藏的管理弹窗 */
+  const [showSecrets, setShowSecrets] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [kind, setKind] = useState('all')
   const [selected, setSelected] = useState<string | null>(null)
@@ -122,6 +126,9 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
       <div className="page-head">
         <h1>剪贴板</h1>
         <div className="spacer" />
+        <button className="btn sm" onClick={() => setShowSecrets(true)}>
+          🔑 收藏
+        </button>
         <button className="btn sm danger" onClick={() => void api.clipboardClear(true).then(refresh)}>
           清空（保留置顶）
         </button>
@@ -219,7 +226,9 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
                       ? `${item.files?.length ?? 0} 个文件`
                       : item.kind === 'color'
                         ? item.color
-                        : '文本'}
+                        : item.kind === 'link'
+                          ? '链接'
+                          : '文本'}
                 </span>
                 <span>·</span>
                 <span>{formatSize(item.size)}</span>
@@ -246,6 +255,8 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
           ))}
         </div>
       </div>
+
+      {showSecrets && <SecretsDialog onClose={() => setShowSecrets(false)} />}
     </>
   )
 }

@@ -428,9 +428,24 @@ fn scan_clipboard(
 fn detect_kind(text: &str) -> &'static str {
     if detect_color(text).is_some() {
         "color"
+    } else if is_link(text) {
+        "link"
     } else {
         "text"
     }
+}
+
+/// 只认明确的单条链接：`http(s)://` 或 `www.` 开头，且整段没有空白。
+///
+/// 不用"含点就算链接"那种糊弄判断 —— 那样 `readme.txt`、`1.2.3` 全成了链接，
+/// 分类反而没法用。宁可漏掉，也别误报。
+fn is_link(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() || t.len() > 2048 || t.split_whitespace().count() != 1 {
+        return false;
+    }
+    let lower = t.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("www.")
 }
 
 fn detect_color(text: &str) -> Option<String> {

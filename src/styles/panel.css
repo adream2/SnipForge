@@ -372,3 +372,15 @@ body {
   border-radius: 4px;
   box-shadow: 0 1px 0 rgba(16, 16, 24, 0.05);
 }
+
+/* 收藏项：内容一律打码，只露出名称和备注 */
+.p-secret-key {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.p-secret-dots {
+  font-family: var(--mono);
+  letter-spacing: 1px;
+  color: var(--text-3);
+}

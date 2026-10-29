@@ -279,6 +279,25 @@ pub struct UploadResult {
     pub meta: Option<serde_json::Value>,
 }
 
+/// 一条密钥/密码收藏。
+///
+/// 和剪贴板历史分两份存：历史会被淘汰、会被"清空"清掉，
+/// 而收藏是用户主动维护的东西，不该跟着历史滚动。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Secret {
+    pub id: String,
+    /// 名称，例如「GitHub Token」「公司 Wi-Fi」
+    pub name: String,
+    /// 真正要粘出去的内容
+    pub value: String,
+    /// 备注：用在哪、有什么权限，可空
+    #[serde(default)]
+    pub note: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// 一个已录好的文件（录屏页的"最近录制"）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -170,7 +170,7 @@ export interface NativeWindowInfo {
 
 export interface ClipboardItem {
   id: string
-  kind: 'text' | 'image' | 'files' | 'html' | 'color'
+  kind: 'text' | 'link' | 'image' | 'files' | 'html' | 'color'
   text?: string
   html?: string
   blob?: string
@@ -244,6 +244,19 @@ export interface UploadResult {
   deleteUrl?: string
   thumbUrl?: string
   meta?: unknown
+}
+
+/** 一条密钥/密码收藏 */
+export interface Secret {
+  id: string
+  /** 名称，例如「GitHub Token」 */
+  name: string
+  /** 真正要粘出去的内容 */
+  value: string
+  /** 备注：用在哪、什么权限，可空 */
+  note: string
+  createdAt: number
+  updatedAt: number
 }
 
 /** 一个已录好的文件 */

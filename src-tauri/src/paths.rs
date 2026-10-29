@@ -78,4 +78,9 @@ impl Paths {
     pub fn uploads_file(&self) -> PathBuf {
         self.data.join("uploads.json")
     }
+
+    /// 密钥/密码收藏
+    pub fn secrets_file(&self) -> PathBuf {
+        self.data.join("secrets.json")
+    }
 }

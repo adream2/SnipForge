@@ -380,6 +380,49 @@ pub fn target_app() -> String {
 }
 
 /// 面板里点了一条记录：写剪贴板 → 关面板 → 还原焦点 → Ctrl+V。
+/// 把内容送到目标窗口。
+///
+/// 目标是自己的窗口时不能靠键盘注入：Chromium（WebView2）把「程序模拟的粘贴」
+/// 当成安全风险，合成的 Ctrl+V 会被丢掉（记事本那类 Win32 编辑框照收，
+/// 所以只在记事本里测是通的）。这种情况把文本推给前端，由页面插进焦点输入框。
+fn deliver_to_target(app: &AppHandle, target: isize, self_text: Option<String>) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        // 等面板真的收起。窗口隐藏是异步的，以前写死 90ms 盲等，
+        // 机器一忙就抢跑，Ctrl+V 打在我们自己身上 —— 用户看到的就是「点了没反应」。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+        while is_visible(&handle) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // 焦点没抢回来就绝不注入：那会把按键打到别的窗口上，比「什么都不发生」更糟。
+        // 内容已经在剪贴板里，用户可以手动 Ctrl+V。
+        if !crate::win32::focus::activate_wait(target, 450) {
+            log::warn!("还原焦点失败，未注入（内容已在剪贴板，可手动粘贴）");
+            return;
+        }
+
+        if crate::win32::focus::is_own_window(target) {
+            match self_text {
+                Some(t) => {
+                    if let Err(e) = handle.emit_to("main", "clipboard://paste-self", t) {
+                        log::warn!("把内容推给主窗口失败: {e}");
+                    }
+                }
+                // 图片/文件条目没有文本，插不进输入框；内容已在剪贴板里
+                None => log::debug!("非文本条目，只写剪贴板"),
+            }
+            return;
+        }
+
+        // 个别程序在拿到焦点的头几十毫秒里还没准备好接收输入
+        std::thread::sleep(std::time::Duration::from_millis(35));
+        if let Err(e) = crate::win32::input::paste_hotkey() {
+            log::warn!("模拟粘贴失败: {e}");
+        }
+    });
+}
+
 pub fn paste_item(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<String> {
     let svc = app
         .try_state::<std::sync::Arc<crate::clipboard::ClipboardService>>()
@@ -403,59 +446,41 @@ pub fn paste_item(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<Strin
         return Ok(kind);
     }
 
-    // 目标是 SnipForge 自己的窗口：不能靠键盘注入。
-    //
-    // Chromium（WebView2）把「程序模拟的粘贴」当成安全风险，合成的 Ctrl+V
-    // 会被丢掉 —— 记事本那类 Win32 编辑框照收，所以以前只在记事本里测是通的。
-    // 这类情况把文本推给前端，由页面自己插到焦点输入框里。
-    if crate::win32::focus::is_own_window(target) {
-        let text = svc.store.find_by_id(id).and_then(|it| it.text);
-        let handle = app.clone();
-        std::thread::spawn(move || {
-            // 等面板真的收起，再把主窗口拉回前台，最后把内容交给页面
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
-            while is_visible(&handle) && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            if !crate::win32::focus::activate_wait(target, 450) {
-                log::warn!("还原焦点失败（内容已在剪贴板，可手动粘贴）");
-                return;
-            }
-            match text {
-                Some(t) => {
-                    if let Err(e) = handle.emit_to("main", "clipboard://paste-self", t) {
-                        log::warn!("把内容推给主窗口失败: {e}");
-                    }
-                }
-                // 图片/文件条目没有文本，插不进输入框；内容已在剪贴板里
-                None => log::debug!("非文本条目，只写剪贴板"),
-            }
-        });
-        return Ok(kind);
-    }
-
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        // 等面板**真的**不可见再动手。
-        // 窗口隐藏是异步的，以前这里写死 90ms 盲等 —— 机器一忙就抢跑，
-        // Ctrl+V 打在我们自己身上，用户看到的就是「点了没反应」。
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
-        while is_visible(&handle) && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-
-        // 焦点没抢回来就绝不注入：那会把按键打到别的窗口上，
-        // 比「什么都不发生」更糟。内容已经在剪贴板里，用户可以手动 Ctrl+V。
-        if !crate::win32::focus::activate_wait(target, 450) {
-            log::warn!("还原焦点失败，未注入 Ctrl+V（内容已在剪贴板，可手动粘贴）");
-            return;
-        }
-        // 个别程序在拿到焦点的头几十毫秒里还没准备好接收输入
-        std::thread::sleep(std::time::Duration::from_millis(35));
-        if let Err(e) = crate::win32::input::paste_hotkey() {
-            log::warn!("模拟粘贴失败: {e}");
-        }
-    });
-
+    let text = svc.store.find_by_id(id).and_then(|it| it.text);
+    deliver_to_target(app, target, text);
     Ok(kind)
+}
+
+/// 粘贴一条收藏。收藏不在剪贴板历史里，所以先写进剪贴板，再走同一套送达逻辑。
+pub fn paste_secret(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<()> {
+    let svc = app
+        .try_state::<std::sync::Arc<crate::clipboard::ClipboardService>>()
+        .map(|s| s.inner().clone())
+        .ok_or_else(|| AppError::Msg("剪贴板服务未初始化".into()))?;
+    let state = app
+        .try_state::<std::sync::Arc<crate::state::AppState>>()
+        .map(|s| s.inner().clone())
+        .ok_or_else(|| AppError::Msg("状态未初始化".into()))?;
+
+    let secret = state
+        .secrets
+        .lock()
+        .find(id)
+        .ok_or_else(|| AppError::Msg("收藏不存在".into()))?;
+
+    let target = target();
+    hide(app);
+
+    log::debug!(
+        "粘贴收藏: id={id} 名称={:?} 目标={target:#x}",
+        secret.name
+    );
+    crate::clipboard::copy_text(&svc, &secret.value)?;
+    let _ = state.secrets.lock().touch(id);
+
+    if copy_only || target == 0 {
+        return Ok(());
+    }
+    deliver_to_target(app, target, Some(secret.value));
+    Ok(())
 }

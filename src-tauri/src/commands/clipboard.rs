@@ -362,3 +362,45 @@ pub async fn clipboard_pin_current(app: tauri::AppHandle) -> AppResult<()> {
     let opacity = state.settings.read().editor.pin_opacity as f64;
     crate::windows::open_pin(&app, data_url, img.width as u32, img.height as u32, opacity)
 }
+
+/* ---------------- 密钥 / 密码收藏 ---------------- */
+
+#[tauri::command]
+pub fn secrets_list(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppResult<Vec<crate::types::Secret>> {
+    Ok(state.secrets.lock().list())
+}
+
+/// 新建或更新一条收藏。`id` 为空表示新建。
+#[tauri::command]
+pub fn secrets_save(
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+    id: Option<String>,
+    name: String,
+    value: String,
+    note: Option<String>,
+) -> AppResult<crate::types::Secret> {
+    state.secrets.lock().upsert(
+        id.as_deref().unwrap_or(""),
+        &name,
+        &value,
+        note.as_deref().unwrap_or(""),
+    )
+}
+
+#[tauri::command]
+pub fn secrets_remove(
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+    id: String,
+) -> AppResult<bool> {
+    state.secrets.lock().remove(&id)
+}
+
+/// 面板里点一条收藏：写剪贴板 → 收面板 → 还原焦点 → 粘贴（或只复制）。
+#[tauri::command]
+pub fn secret_paste(
+    app: tauri::AppHandle,
+    id: String,
+    copy_only: Option<bool>,
+) -> AppResult<()> {
+    crate::panel::paste_secret(&app, &id, copy_only.unwrap_or(false))
+}
