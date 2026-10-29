@@ -94,6 +94,33 @@ impl SecretStore {
         Ok(item)
     }
 
+    /// 只改名字。
+    ///
+    /// 不复用 `upsert` 是因为那会把 `updated_at` 推到现在，
+    /// 列表按它倒序排 —— 改个名字条目就跳到最前面，找起来更费劲。
+    /// 改名字不该改变"这条是什么时候加的"。
+    pub fn rename(&mut self, id: &str, name: &str) -> AppResult<Secret> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(crate::error::AppError::Msg("名称不能为空".into()));
+        }
+        let (out, changed) = {
+            let Some(item) = self.items.iter_mut().find(|s| s.id == id) else {
+                return Err(crate::error::AppError::Msg("收藏不存在".into()));
+            };
+            let changed = item.name != name;
+            if changed {
+                item.name = name.to_string();
+            }
+            (item.clone(), changed)
+        };
+        // 用的是 save 而不是 sort_and_save：位置保持不变
+        if changed {
+            self.save()?;
+        }
+        Ok(out)
+    }
+
     pub fn remove(&mut self, id: &str) -> AppResult<bool> {
         let before = self.items.len();
         self.items.retain(|s| s.id != id);

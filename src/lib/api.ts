@@ -133,6 +133,9 @@ export const api = {
       value: p.value,
       note: p.note ?? null
     }),
+  /** 只改名字，不影响排序（不会跳到列表最前） */
+  secretsRename: (id: string, name: string) =>
+    invoke<import('./types').Secret>('secrets_rename', { id, name }),
   secretsRemove: (id: string) => invoke<boolean>('secrets_remove', { id }),
   secretPaste: (id: string, copyOnly?: boolean) =>
     invoke<void>('secret_paste', { id, copyOnly: copyOnly ?? null }),

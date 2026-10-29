@@ -144,7 +144,16 @@ function Shell() {
   }, [stats])
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      // 同理：桌面应用不该有浏览器的右键菜单。
+      // 输入框/文本域放行，图片工具页的 ctx-menu 自己在行内 preventDefault。
+      onContextMenu={(e) => {
+        if (!(e.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) {
+          e.preventDefault()
+        }
+      }}
+    >
       <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
         <div className="titlebar">
           <div className="drag" data-tauri-drag-region>

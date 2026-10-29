@@ -387,6 +387,16 @@ pub fn secrets_save(
     )
 }
 
+/// 只改名字。改名不该让条目跳到列表最前面，所以单独一个命令。
+#[tauri::command]
+pub fn secrets_rename(
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+    id: String,
+    name: String,
+) -> AppResult<crate::types::Secret> {
+    state.secrets.lock().rename(&id, &name)
+}
+
 #[tauri::command]
 pub fn secrets_remove(
     state: tauri::State<'_, std::sync::Arc<AppState>>,

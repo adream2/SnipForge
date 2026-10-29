@@ -1846,3 +1846,21 @@ select.input {
   background: transparent;
   cursor: pointer;
 }
+
+/* 收藏列表：右键菜单 / 双击改名的承载体 */
+.secret-row {
+  cursor: default;
+}
+
+.secret-row:hover {
+  background: var(--surface-2);
+  border-radius: 7px;
+}
+
+/* 就地改名的输入框，和名称同字号，避免整行跳动 */
+.secret-rename {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+}

@@ -632,6 +632,7 @@ pub fn run() {
             commands::clipboard::clipboard_panel_paste,
             commands::clipboard::secrets_list,
             commands::clipboard::secrets_save,
+            commands::clipboard::secrets_rename,
             commands::clipboard::secrets_remove,
             commands::clipboard::secret_paste,
             commands::clipboard::clipboard_panel_hide,

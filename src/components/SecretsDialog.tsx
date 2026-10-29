@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
 import type { Secret } from '../lib/types'
 import { IconCheck, IconCopy, IconLoader, IconTrash } from './Icons'
@@ -29,6 +29,14 @@ export default function SecretsDialog({ onClose }: { onClose: () => void }) {
   /** 删除的两段式确认 */
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  /** 右键菜单 */
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string; armed?: boolean } | null>(
+    null
+  )
+  /** 就地改名。名字错了想改一个词，不该为此打开整个编辑表单 */
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
+  /** Esc 取消时别让 blur 又把它提交上去 */
+  const cancelRename = useRef(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -94,6 +102,57 @@ export default function SecretsDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const startRename = (s: Secret) => {
+    setMenu(null)
+    cancelRename.current = false
+    setRenaming({ id: s.id, name: s.name })
+  }
+
+  /** 提交改名。空名字当取消处理，别把名称变成空的。 */
+  const commitRename = async () => {
+    const cur = renaming
+    if (!cur) return
+    setRenaming(null)
+    if (cancelRename.current) return
+    const name = cur.name.trim()
+    const old = list.find((x) => x.id === cur.id)
+    if (!old || old.name === name) return
+    if (!name) {
+      toast.push('名称不能为空', 'error')
+      return
+    }
+    try {
+      await api.secretsRename(cur.id, name)
+      // 本地改一处就行：后端改名不排序，重新 load 反而是白跑一趟
+      setList((prev) => prev.map((x) => (x.id === cur.id ? { ...x, name } : x)))
+    } catch (e) {
+      toast.push(String(e), 'error')
+    }
+  }
+
+  const openMenu = (e: React.MouseEvent, s: Secret) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({
+      // 靠右/靠下时往回收，别让菜单跑到窗口外面去
+      x: Math.min(e.clientX, window.innerWidth - 208),
+      y: Math.min(e.clientY, window.innerHeight - 220),
+      id: s.id
+    })
+  }
+
+  // 菜单开着时 Esc 关掉
+  useEffect(() => {
+    if (!menu) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menu])
+
+  const menuTarget = menu ? list.find((x) => x.id === menu.id) : undefined
+
   return (
     <>
       <div className="ctx-shade" onClick={onClose} />
@@ -101,7 +160,9 @@ export default function SecretsDialog({ onClose }: { onClose: () => void }) {
         <header>
           <div>
             <strong>收藏</strong>
-            <span className="secrets-sub">密钥、密码、常用私密文本 · 只存本地</span>
+            <span className="secrets-sub">
+              密钥、密码、常用私密文本 · 只存本地 · 右键可改名
+            </span>
           </div>
           <div style={{ flex: 1 }} />
           <button
@@ -160,12 +221,42 @@ export default function SecretsDialog({ onClose }: { onClose: () => void }) {
           )}
 
           {list.map((s) => (
-            <div className="secret-row" key={s.id}>
+            <div
+              className="secret-row"
+              key={s.id}
+              onContextMenu={(e) => openMenu(e, s)}
+              onDoubleClick={() => startRename(s)}
+              title="右键：重命名 / 编辑 / 删除（双击也能改名）"
+            >
               <div className="secret-info">
-                <div className="secret-name">
-                  {s.name}
-                  {s.note && <span className="secret-note">{s.note}</span>}
-                </div>
+                {renaming?.id === s.id ? (
+                  <input
+                    className="input secret-rename"
+                    value={renaming.name}
+                    autoFocus
+                    spellCheck={false}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => setRenaming({ id: s.id, name: e.target.value })}
+                    onKeyDown={(e) => {
+                      // 这里的按键不能冒泡到对话框/页面上去
+                      e.stopPropagation()
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        void commitRename()
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        cancelRename.current = true
+                        setRenaming(null)
+                      }
+                    }}
+                    onBlur={() => void commitRename()}
+                  />
+                ) : (
+                  <div className="secret-name">
+                    {s.name}
+                    {s.note && <span className="secret-note">{s.note}</span>}
+                  </div>
+                )}
                 <div className="secret-value">
                   {revealed[s.id] ? s.value : '••••••••••••'}
                   <button
@@ -205,6 +296,84 @@ export default function SecretsDialog({ onClose }: { onClose: () => void }) {
           能访问这台电脑的人就能读到它。
         </footer>
       </div>
+
+      {/* 右键菜单：和图片工具页同一套样式 */}
+      {menu && menuTarget && (
+        <>
+          <div
+            className="ctx-shade"
+            style={{ zIndex: 70 }}
+            onClick={() => setMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setMenu(null)
+            }}
+          />
+          <div className="ctx-menu" style={{ left: menu.x, top: menu.y, zIndex: 71 }}>
+            <button onClick={() => startRename(menuTarget)}>
+              <span>重命名</span>
+            </button>
+            <button
+              onClick={() => {
+                setMenu(null)
+                setDraft({
+                  id: menuTarget.id,
+                  name: menuTarget.name,
+                  value: menuTarget.value,
+                  note: menuTarget.note
+                })
+              }}
+            >
+              <span>编辑内容…</span>
+            </button>
+            <button
+              onClick={() => {
+                setMenu(null)
+                void copy(menuTarget)
+              }}
+            >
+              <span>复制内容</span>
+            </button>
+            <button
+              onClick={() => {
+                setMenu(null)
+                setRevealed((r) => ({ ...r, [menuTarget.id]: !r[menuTarget.id] }))
+              }}
+            >
+              <span>{revealed[menuTarget.id] ? '隐藏内容' : '显示内容'}</span>
+            </button>
+            <div className="ctx-sep" />
+            {/* 收藏里都是密钥，误删真的会想捶自己：删除也走两段式，
+                但确认就在菜单里完成，免得菜单一关就看不到"刚才那下做了什么" */}
+            <button
+              onClick={() => {
+                if (!menu.armed) {
+                  setMenu({ ...menu, armed: true })
+                  window.setTimeout(
+                    () => setMenu((m) => (m && m.id === menuTarget.id ? { ...m, armed: false } : m)),
+                    3000
+                  )
+                  return
+                }
+                setMenu(null)
+                void (async () => {
+                  try {
+                    await api.secretsRemove(menuTarget.id)
+                    await load()
+                    toast.push('已删除', 'success')
+                  } catch (e) {
+                    toast.push(String(e), 'error')
+                  }
+                })()
+              }}
+            >
+              <span style={{ color: 'var(--danger)' }}>
+                {menu.armed ? '确认删除？' : '删除'}
+              </span>
+            </button>
+          </div>
+        </>
+      )}
     </>
   )
 }

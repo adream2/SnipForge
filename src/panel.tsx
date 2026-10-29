@@ -85,6 +85,9 @@ function Panel() {
   const [secrets, setSecrets] = useState<Secret[]>([])
   /** 刚存为收藏的条目，按钮短暂变成勾 */
   const [starred, setStarred] = useState<string | null>(null)
+  /** 面板里的收藏就地改名（右键进入） */
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
+  const cancelRename = useRef(false)
   const [keyword, setKeyword] = useState('')
   const [kind, setKind] = useState('all')
   const [index, setIndex] = useState(0)
@@ -222,6 +225,23 @@ function Panel() {
   }
 
 
+  /** 提交收藏改名。空名字/没改动都当取消。 */
+  const commitRename = async () => {
+    const cur = renaming
+    if (!cur) return
+    setRenaming(null)
+    if (cancelRename.current) return
+    const name = cur.name.trim()
+    const old = secrets.find((x) => x.id === cur.id)
+    if (!old || old.name === name || !name) return
+    try {
+      await api.secretsRename(cur.id, name)
+      setSecrets((prev) => prev.map((x) => (x.id === cur.id ? { ...x, name } : x)))
+    } catch {
+      /* 改失败就维持原样，面板里没地方放错误提示 */
+    }
+  }
+
   /** 置顶/取消置顶。列表里置顶项本来就排在最前，刷新后光标跟回这一条。 */
   const togglePin = async (item: ClipboardItem | undefined) => {
     if (!item) return
@@ -316,7 +336,16 @@ function Panel() {
   }
 
   return (
-    <div className="panel" onKeyDown={onKeyDown}>
+    <div
+      className="panel"
+      onKeyDown={onKeyDown}
+      // 面板是应用界面，不是网页：右键弹出"返回 / 刷新 / 另存为 / 打印"
+      // 在桌面应用里非常出戏。收藏行的右键改名在行内自己处理。
+      // 输入框不拦 —— 那里用户要的是系统自带的复制/粘贴。
+      onContextMenu={(e) => {
+        if (!(e.target as HTMLElement).closest('input, textarea')) e.preventDefault()
+      }}
+    >
       <div className="p-search">
         <IconSearch size={15} />
         <input
@@ -500,10 +529,44 @@ function Panel() {
                   pasteSecret(sec, true)
                 }
               }}
+              // 面板里收藏只有"粘出去"一件事，可改的只有名字 ——
+              // 右键直接进改名态，比弹一个只有一项的菜单实在
+              onContextMenu={(e) => {
+                e.preventDefault()
+                cancelRename.current = false
+                setRenaming({ id: sec.id, name: sec.name })
+              }}
             >
               <span className="p-type p-secret-key">🔑</span>
               <div className="p-body">
-                <div className="p-text">{sec.name}</div>
+                {renaming?.id === sec.id ? (
+                  <input
+                    className="p-rename"
+                    value={renaming.name}
+                    autoFocus
+                    spellCheck={false}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => setRenaming({ id: sec.id, name: e.target.value })}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      // 必须拦住：根节点上 Enter 是"粘贴选中项"
+                      e.stopPropagation()
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        void commitRename()
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        cancelRename.current = true
+                        setRenaming(null)
+                      }
+                    }}
+                    onBlur={() => void commitRename()}
+                  />
+                ) : (
+                  <div className="p-text" title="右键改名">
+                    {sec.name}
+                  </div>
+                )}
                 <div className="p-meta">
                   <span className="p-secret-dots">••••••••</span>
                   {sec.note && (
