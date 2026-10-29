@@ -22,6 +22,8 @@ import type {
 export const api = {
   /* 设置 */
   settingsGet: () => invoke<{ settings: AppSettings }>('settings_get'),
+  /** 注册表里是否真的登记了开机自启（和配置值对比，能看出写没写成功） */
+  autostartStatus: () => invoke<boolean>('autostart_status'),
   settingsPatch: (patch: unknown) => invoke<{ settings: AppSettings }>('settings_patch', { patch }),
   settingsReset: () => invoke<{ settings: AppSettings }>('settings_reset'),
   pickDir: (defaultPath?: string) => invoke<string | null>('settings_pick_dir', { defaultPath }),

@@ -45,6 +45,8 @@ export default function SettingsPage({
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [engines, setEngines] = useState<OcrEngineInfo[]>([])
   const [sysHistory, setSysHistory] = useState<boolean | null>(null)
+  /** 注册表里的真实状态：和开关值不一致就说明写失败了 */
+  const [autostart, setAutostart] = useState<boolean | null>(null)
   const [downloading, setDownloading] = useState(false)
   /** 设置项太多，按主题分 tab：通用 / 快捷键 / 输出与识别 */
   const [tab, setTab] = useState<'general' | 'hotkeys' | 'output'>('general')
@@ -90,6 +92,7 @@ export default function SettingsPage({
     void api.appInfo().then(setInfo)
     void loadEngines()
     void api.clipboardSystemHistoryGet().then(setSysHistory)
+    void api.autostartStatus().then(setAutostart)
   }, [settings, loadEngines])
 
   if (!settings) return <div className="empty">载入中…</div>
@@ -140,12 +143,30 @@ export default function SettingsPage({
                 }
               />
             </Row>
-            <Row title="开机自启" desc="登录 Windows 后自动运行">
+            <Row title="开机自启" desc="登录 Windows 后自动运行（写当前用户注册表，不需要管理员）">
+              <span
+                className={`hotkey-chip ${
+                  autostart === false && settings.general.launchAtLogin ? 'fail' : ''
+                }`}
+                title={
+                  autostart === false && settings.general.launchAtLogin
+                    ? '配置里是开的，但注册表里没有这一项（可能被安全软件清掉了）'
+                    : '注册表状态'
+                }
+              >
+                {autostart === null ? '…' : autostart ? '已登记' : '未登记'}
+              </span>
               <button
                 className={`switch ${settings.general.launchAtLogin ? 'on' : ''}`}
-                onClick={() =>
-                  void onChange({ general: { launchAtLogin: !settings.general.launchAtLogin } })
-                }
+                onClick={async () => {
+                  await onChange({ general: { launchAtLogin: !settings.general.launchAtLogin } })
+                  // 写完回读一次：让界面显示的是系统里的事实，不是我们的乐观假设
+                  try {
+                    setAutostart(await api.autostartStatus())
+                  } catch {
+                    setAutostart(null)
+                  }
+                }}
               />
             </Row>
             <Row title="启用插件" desc="允许加载插件目录中的扩展">

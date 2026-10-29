@@ -41,6 +41,16 @@ pub fn settings_patch(
         }
     }
 
+    // 开机自启不是"存个 bool 就行"：得真去写 HKCU 的 Run 项。
+    // 以前只改了配置，开关是纯装饰的，重启电脑什么都不会发生。
+    if let Some(on) = patch
+        .get("general")
+        .and_then(|g| g.get("launchAtLogin"))
+        .and_then(|v| v.as_bool())
+    {
+        crate::autostart::apply(on)?;
+    }
+
     Ok(AppSettingsView {
         settings: state.settings_snapshot(),
     })
@@ -146,4 +156,13 @@ pub fn app_log(level: String, message: String) {
         "warn" => log::warn!("[前端] {message}"),
         _ => log::info!("[前端] {message}"),
     }
+}
+
+/// 注册表里现在是否真的登记了开机自启。
+///
+/// 设置页拿它和开关值对比：配置说开着、注册表却没有，就说明写失败了
+/// （或者被安全软件清掉了），不该让界面假装一切正常。
+#[tauri::command]
+pub fn autostart_status() -> bool {
+    crate::autostart::is_enabled()
 }

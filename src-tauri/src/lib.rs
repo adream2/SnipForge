@@ -6,6 +6,7 @@
 //!   - `capture/` `clipboard/` `uploader/` 互不直接调用，跨模块通信走 `hooks`
 //!   - 第三方扩展只通过 `uploader::Provider` trait 或声明式 JSON 接入
 
+mod autostart;
 mod capture;
 mod clipboard;
 mod commands;
@@ -495,6 +496,15 @@ pub fn run() {
             let state = AppState::new(settings, paths);
             app.manage(state.clone());
 
+            // 开机自启：配置说开着就重写一次 Run 项。
+            // 换版本、改安装目录、把绿色版挪了位置之后，旧路径指向的文件已经没了，
+            // 表现就是"明明开了却不自启" —— 每次启动校正一遍最省事。
+            if state.settings.read().general.launch_at_login {
+                if let Err(e) = autostart::apply(true) {
+                    log::warn!("校正开机自启失败: {e}");
+                }
+            }
+
             // 迁移完必须落盘，否则下次启动又按老配置走一遍
             if needs_migrate {
                 if let Err(e) = state.persist_settings() {
@@ -554,6 +564,7 @@ pub fn run() {
             commands::settings_get,
             commands::app_show_main,
             commands::settings_patch,
+            commands::autostart_status,
             commands::settings_reset,
             commands::settings_pick_dir,
             commands::app_info,
