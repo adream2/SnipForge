@@ -55,6 +55,48 @@ export interface ProviderMeta {
   canListImages?: boolean
 }
 
+/** 手势能做的事。和 Rust 的 `GestureAction` 一一对应（serde tag = type）。 */
+export type GestureAction =
+  /** 发送按键，如 "Ctrl+Shift+T"；多组用逗号分隔 */
+  | { type: 'keys'; keys: string }
+  /** 当前窗口操作 */
+  | { type: 'window'; op: string }
+  /** 打开程序 / 文件 / 文件夹 */
+  | { type: 'app'; path: string }
+  /** 打开网址 */
+  | { type: 'url'; url: string }
+  /** 运行命令 */
+  | { type: 'cmd'; cmd: string }
+  /** 媒体与系统键 */
+  | { type: 'media'; key: string }
+  /** 输入文字 */
+  | { type: 'text'; text: string }
+  /** 滚动 */
+  | { type: 'scroll'; dir: string; amount: number }
+  /** 本工具的功能 */
+  | { type: 'snip'; id: string }
+
+export interface GestureBinding {
+  /** 方向串，U/D/L/R 组成，如 "DR" */
+  pattern: string
+  action: GestureAction
+  enabled: boolean
+}
+
+export interface GestureConfig {
+  enabled: boolean
+  /** right / middle / x1 */
+  trigger: string
+  /** 移动超过多少像素才算手势 */
+  threshold: number
+  /** 判一次转向所需位移 */
+  step: number
+  showTrail: boolean
+  /** 轨迹颜色 #RRGGBB */
+  trailColor: string
+  bindings: GestureBinding[]
+}
+
 export interface AppSettings {
   version: number
   hotkeys: Record<string, string>
@@ -118,6 +160,7 @@ export interface AppSettings {
     enablePlugins: boolean
     closeToTray: boolean
   }
+  gestures: GestureConfig
   pluginEnabled: Record<string, boolean>
 }
 

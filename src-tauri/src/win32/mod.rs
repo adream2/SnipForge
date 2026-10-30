@@ -13,6 +13,10 @@ pub mod input;
 #[cfg(windows)]
 pub mod keyhook;
 #[cfg(windows)]
+pub mod mousehook;
+#[cfg(windows)]
+pub mod trail;
+#[cfg(windows)]
 pub mod window;
 
 #[cfg(not(windows))]
@@ -22,6 +26,30 @@ pub mod keyhook {
     pub fn is_active() -> bool {
         false
     }
+}
+
+#[cfg(not(windows))]
+pub mod mousehook {
+    #[derive(Debug, Clone)]
+    pub enum Event {
+        Begin { x: i32, y: i32 },
+        Move { x: i32, y: i32 },
+        End { pattern: String },
+        Cancel,
+    }
+    pub fn install(_sink: impl Fn(Event) + Send + Sync + 'static) {}
+    pub fn update_config(_cfg: crate::config::GestureConfig) {}
+    pub fn is_installed() -> bool {
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub mod trail {
+    pub fn ensure() {}
+    pub fn begin() {}
+    pub fn push(_x: i32, _y: i32) {}
+    pub fn end() {}
 }
 
 #[cfg(not(windows))]

@@ -41,6 +41,18 @@ pub fn settings_patch(
         }
     }
 
+    // 手势配置改了要立刻生效（钩子常驻，只换规则，不用重装）
+    if let Some(g) = patch.get("gestures") {
+        if !g.is_null() {
+            let cfg = state.settings.read().gestures.clone();
+            crate::gesture::update(cfg);
+            log::debug!("手势配置已更新（{} 条绑定）", {
+                let c = state.settings.read().gestures.clone();
+                c.bindings.len()
+            });
+        }
+    }
+
     // 开机自启不是"存个 bool 就行"：得真去写 HKCU 的 Run 项。
     // 以前只改了配置，开关是纯装饰的，重启电脑什么都不会发生。
     if let Some(on) = patch

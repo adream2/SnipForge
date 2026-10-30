@@ -271,3 +271,120 @@ pub fn clipboard_source_app() -> String {
         fg
     }
 }
+
+/* ======================= 手势用的窗口操作 / 打开外部程序 ======================= */
+
+use windows::Win32::UI::WindowsAndMessaging::{
+    PostMessageW, SetWindowPos, ShowWindow, HWND_NOTOPMOST, HWND_TOPMOST, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_CLOSE,
+};
+
+/// 对当前前台窗口做一件事：close / minimize / maximize / restore / topmost
+///
+/// 用手势操作窗口时，前台窗口就是用户看着的那个 —— 不需要再问他"哪个窗口"。
+pub fn act_on_foreground(op: &str) -> Result<(), String> {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return Err("当前没有前台窗口".into());
+        }
+        act_on(hwnd.0 as isize, op)
+    }
+}
+
+/// 对指定窗口做一件事。
+///
+/// 为什么要能传句柄而不是只认 `GetForegroundWindow`：
+/// 手势的动作是异步派发的（不能卡在钩子回调里），等到真正执行时，
+/// 前台窗口可能已经变成 NULL（窗口切换的瞬间就是这样）。
+/// 所以调用方在**手势开始时**就把当时的前台窗口记下来，执行时优先用它。
+pub fn act_on(hwnd_raw: isize, op: &str) -> Result<(), String> {
+    unsafe {
+        let hwnd = HWND(hwnd_raw as *mut core::ffi::c_void);
+        if hwnd.0.is_null() {
+            return Err("没有可操作的窗口".into());
+        }
+        match op {
+            "close" => {
+                PostMessageW(Some(hwnd), WM_CLOSE, Default::default(), Default::default())
+                    .map_err(|e| format!("关闭窗口失败: {e}"))?;
+            }
+            "minimize" => {
+                let _ = ShowWindow(hwnd, SW_MINIMIZE);
+            }
+            "maximize" => {
+                let _ = ShowWindow(hwnd, SW_MAXIMIZE);
+            }
+            "restore" => {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+            }
+            "topmost" => {
+                let ex = windows::Win32::UI::WindowsAndMessaging::GetWindowLongW(hwnd, GWL_EXSTYLE);
+                let on_top = (ex & WS_EX_TOPMOST_RAW) != 0;
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(if on_top { HWND_NOTOPMOST } else { HWND_TOPMOST }),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+            other => return Err(format!("不认识的窗口操作：{other}")),
+        }
+    }
+    Ok(())
+}
+
+/// WS_EX_TOPMOST 的原始值。窗口样式的常量在 0.62 里是 `WINDOW_EX_STYLE`，
+/// 和 GetWindowLongW 返回的 i32 不能直接比，所以单独取一个数值。
+const WS_EX_TOPMOST_RAW: i32 = 0x0000_0008;
+
+/// 用系统默认方式打开一个目标：程序、文档、文件夹、网址都行。
+///
+/// 走 ShellExecute 而不是 `Command::new(path)`：
+/// 后者对 `.lnk`、文件夹、`https://` 一律无能为力，还得自己判断类型。
+pub fn shell_open(target: &str) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+
+    let target = target.trim();
+    if target.is_empty() {
+        return Err("目标是空的".into());
+    }
+    let wide: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+    unsafe {
+        let r = ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(wide.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        );
+        // ShellExecute 的返回值 > 32 才算成功（这是它最坑的约定）
+        if (r.0 as isize) <= 32 {
+            return Err(format!("打不开：{target}"));
+        }
+    }
+    Ok(())
+}
+
+/// 运行一条命令（隐藏控制台窗口）
+pub fn run_command(cmd: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let cmd = cmd.trim();
+    if cmd.is_empty() {
+        return Err("命令是空的".into());
+    }
+    std::process::Command::new("cmd")
+        .arg("/c")
+        .arg(cmd)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("运行命令失败: {e}"))?;
+    Ok(())
+}

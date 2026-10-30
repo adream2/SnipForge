@@ -7,12 +7,14 @@ import {
   IconImage,
   IconVideo,
   IconUpload,
+  IconGesture,
   IconPlugin,
   IconSettings,
   IconMinus,
   IconSquare,
   IconX
 } from './components/Icons'
+import GesturePage from './pages/GesturePage'
 import ClipboardPage from './pages/ClipboardPage'
 import RecordPage from './pages/RecordPage'
 import ToolsPage from './pages/ToolsPage'
@@ -49,6 +51,7 @@ type Page =
   | 'record'
   | 'tools'
   | 'upload'
+  | 'gesture'
   | 'plugins'
   | 'settings'
 
@@ -57,6 +60,7 @@ const NAV: Array<{ id: Page; label: string; icon: React.ReactNode }> = [
   { id: 'record', label: '录屏', icon: <IconVideo size={16} /> },
   { id: 'tools', label: '图片工具', icon: <IconImage size={16} /> },
   { id: 'upload', label: '图床', icon: <IconUpload size={16} /> },
+  { id: 'gesture', label: '鼠标手势', icon: <IconGesture size={16} /> },
   { id: 'plugins', label: '插件', icon: <IconPlugin size={16} /> },
   { id: 'settings', label: '设置', icon: <IconSettings size={16} /> }
 ]
@@ -206,6 +210,9 @@ function Shell() {
             )}
             {page === 'tools' && <ToolsPage />}
             {page === 'upload' && <UploadPage settings={settings} onChange={updateSettings} />}
+            {page === 'gesture' && (
+              <GesturePage settings={settings} onChange={updateSettings} />
+            )}
             {page === 'plugins' && <PluginsPage />}
             {page === 'settings' && <SettingsPage settings={settings} onChange={updateSettings} />}
           </main>

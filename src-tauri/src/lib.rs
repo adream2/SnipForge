@@ -12,6 +12,7 @@ mod clipboard;
 mod commands;
 mod config;
 mod error;
+mod gesture;
 mod hooks;
 mod logger;
 mod ocr;
@@ -46,7 +47,18 @@ fn load_settings(paths: &Paths) -> AppSettings {
     }
     match std::fs::read_to_string(&file) {
         Ok(text) => match serde_json::from_str::<AppSettings>(&text) {
-            Ok(cfg) => cfg,
+            Ok(cfg) => {
+                // 老配置文件里没有新加的字段（比如 gestures）。内存里有默认值、
+                // 功能能用，但用户打开 json 会以为"这功能不存在"，
+                // 也没法手改。所以补写一次完整配置。
+                if !text.contains("\"gestures\"") {
+                    if let Ok(full) = serde_json::to_string_pretty(&cfg) {
+                        let _ = std::fs::write(&file, full);
+                        log::info!("配置补写：新增 gestures 段");
+                    }
+                }
+                cfg
+            }
             Err(e) => {
                 log::error!("配置解析失败，回退默认值: {e}");
                 let backup = file.with_extension(format!(
@@ -522,6 +534,12 @@ pub fn run() {
             // Win+V 只能靠键盘钩子拿，注册表那条路走不通（实测）
             win32::keyhook::install(app.handle().clone());
             win32::keyhook::set_active(state.settings.read().clipboard.takeover_win_v);
+
+            // 鼠标手势：钩子常驻，配置关掉时只放行不做事
+            gesture::install(
+                app.handle(),
+                state.settings.read().gestures.clone(),
+            );
 
             // 预建剪贴板面板（隐藏）：否则第一次按 Win+V 要等 webview 起来，
             // 那几百毫秒里面板是空白的，用户敲回车毫无反应。

@@ -16,6 +16,8 @@ pub struct AppSettings {
     pub ocr: OcrConfig,
     pub record: RecordConfig,
     pub general: GeneralConfig,
+    /// 鼠标手势
+    pub gestures: GestureConfig,
     /// 插件开关表：plugin_id -> enabled
     pub plugin_enabled: HashMap<String, bool>,
 }
@@ -32,6 +34,7 @@ impl Default for AppSettings {
             ocr: OcrConfig::default(),
             record: RecordConfig::default(),
             general: GeneralConfig::default(),
+            gestures: GestureConfig::default(),
             plugin_enabled: HashMap::new(),
         }
     }
@@ -241,6 +244,124 @@ impl Default for RecordConfig {
             gif_fps: 12,
             // 900px：贴在聊天窗口里刚好，再宽体积翻倍涨
             gif_width: 900,
+        }
+    }
+}
+
+/// 手势能做的事。
+///
+/// 刻意**不只放本工具的功能** —— 鼠标手势首先是系统层面的通用工具：
+/// 后退、关标签、显示桌面这些才是天天要用的。SnipForge 自己的截图/录屏
+/// 只是 `Snip` 这一类，和别的动作平级，不占特殊位置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum GestureAction {
+    /// 发送按键，如 "Ctrl+Shift+T"；多组用逗号分隔，按顺序发
+    Keys { keys: String },
+    /// 当前窗口操作：close / minimize / maximize / restore / topmost
+    Window { op: String },
+    /// 打开程序、文件或文件夹（走 shell，.lnk 和文件夹都行）
+    App { path: String },
+    /// 用默认浏览器打开网址
+    Url { url: String },
+    /// 运行一条命令
+    Cmd { cmd: String },
+    /// 媒体与系统键：vol-up / vol-down / mute / play / next / prev
+    Media { key: String },
+    /// 输入一段文字（常用回复、邮箱、命令片段）
+    Text { text: String },
+    /// 滚动：up / down，amount 是格数
+    Scroll { dir: String, amount: i32 },
+    /// 本工具的功能：region / fullscreen / window / scroll / panel / pin / record / record-gif
+    Snip { id: String },
+}
+
+/// 一条手势绑定：方向串 → 动作。
+///
+/// 方向串只用四个字符：`U` `D` `L` `R`。不搞八方向 ——
+/// 斜线人手画不稳，识别率会掉，而常用手势本来都是一两笔直着划。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GestureBinding {
+    /// 形如 "L"、"DR"、"UDL"
+    pub pattern: String,
+    pub action: GestureAction,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_gesture_bindings() -> Vec<GestureBinding> {
+    let b = |pattern: &str, action: GestureAction| GestureBinding {
+        pattern: pattern.into(),
+        action,
+        enabled: true,
+    };
+    let keys = |k: &str| GestureAction::Keys { keys: k.into() };
+    let media = |k: &str| GestureAction::Media { key: k.into() };
+    let scroll = |dir: &str| GestureAction::Scroll {
+        dir: dir.into(),
+        amount: 3,
+    };
+    let win = |op: &str| GestureAction::Window { op: op.into() };
+
+    // 按"天天会用"排：后退/前进、关标签、显示桌面、切窗口、音量，
+    // 最后才是本工具的截图。全部可以改、可以删。
+    vec![
+        b("L", keys("Alt+Left")),
+        b("R", keys("Alt+Right")),
+        b("U", scroll("up")),
+        b("D", scroll("down")),
+        b("DR", keys("Ctrl+W")),
+        b("DL", keys("Ctrl+T")),
+        b("DU", keys("Ctrl+Shift+T")),
+        b("UD", keys("F5")),
+        b("LU", win("minimize")),
+        b("RU", win("maximize")),
+        b("LD", keys("Win+D")),
+        b("RD", keys("Alt+Tab")),
+        b("UDR", media("mute")),
+        b("UR", GestureAction::Snip {
+            id: "region".into(),
+        }),
+        b("UL", GestureAction::Snip {
+            id: "panel".into(),
+        }),
+    ]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GestureConfig {
+    pub enabled: bool,
+    /// 触发键：right / middle / x1（侧键）
+    pub trigger: String,
+    /// 按下后移动超过这么多像素才算手势，否则当普通点击
+    pub threshold: i32,
+    /// 判定一次"转向"所需的最小位移
+    pub step: i32,
+    /// 画轨迹
+    pub show_trail: bool,
+    /// 轨迹颜色（#RRGGBB）
+    pub trail_color: String,
+    pub bindings: Vec<GestureBinding>,
+}
+
+impl Default for GestureConfig {
+    fn default() -> Self {
+        Self {
+            // 默认开着：按住右键划一下就是手势，普通右键点击（不移动）完全不受影响。
+            // 关掉的开关在手势页，一眼能看到。
+            enabled: true,
+            trigger: "right".into(),
+            threshold: 30,
+            step: 55,
+            show_trail: true,
+            trail_color: "#6C5CE7".into(),
+            bindings: default_gesture_bindings(),
         }
     }
 }

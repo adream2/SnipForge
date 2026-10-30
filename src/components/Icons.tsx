@@ -169,3 +169,17 @@ export const IconLayers = ({ size, className, strokeWidth = 1.7 }: IconProps) =>
     <path d="M3 13l9 5 9-5" />
   </svg>
 )
+
+export const IconPlus = ({ size = 13, className, strokeWidth = 2 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+)
+
+/** 手势：一条划出来的曲线 + 起点 */
+export const IconGesture = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <path d="M4 17c2.5-8 5.5-10.5 8-7.5S15.5 19 20.5 10.5" strokeLinecap="round" />
+    <circle cx="4" cy="17" r="1.4" />
+  </svg>
+)
