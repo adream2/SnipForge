@@ -45,7 +45,6 @@ impl Default for AppSettings {
 pub struct Hotkeys {
     pub region_capture: String,
     pub fullscreen_capture: String,
-    pub active_window_capture: String,
     pub scroll_capture: String,
     pub clipboard_panel: String,
     pub toggle_recording: String,
@@ -59,7 +58,6 @@ impl Default for Hotkeys {
         Self {
             region_capture: "Alt+Q".into(),
             fullscreen_capture: "Alt+Shift+Q".into(),
-            active_window_capture: "Alt+W".into(),
             scroll_capture: "Alt+S".into(),
             clipboard_panel: "Alt+V".into(),
             // Alt+R 在不少机器上被别的软件占着，Ctrl+Alt+R 更安全

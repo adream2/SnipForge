@@ -22,7 +22,6 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     };
 
     let a_region = accel(&hk.region_capture);
-    let a_window = accel(&hk.active_window_capture);
     let a_full = accel(&hk.fullscreen_capture);
     let a_scroll = accel(&hk.scroll_capture);
     let a_panel = accel(&hk.clipboard_panel);
@@ -31,8 +30,6 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     let a_record_gif = accel(&hk.toggle_recording_gif);
 
     let region = MenuItem::with_id(app, "capture_region", "区域截图", true, a_region.as_deref())?;
-    let window_shot =
-        MenuItem::with_id(app, "capture_window", "窗口截图", true, a_window.as_deref())?;
     let full = MenuItem::with_id(app, "capture_full", "全屏截图", true, a_full.as_deref())?;
     let scroll =
         MenuItem::with_id(app, "capture_scroll", "滚动长截图", true, a_scroll.as_deref())?;
@@ -65,7 +62,6 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
         app,
         &[
             &region,
-            &window_shot,
             &full,
             &scroll,
             &sep1,
@@ -97,7 +93,6 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
         let id = event.id().as_ref();
         match id {
             "capture_region" => crate::commands::capture::trigger(&handle, "region"),
-            "capture_window" => crate::commands::capture::trigger(&handle, "active-window"),
             "capture_full" => crate::commands::capture::trigger(&handle, "fullscreen"),
             "capture_scroll" => crate::commands::capture::trigger(&handle, "scroll"),
             // 托盘菜单回调跑在主线程，而 panel::show 里的 cursor_position() /

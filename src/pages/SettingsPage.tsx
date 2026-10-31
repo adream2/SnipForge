@@ -27,7 +27,6 @@ function Row({
 const HOTKEY_FIELDS: Array<{ key: string; label: string }> = [
   { key: 'regionCapture', label: '区域截图' },
   { key: 'fullscreenCapture', label: '全屏截图' },
-  { key: 'activeWindowCapture', label: '窗口截图' },
   { key: 'scrollCapture', label: '滚动长截图' },
   { key: 'clipboardPanel', label: '剪贴板面板' },
   { key: 'pinFromClipboard', label: '剪贴板贴图' },

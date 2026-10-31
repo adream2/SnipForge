@@ -51,7 +51,6 @@ pub fn register_all(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
         }
         fix!(region_capture);
         fix!(fullscreen_capture);
-        fix!(active_window_capture);
         fix!(scroll_capture);
         fix!(clipboard_panel);
         fix!(pin_from_clipboard);
@@ -113,12 +112,6 @@ pub fn register_all(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
 
     bind!("regionCapture", "区域截图", cfg.region_capture, "region");
     bind!("fullscreenCapture", "全屏截图", cfg.fullscreen_capture, "fullscreen");
-    bind!(
-        "activeWindowCapture",
-        "窗口截图",
-        cfg.active_window_capture,
-        "active-window"
-    );
     bind!("scrollCapture", "长截图", cfg.scroll_capture, "scroll");
 
     // 录屏：视频和 GIF 各一个键，按哪个就录哪种；录着的时候两个键都是"停止"
