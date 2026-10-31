@@ -27,6 +27,9 @@ export const api = {
   settingsPatch: (patch: unknown) => invoke<{ settings: AppSettings }>('settings_patch', { patch }),
   settingsReset: () => invoke<{ settings: AppSettings }>('settings_reset'),
   pickDir: (defaultPath?: string) => invoke<string | null>('settings_pick_dir', { defaultPath }),
+  /** 一笔轨迹是不是形状手势（目前只有 "S"）。识别只有后端一份实现 */
+  gestureRecognize: (points: Array<[number, number]>) =>
+    invoke<string | null>('gesture_recognize', { points }),
   appInfo: () => invoke<AppInfo>('app_info'),
   showMain: (route?: string) => invoke<void>('app_show_main', { route: route ?? null }),
   openDir: (path: string) => invoke<void>('app_open_dir', { path }),

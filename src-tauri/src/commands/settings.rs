@@ -178,3 +178,13 @@ pub fn app_log(level: String, message: String) {
 pub fn autostart_status() -> bool {
     crate::autostart::is_enabled()
 }
+
+/// 识别一笔轨迹是不是形状手势（页面里"划一个"录制框用）。
+///
+/// 刻意走后端：形状识别只有一份实现，录制框认出来的和真手势必须完全一致 ——
+/// 前端再写一套，早晚会出现"这里认得出、实际划就没反应"。
+#[tauri::command]
+pub fn gesture_recognize(points: Vec<[i32; 2]>) -> Option<String> {
+    let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
+    crate::win32::shape::recognize(&pts).map(|c| c.to_string())
+}

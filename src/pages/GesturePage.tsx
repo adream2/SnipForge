@@ -11,17 +11,23 @@ import { IconPlus, IconTrash } from '../components/Icons'
  * 跑命令、操作窗口、按媒体键。SnipForge 自己的截图录屏只是其中一类动作，
  * 和别的平级，不占特殊位置。
  *
- * 手势用方向串表示（`DR` = 先下后右），精确相等匹配。所以这页最重要的
- * 事情是让方向**看得见**：列表里直接画箭头，新增时让用户真的划一遍。
+ * 手势有两种：方向串（`DR` = 先下后右）和形状（直接画一个 `S`）。
+ * 两者都是精确匹配，所以这页最重要的事情是让手势**看得见**：
+ * 列表里直接画箭头 / 形状字符，新增时让用户真的划一遍。
+ *
+ * 形状识别不在这页做：录制框的轨迹要交给后端（`gesture_recognize`）判断，
+ * 否则"这里认得出、实际划没反应"就成了新 bug。
  */
 
 const ARROW: Record<string, string> = { U: '↑', D: '↓', L: '←', R: '→' }
+/** 形状手势（曲线画的），后端 `shape` 模块认，目前只有 S */
+const SHAPE: Record<string, string> = { S: 'S' }
 
 function arrows(pattern: string): string {
   return pattern
     .toUpperCase()
     .split('')
-    .map((c) => ARROW[c] ?? c)
+    .map((c) => ARROW[c] ?? SHAPE[c] ?? c)
     .join(' ')
 }
 
@@ -141,13 +147,48 @@ function Recorder({
   onCancel: () => void
 }) {
   const box = useRef<HTMLDivElement>(null)
-  const st = useRef({ down: false, anchor: { x: 0, y: 0 }, last: '', pat: '' })
+  const st = useRef({
+    down: false,
+    anchor: { x: 0, y: 0 },
+    last: '',
+    pat: '',
+    path: [] as Array<{ x: number; y: number }>
+  })
   const [pts, setPts] = useState<Array<{ x: number; y: number }>>([])
   const [preview, setPreview] = useState('')
 
   const rel = (e: React.PointerEvent) => {
     const r = box.current!.getBoundingClientRect()
     return { x: e.clientX - r.left, y: e.clientY - r.top }
+  }
+
+  /**
+   * 松手收尾：先问后端"这一笔是不是形状手势"（画 S），不是才退回方向串。
+   *
+   * 顺序不能反：S 一路划下来方向串会糊成 DLD 之类，先看方向串的话
+   * 用户永远录不到自己想要的那个 S。
+   */
+  const finish = async () => {
+    if (!st.current.down) return
+    st.current.down = false
+    const { path, pat } = st.current
+    setPts([])
+    setPreview('')
+    if (path.length >= 12) {
+      try {
+        const shape = await api.gestureRecognize(
+          path.map((p) => [Math.round(p.x), Math.round(p.y)] as [number, number])
+        )
+        if (shape) {
+          onDone(shape)
+          return
+        }
+      } catch {
+        // 后端不可用（比如页面单独跑在浏览器里）：退回方向串，别把功能卡死
+      }
+    }
+    if (pat) onDone(pat)
+    else onCancel()
   }
 
   return (
@@ -158,7 +199,7 @@ function Recorder({
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId)
           const p = rel(e)
-          st.current = { down: true, anchor: p, last: '', pat: '' }
+          st.current = { down: true, anchor: p, last: '', pat: '', path: [p] }
           setPts([p])
           setPreview('')
         }}
@@ -167,6 +208,7 @@ function Recorder({
           const p = rel(e)
           setPts((prev) => (prev.length > 220 ? prev : [...prev, p]))
           const s = st.current
+          if (s.path.length < 400) s.path.push(p)
           const dx = p.x - s.anchor.x
           const dy = p.y - s.anchor.y
           if (Math.abs(dx) < 34 && Math.abs(dy) < 34) return
@@ -179,12 +221,7 @@ function Recorder({
           s.anchor = p
         }}
         onPointerUp={() => {
-          if (!st.current.down) return
-          st.current.down = false
-          if (st.current.pat) onDone(st.current.pat)
-          else onCancel()
-          setPts([])
-          setPreview('')
+          void finish()
         }}
         onPointerCancel={() => {
           st.current.down = false
@@ -205,7 +242,7 @@ function Recorder({
           </svg>
         ) : (
           <span className="gesture-rec-hint">
-            {preview ? arrows(preview) : '在这里按住鼠标，划出你想要的方向'}
+            {preview ? arrows(preview) : '在这里按住鼠标划一下：方向串（↑↓←→）或者直接画个 S'}
           </span>
         )}
       </div>
@@ -683,6 +720,9 @@ export default function GesturePage({
 
           <div className="ga-note" style={{ padding: '10px 4px 24px' }}>
             手势会发送到你按下的那个窗口，所以先在目标窗口里划。改完立刻生效，不用重启。
+            <br />
+            两种手势：方向串（↑↓←→ 依次组合，一笔折线）和形状（真的画出一个 S，
+            曲线）。形状目前只认 S 一个 —— 再多会和方向手势抢，误识别一次就够让人不敢用。
           </div>
         </div>
       </div>
@@ -711,8 +751,8 @@ function DEFAULT_BINDINGS(): GestureBinding[] {
     b('LD', { type: 'keys', keys: 'Win+D' }),
     b('RD', { type: 'keys', keys: 'Alt+Tab' }),
     b('UDR', { type: 'media', key: 'mute' }),
-    // S 形截图 / 框选贴图 / 框选取字
-    b('DLD', { type: 'snip', id: 'region' }),
+    // 画个 S 截图 / 框选贴图 / 框选取字
+    b('S', { type: 'snip', id: 'region' }),
     b('DRUL', { type: 'snip', id: 'pin-region' }),
     b('RDLU', { type: 'snip', id: 'ocr-region' })
   ]

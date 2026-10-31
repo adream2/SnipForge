@@ -15,6 +15,8 @@ pub mod keyhook;
 #[cfg(windows)]
 pub mod mousehook;
 #[cfg(windows)]
+pub mod shape;
+#[cfg(windows)]
 pub mod trail;
 #[cfg(windows)]
 pub mod window;
@@ -25,6 +27,14 @@ pub mod keyhook {
     pub fn set_active(_v: bool) {}
     pub fn is_active() -> bool {
         false
+    }
+}
+
+#[cfg(not(windows))]
+pub mod shape {
+    pub const MAX_POINTS: usize = 1200;
+    pub fn recognize(_points: &[(i32, i32)]) -> Option<char> {
+        None
     }
 }
 

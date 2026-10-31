@@ -276,14 +276,15 @@ pub enum GestureAction {
     Snip { id: String },
 }
 
-/// 一条手势绑定：方向串 → 动作。
+/// 一条手势绑定：方向串（或形状字符）→ 动作。
 ///
 /// 方向串只用四个字符：`U` `D` `L` `R`。不搞八方向 ——
 /// 斜线人手画不稳，识别率会掉，而常用手势本来都是一两笔直着划。
+/// 曲线手势用形状字符表示，目前只有 `S`（见 `win32::shape`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GestureBinding {
-    /// 形如 "L"、"DR"、"UDL"
+    /// 形如 "L"、"DR"、"UDL"，或者形状 "S"
     pub pattern: String,
     pub action: GestureAction,
     #[serde(default = "default_true")]
@@ -309,7 +310,7 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
     let win = |op: &str| GestureAction::Window { op: op.into() };
 
     // 常规手势沿用 mousetroke / 主流手势软件的习惯（后退、关标签、显示桌面……），
-    // 后面三条是本工具自己的：S 形截图、↓→↑← 框选贴图、→↓←↑ 框选 OCR。
+    // 后面三条是本工具自己的：画个 S 截图、↓→↑← 框选贴图、→↓←↑ 框选 OCR。
     // 全部可以改、可以删。
     vec![
         b("L", keys("Alt+Left")),
@@ -325,8 +326,8 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
         b("LD", keys("Win+D")),
         b("RD", keys("Alt+Tab")),
         b("UDR", media("mute")),
-        // S 形：往下、折回左边、再往下
-        b("DLD", GestureAction::Snip {
+        // 真的画一个 S（曲线），不是 DLD 那种折线
+        b("S", GestureAction::Snip {
             id: "region".into(),
         }),
         // ⬇️➡️⬆️⬅️ 框一圈 = 框选区域直接贴到屏幕上

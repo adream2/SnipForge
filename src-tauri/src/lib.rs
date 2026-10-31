@@ -36,18 +36,26 @@ use config::AppSettings;
 use paths::Paths;
 use state::AppState;
 
-/// 上一版内置的 15 条手势。用户的 bindings 如果跟它一模一样，
-/// 说明从来没自己改过 —— 可以安全地换成新版默认（多了 S 形截图、
-/// 框选贴图、框选取字三条）。
-const LEGACY_GESTURES: [&str; 15] = [
-    "L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "UR", "UL",
+/// 历代内置手势表。用户的 bindings 如果跟其中任意一版**完全一致**，
+/// 说明从来没自己动过 —— 可以安全地换成当前默认。
+///
+/// 第二版是"DLD 当 S 形截图"那版：现在改成真正画一个 S（曲线），
+/// 老用户没动过默认的话要一起升级，否则他会发现"截图手势没了"。
+const LEGACY_GESTURE_SETS: [&[&str]; 2] = [
+    &["L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "UR", "UL"],
+    &[
+        "L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "DLD", "DRUL",
+        "RDLU",
+    ],
 ];
 
 fn is_legacy_default(bindings: &[crate::config::GestureBinding]) -> bool {
-    bindings.len() == LEGACY_GESTURES.len()
-        && LEGACY_GESTURES
-            .iter()
-            .all(|p| bindings.iter().any(|b| b.pattern == *p))
+    LEGACY_GESTURE_SETS.iter().any(|set| {
+        bindings.len() == set.len()
+            && set
+                .iter()
+                .all(|p| bindings.iter().any(|b| b.pattern == *p))
+    })
 }
 
 fn load_settings(paths: &Paths) -> AppSettings {
@@ -76,7 +84,18 @@ fn load_settings(paths: &Paths) -> AppSettings {
                 if is_legacy_default(&cfg.gestures.bindings) {
                     cfg.gestures.bindings = crate::config::GestureConfig::default().bindings;
                     dirty = true;
-                    log::info!("手势默认绑定已升级（新增 S 形截图 / 框选贴图 / 框选取字）");
+                    log::info!("手势默认绑定已升级（画 S 截图 / 框选贴图 / 框选取字）");
+                }
+                // 用户自己改过手势表、但里面还留着"DLD 当 S 形截图"那一条：
+                // 单条也要升级，否则他会发现截图手势彻底没了（S 是曲线，DLD 划不出来）。
+                for b in &mut cfg.gestures.bindings {
+                    if b.pattern.eq_ignore_ascii_case("DLD")
+                        && matches!(&b.action, crate::config::GestureAction::Snip { id } if id == "region")
+                    {
+                        b.pattern = "S".into();
+                        dirty = true;
+                        log::info!("手势升级：DLD（折线）→ S（曲线）截图");
+                    }
                 }
                 if dirty {
                     if let Ok(full) = serde_json::to_string_pretty(&cfg) {
@@ -609,6 +628,7 @@ pub fn run() {
             commands::settings_get,
             commands::app_show_main,
             commands::settings_patch,
+            commands::gesture_recognize,
             commands::autostart_status,
             commands::settings_reset,
             commands::settings_pick_dir,

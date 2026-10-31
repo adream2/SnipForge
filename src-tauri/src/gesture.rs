@@ -6,9 +6,12 @@
 //!   - `win32/input` `win32/window`：真正执行动作（发键、开程序、窗口操作）
 //!   - 这里：读配置、匹配方向串、分发动作、处理"画一下排除这个程序"
 //!
-//! 为什么用"方向串"而不是模板匹配 / 概率识别：
-//!   用户要的是"记住我划的方向"。四个方向、精确相等匹配，行为完全可预测 ——
-//!   划错了就是没反应，而不是"有时候执行错动作"。配置也能用箭头直接显示。
+//! 手势有两种表示：
+//!   - **方向串**（`"DR"`）：折线手势，精确相等匹配。四个方向、行为完全可预测 ——
+//!     划错了就是没反应，而不是"有时候执行错动作"。配置里能直接用箭头显示。
+//!   - **形状**（`"S"`）：曲线手势。方向串表达不了 S，拿 `DLD` 硬凑等于让用户
+//!     把 S 画成折线，手感全错。所以这类手势在钩子里由 `win32::shape` 认，
+//!     认出来就是一个形状字符，和方向串一样参与匹配。
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::OnceLock;
@@ -57,6 +60,7 @@ pub fn update(cfg: GestureConfig) {
 }
 
 /// 方向串 → 箭头。屏幕浮标和页面里用同一套符号。
+/// 形状手势（`S`）不是方向，原样显示。
 fn arrows(pattern: &str) -> String {
     pattern
         .chars()
@@ -129,12 +133,15 @@ fn handle_event(app: &AppHandle, ev: Event) {
     }
 }
 
-/// 配置里手写的方向串统一成大写，`ur` 和 `UR` 是一回事
+/// 配置里手写的方向串统一成大写，`ur` 和 `UR` 是一回事。
+///
+/// 形状字符（目前只有 `S`）不是方向，但必须留下 —— 否则用户写的 `"S"`
+/// 会被过滤成空串，整条绑定凭空失效。
 fn normalize(pattern: &str) -> String {
     pattern
         .chars()
         .filter_map(|c| match c.to_ascii_uppercase() {
-            'U' | 'D' | 'L' | 'R' => Some(c.to_ascii_uppercase()),
+            'U' | 'D' | 'L' | 'R' | 'S' => Some(c.to_ascii_uppercase()),
             _ => None,
         })
         .collect()
@@ -350,4 +357,22 @@ fn ask_exclude(app: &AppHandle) {
 /// 钩子是否装上了（页面显示状态用）
 pub fn is_active() -> bool {
     mousehook::is_installed() && cfg_lock().read().enabled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shape_token_survives_normalize() {
+        // 这条以前会挂：过滤器只放行 UDLR，"S" 被吃成空串，
+        // 用户写的 S 绑定就等于没写。形状字符必须原样留下。
+        assert_eq!(normalize("S"), "S");
+        assert_eq!(normalize(" s "), "S");
+        assert_eq!(normalize("DLD"), "DLD");
+        assert_eq!(normalize("d l d"), "DLD");
+        // 浮标和列表里的显示：方向是箭头，形状就是它自己
+        assert_eq!(arrows("DR"), "↓→");
+        assert_eq!(arrows("S"), "S");
+    }
 }

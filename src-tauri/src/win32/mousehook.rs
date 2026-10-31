@@ -16,6 +16,10 @@
 //! 全屏游戏/视频/远程桌面里自动让路：那些场景手势只会帮倒忙，
 //! 而且吞掉右键真的会影响操作。
 //!
+//! 轨迹点在这里留一份（`Track::pts`）：方向串只能表达折线，用户真正想要的
+//! "画一个 S" 得靠形状识别（`win32::shape`）。一旦认出来就锁定成 `"S"`，
+//! 后面继续挪鼠标也不会再往方向串里塞字符 —— 曲线本来就会糊出一串 DLD。
+//!
 //! 状态机里所有加锁的地方都用**块作用域**：`parking_lot` 的 guard 不是重入的，
 //! 读锁没放掉就写锁会直接死锁，而这个线程卡死 = 整个系统鼠标卡死。
 
@@ -67,6 +71,10 @@ struct Track {
     anchor: (i32, i32),
     last_dir: Option<char>,
     pattern: String,
+    /// 这一笔的原始轨迹（形状识别用）
+    pts: Vec<(i32, i32)>,
+    /// 已认出的形状。认出来就锁定，不再走方向判定
+    shape: Option<char>,
 }
 
 static TRACK: RwLock<Option<Track>> = RwLock::new(None);
@@ -185,6 +193,8 @@ fn on_down(x: i32, y: i32, swallow: bool) -> bool {
         anchor: (x, y),
         last_dir: None,
         pattern: String::new(),
+        pts: vec![(x, y)],
+        shape: None,
     });
     swallow
 }
@@ -204,6 +214,10 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
             }
             t.gesture = true;
             t.anchor = (x, y);
+            // 起手那 30px 也要进轨迹：S 的开始被砍掉一截，识别会明显变差
+            if t.pts.last() != Some(&(x, y)) {
+                t.pts.push((x, y));
+            }
             Some(t.origin)
         } else {
             None
@@ -223,9 +237,31 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
         if !t.gesture {
             return;
         }
+        // ---- 轨迹累积 + 形状识别 ----
+        // 每 4 个点试一次：既够及时（浮标能当场显示"截图"），又不至于
+        // 每帧都算一遍把钩子拖慢（钩子超时会被系统静默摘钩）。
+        if t
+            .pts
+            .last()
+            .map_or(true, |l| (l.0 - x).abs().max((l.1 - y).abs()) >= 2)
+            && t.pts.len() < crate::win32::shape::MAX_POINTS
+        {
+            t.pts.push((x, y));
+        }
+        let mut changed: Option<String> = None;
+        if t.shape.is_none() && t.pts.len() >= 12 && t.pts.len() % 4 == 0 {
+            if let Some(c) = crate::win32::shape::recognize(&t.pts) {
+                t.shape = Some(c);
+                // 曲线糊出来的方向串（DLD 之类）作废，直接以形状为准
+                t.pattern.clear();
+                t.pattern.push(c);
+                changed = Some(t.pattern.clone());
+            }
+        }
+
         let (dx, dy) = (x - t.anchor.0, y - t.anchor.1);
-        let mut changed = None;
-        if dx.abs() >= step || dy.abs() >= step {
+        // 已经认出形状就不再记方向，否则浮标会在 "S 截图" 和 "未绑定" 之间乱跳
+        if changed.is_none() && t.shape.is_none() && (dx.abs() >= step || dy.abs() >= step) {
             let d = if dx.abs() > dy.abs() {
                 if dx > 0 {
                     'R'
