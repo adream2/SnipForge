@@ -54,8 +54,9 @@ export function GestureShape({
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      {/* 起点 */}
-      <circle cx={geom.start[0]} cy={geom.start[1]} r={3.2} fill="currentColor" />
+      {/* 起点用**绿色**、终点箭头用主题色：同形手势（↓→↑← / →↓←↑ 都是同一个方框）
+          只能靠"从哪个角起笔"区分，光靠一个小圆点在同一块底色上根本看不出来 */}
+      <circle cx={geom.start[0]} cy={geom.start[1]} r={4.2} fill="#22c55e" />
       {/* 终点箭头：方向就是"最后一笔往哪走" */}
       <path d={geom.arrow} fill="currentColor" />
     </svg>
@@ -90,7 +91,7 @@ function layout(pts: Pt[]): { line: string; start: Pt; arrow: string } | null {
   const end = m[m.length - 1]
   const prev = m[m.length - 2]
   const ang = Math.atan2(end[1] - prev[1], end[0] - prev[0])
-  const head = 12
+  const head = 13
   const segLen = Math.hypot(end[0] - prev[0], end[1] - prev[1])
   // 末段太短就别缩短线条，箭头直接压在终点上
   const base: Pt =
@@ -101,7 +102,7 @@ function layout(pts: Pt[]): { line: string; start: Pt; arrow: string } | null {
   const body = m.slice(0, -1).concat([base])
   const line = body.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
 
-  const wing = head * 0.42
+  const wing = head * 0.46
   const left: Pt = [
     base[0] + Math.cos(ang + Math.PI / 2) * wing,
     base[1] + Math.sin(ang + Math.PI / 2) * wing,

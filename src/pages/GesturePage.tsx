@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { api } from '../lib/api'
 import type {
   AppSettings,
@@ -10,6 +10,7 @@ import type {
 import { useToast } from '../components/Toast'
 import { IconPlus, IconTrash } from '../components/Icons'
 import { GestureShape } from '../components/GestureShape'
+import { sameStroke, strokeOf } from '../lib/gestureShape'
 
 /**
  * 鼠标手势（独立功能页）。
@@ -477,6 +478,18 @@ function BindingsCard({
   const [openIdx, setOpenIdx] = useState<number | null>(null)
 
   /**
+   * 哪几行"画出来是一个样子"。
+   *
+   * 方向串可以只差起笔方向（`↓→↑←` 和 `→↓←↑` 都是同一个方框），列表里看着
+   * 就是两个一模一样的手势干着不同的活 —— 与其让用户自己撞南墙，
+   * 不如直接把重复标出来。
+   */
+  const dupOf = useMemo(() => {
+    const sigs = bindings.map((b) => strokeOf(b))
+    return sigs.map((s, i) => sigs.findIndex((o, j) => j !== i && sameStroke(s, o)))
+  }, [bindings])
+
+  /**
    * 新增一条手势。
    *
    * 先问后端"这一划会命中谁"：命中已有的就不新增，直接把那一行展开 ——
@@ -585,6 +598,14 @@ function BindingsCard({
               </span>
               <span className="ga-type">{typeLabel(b.action.type)}</span>
               <span className="ga-summary">{actionSummary(b.action)}</span>
+              {dupOf[i] >= 0 && (
+                <span
+                  className="ga-dup"
+                  title={`和第 ${dupOf[i] + 1} 行画出来几乎一样（只是起笔/走向不同），划的时候容易分不清`}
+                >
+                  同形
+                </span>
+              )}
               <div style={{ flex: 1 }} />
               <button
                 className={`switch ${b.enabled ? 'on' : ''}`}
@@ -1021,16 +1042,15 @@ function DEFAULT_BINDINGS(): GestureBinding[] {
     b('D', { type: 'scroll', dir: 'down', amount: 3 }),
     b('DR', { type: 'keys', keys: 'Ctrl+W' }),
     b('DL', { type: 'keys', keys: 'Ctrl+T' }),
-    b('DU', { type: 'keys', keys: 'Ctrl+Shift+T' }),
     b('UD', { type: 'keys', keys: 'F5' }),
     b('LU', { type: 'window', op: 'minimize' }),
     b('RU', { type: 'window', op: 'maximize' }),
     b('LD', { type: 'keys', keys: 'Win+D' }),
     b('RD', { type: 'keys', keys: 'Alt+Tab' }),
     b('UDR', { type: 'media', key: 'mute' }),
-    // 画个 S 截图 / 框选贴图 / 框选取字
+    // 画个 S 截图 / 框选贴图 / 框选取字（后者是开口框，别和闭合方框撞脸）
     b('S', { type: 'snip', id: 'region' }),
     b('DRUL', { type: 'snip', id: 'pin-region' }),
-    b('RDLU', { type: 'snip', id: 'ocr-region' })
+    b('DRU', { type: 'snip', id: 'ocr-region' })
   ]
 }

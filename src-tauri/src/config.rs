@@ -314,7 +314,12 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
     let win = |op: &str| GestureAction::Window { op: op.into() };
 
     // 常规手势沿用 mousetroke / 主流手势软件的习惯（后退、关标签、显示桌面……），
-    // 后面三条是本工具自己的：画个 S 截图、↓→↑← 框选贴图、→↓←↑ 框选 OCR。
+    // 后面三条是本工具自己的：画个 S 截图、↓→↑← 框选贴图、↓→↑ 取字。
+    //
+    // **形状必须一眼能分开**：以前这里同时有 `→↓←↑`(OCR) 和 `↓→↑←`(贴图) ——
+    // 两个都是闭合方框，笔画顺序不同但画出来一模一样，列表里看着就是
+    // "两个一模一样的手势干了不同的事"。同理还删掉了 `↓↑`(恢复标签)：
+    // 它和 `↑↓`(刷新) 只差一个起笔方向，静态看几乎分辨不出来。
     // 全部可以改、可以删。
     vec![
         b("L", keys("Alt+Left")),
@@ -323,7 +328,6 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
         b("D", scroll("down")),
         b("DR", keys("Ctrl+W")),
         b("DL", keys("Ctrl+T")),
-        b("DU", keys("Ctrl+Shift+T")),
         b("UD", keys("F5")),
         b("LU", win("minimize")),
         b("RU", win("maximize")),
@@ -334,12 +338,12 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
         b("S", GestureAction::Snip {
             id: "region".into(),
         }),
-        // ⬇️➡️⬆️⬅️ 框一圈 = 框选区域直接贴到屏幕上
+        // ↓→↑← 框一圈 = 框选区域直接贴到屏幕上
         b("DRUL", GestureAction::Snip {
             id: "pin-region".into(),
         }),
-        // ➡️⬇️⬅️⬆️ 框一圈 = 框选区域做 OCR
-        b("RDLU", GestureAction::Snip {
+        // ↓→↑ 画个"拍一下"的开口框 = 框选取字（不闭合，避免和上面那个方框看着一样）
+        b("DRU", GestureAction::Snip {
             id: "ocr-region".into(),
         }),
     ]

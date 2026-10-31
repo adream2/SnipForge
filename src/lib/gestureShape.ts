@@ -78,3 +78,75 @@ export function patternToStroke(pattern: string): Pt[] {
   }
   return pts.length > 1 ? fit(pts) : []
 }
+
+/** 按弧长等距重采样（缩略图判重用） */
+function resample(pts: Pt[], n: number): Pt[] {
+  if (pts.length < 2) return pts.slice()
+  const seg: number[] = [0]
+  let total = 0
+  for (let i = 1; i < pts.length; i++) {
+    total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+    seg.push(total)
+  }
+  if (total < 1e-6) return [pts[0], pts[0]]
+  const step = total / (n - 1)
+  const out: Pt[] = []
+  let k = 0
+  for (let i = 0; i < n; i++) {
+    const target = i * step
+    while (k + 2 < pts.length && seg[k + 1] < target) k++
+    const a = seg[k]
+    const b = seg[k + 1]
+    const t = b > a ? Math.min(1, Math.max(0, (target - a) / (b - a))) : 0
+    out.push([
+      pts[k][0] + (pts[k + 1][0] - pts[k][0]) * t,
+      pts[k][1] + (pts[k + 1][1] - pts[k][1]) * t,
+    ])
+  }
+  return out
+}
+
+/** 判重用的签名：16 点 + 居中 + 等比缩放到长边 1（只忽略大小，不忽略比例/方向） */
+function signature(pts: Pt[]): Pt[] {
+  const rs = resample(pts, 16)
+  const xs = rs.map((p) => p[0])
+  const ys = rs.map((p) => p[1])
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const s = Math.max(maxX - minX, maxY - minY, 1e-6)
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+  return rs.map(([x, y]) => [(x - cx) / s, (y - cy) / s])
+}
+
+function meanDist(a: Pt[], b: Pt[]): number {
+  let sum = 0
+  for (let i = 0; i < a.length; i++) sum += Math.hypot(a[i][0] - b[i][0], a[i][1] - b[i][1])
+  return sum / a.length
+}
+
+/**
+ * 两条笔画"画出来是不是同一个样子"。
+ *
+ * 只有**闭合**的图形才比较反方向：方框正着画反着画是同一个图形，
+ * 而直线 `←` 和 `→` 反过来比也完全重合，那样会把"后退/前进"标成重复。
+ */
+export function sameStroke(a: Pt[], b: Pt[]): boolean {
+  if (a.length < 2 || b.length < 2) return false
+  const sa = signature(a)
+  const sb = signature(b)
+  const closed = (s: Pt[]) => Math.hypot(s[0][0] - s[s.length - 1][0], s[0][1] - s[s.length - 1][1]) < 0.12
+  let d = meanDist(sa, sb)
+  if (closed(sa) && closed(sb)) {
+    d = Math.min(d, meanDist(sa, sb.slice().reverse()))
+  }
+  return d < 0.07
+}
+
+/** 一条绑定该画成什么：有自绘笔画就用它，否则按方向串生成 */
+export function strokeOf(b: { pattern?: string; points?: number[][] }): Pt[] {
+  if (b.points && b.points.length >= 2) return b.points.map((p) => [p[0], p[1]] as Pt)
+  return patternToStroke(b.pattern ?? '')
+}
