@@ -202,6 +202,19 @@ export default function Selector() {
     setHover(null)
   }
 
+  /** 这个点是否已经在当前高亮的那个矩形里 */
+  const inHover = (cssX: number, cssY: number) => {
+    if (!hover || !display) return false
+    const left = (hover.rect.x - display.bounds.x) / scale
+    const top = (hover.rect.y - display.bounds.y) / scale
+    return (
+      cssX >= left &&
+      cssX < left + hover.rect.width / scale &&
+      cssY >= top &&
+      cssY < top + hover.rect.height / scale
+    )
+  }
+
   const onMouseMove = (e: React.MouseEvent) => {
     const rect = rootRef.current?.getBoundingClientRect()
     if (!rect) return
@@ -215,6 +228,10 @@ export default function Selector() {
     }
     // 已经选好了一块：不再跟着鼠标改高亮，免得看着像选区在跳
     if (selection || mode === 'scroll') return
+
+    // 还在当前高亮的那个窗口/控件里挪动：结果不会变，没必要再问后端
+    // （枚举一次要过几百个窗口，鼠标一划就是每秒上百次，省下来才有余量）
+    if (hover && e.ctrlKey === lastQuery.current.whole && inHover(x, y)) return
 
     // 节流：同一个小控件里挪几像素没必要每帧问一次后端
     const q = lastQuery.current

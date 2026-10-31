@@ -258,8 +258,13 @@ pub async fn capture_ocr(
 /// 坐标是物理像素；`whole = true` 时只认整个顶层窗口（按住 Ctrl 的用户意图）。
 /// 前端每次移动都会调，所以这里只做纯查询，不碰截图会话。
 #[tauri::command]
-pub fn capture_element(x: i32, y: i32, whole: bool) -> Option<crate::types::NativeElement> {
-    crate::win32::window::element_at(x, y, whole)
+pub async fn capture_element(x: i32, y: i32, whole: bool) -> Option<crate::types::NativeElement> {
+    // async + spawn_blocking：同步命令跑在主线程上，一次枚举几百个窗口
+    // 会卡住 webview 的 IPC，鼠标划过窗口时高亮就会一顿一顿的。
+    tauri::async_runtime::spawn_blocking(move || crate::win32::window::element_at(x, y, whole))
+        .await
+        .ok()
+        .flatten()
 }
 
 /// selector 取消
