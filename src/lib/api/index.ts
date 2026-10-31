@@ -5,6 +5,7 @@ import { settingsApi } from './settings'
 import { captureApi } from './capture'
 import { imageApi } from './image'
 import { clipboardApi } from './clipboard'
+import { hostsApi } from './hosts'
 import { recordApi } from './record'
 import { uploadApi } from './upload'
 import { pluginApi } from './plugin'
@@ -14,6 +15,7 @@ export const api = {
   ...captureApi,
   ...imageApi,
   ...clipboardApi,
+  ...hostsApi,
   ...recordApi,
   ...uploadApi,
   ...pluginApi,

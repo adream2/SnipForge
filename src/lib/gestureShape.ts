@@ -7,7 +7,7 @@
  *
  * 三种来源：
  *   1. 方向串（`DR`）—— 每个字母走一步
- *   2. 形状字符（`S`）—— 就是那条曲线
+ *   2. 形状字符（`S` / `H`）—— 按字面画出来
  *   3. 用户自己画的（32 点，后端归一化过）—— 直接用
  */
 
@@ -61,10 +61,23 @@ function sStroke(): Pt[] {
   return out
 }
 
+/** 一笔画出来的 H：左腿下 → 回中线 → 中横 → 右腿上下收笔 */
+function hStroke(): Pt[] {
+  return fit([
+    [-0.5, -1],
+    [-0.5, 1],
+    [-0.5, 0],
+    [0.5, 0],
+    [0.5, -1],
+    [0.5, 1],
+  ])
+}
+
 export function patternToStroke(pattern: string): Pt[] {
   const p = (pattern || '').toUpperCase()
   if (!p) return []
   if (p === 'S') return fit(sStroke())
+  if (p === 'H') return hStroke()
 
   let x = 0
   let y = 0

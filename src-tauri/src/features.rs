@@ -85,6 +85,13 @@ pub const FEATURES: &[Feature] = &[
         grabs_screen: true,
         run: |a| crate::commands::capture::trigger(a, "ocr-region"),
     },
+    Feature {
+        id: "hosts",
+        label: "编辑 hosts",
+        // 只是打开主窗口的一个页面，不抓屏
+        grabs_screen: false,
+        run: |a| crate::windows::show_main(a, Some("hosts")),
+    },
 ];
 
 pub fn find(id: &str) -> Option<&'static Feature> {

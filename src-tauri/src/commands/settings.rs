@@ -211,6 +211,16 @@ pub fn gesture_recognize(points: Vec<[i32; 2]>) -> Option<String> {
     crate::win32::shape::recognize(&pts).map(|c| c.to_string())
 }
 
+/// 形状识别的诊断行：每个内置形状的"距离比"（1.0 = 正好卡在阈值上）。
+///
+/// 给 `tests/shape_probe.py` 和排查"为什么画 H 没反应"用 —— 只有数字
+/// 才能说明是尺寸不够、还是画得不像，靠"再试一次"永远猜不出来。
+#[tauri::command]
+pub fn gesture_diagnose(points: Vec<[i32; 2]>) -> String {
+    let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
+    crate::win32::shape::diagnose(&pts)
+}
+
 /// 把用户画的一笔规范化成手势模板（32 点，等比归一化）。
 ///
 /// 和真手势共用同一份实现：前端自己再算一遍，迟早出现

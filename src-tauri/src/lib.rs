@@ -27,6 +27,7 @@ mod error;
 mod features;
 mod gesture;
 mod hooks;
+mod hosts;
 mod logger;
 mod ocr;
 mod panel;
@@ -59,6 +60,7 @@ pub fn run() {
             commands::app_show_main,
             commands::settings_patch,
             commands::gesture_recognize,
+            commands::gesture_diagnose,
             commands::gesture_normalize,
             commands::gesture_match,
             commands::features_list,
@@ -70,6 +72,13 @@ pub fn run() {
             commands::app_open_dir,
             commands::app_log,
             commands::app_open_path,
+            // hosts
+            commands::hosts::hosts_info,
+            commands::hosts::hosts_save,
+            commands::hosts::hosts_backups,
+            commands::hosts::hosts_restore,
+            commands::hosts::hosts_reveal,
+            commands::hosts::hosts_open_backup_dir,
             // 截图
             commands::capture::capture_start,
             commands::capture::capture_frame,

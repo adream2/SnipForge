@@ -1,5 +1,6 @@
 pub mod capture;
 pub mod features;
+pub mod hosts;
 pub mod clipboard;
 pub mod image;
 pub mod plugins;

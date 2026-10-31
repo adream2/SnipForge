@@ -243,7 +243,9 @@ fn normalize(pattern: &str) -> String {
     pattern
         .chars()
         .filter_map(|c| match c.to_ascii_uppercase() {
-            'U' | 'D' | 'L' | 'R' | 'S' => Some(c.to_ascii_uppercase()),
+            // UDLR = 方向；S/H = 内置形状（见 `win32::shape`）。
+            // 形状字符必须原样留下，否则用户写的绑定会被过滤成空串，等于没写。
+            'U' | 'D' | 'L' | 'R' | 'S' | 'H' => Some(c.to_ascii_uppercase()),
             _ => None,
         })
         .collect()

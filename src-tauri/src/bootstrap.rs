@@ -23,7 +23,7 @@ use tauri::Manager;
 ///
 /// 第二版是"DLD 当 S 形截图"那版：现在改成真正画一个 S（曲线），
 /// 老用户没动过默认的话要一起升级，否则他会发现"截图手势没了"。
-const LEGACY_GESTURE_SETS: [&[&str]; 3] = [
+const LEGACY_GESTURE_SETS: [&[&str]; 4] = [
     &["L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "UR", "UL"],
     &[
         "L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "DLD", "DRUL",
@@ -34,6 +34,10 @@ const LEGACY_GESTURE_SETS: [&[&str]; 3] = [
     &[
         "L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "S", "DRUL",
         "RDLU",
+    ],
+    // 再上一版：去掉同形手势后（取字改开口框 DRU），还没有 H = 编辑 hosts
+    &[
+        "L", "R", "U", "D", "DR", "DL", "UD", "LU", "RU", "LD", "RD", "UDR", "S", "DRUL", "DRU",
     ],
 ];
 

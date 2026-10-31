@@ -8,6 +8,7 @@ import {
   IconVideo,
   IconUpload,
   IconGesture,
+  IconHosts,
   IconPlugin,
   IconSettings,
   IconMinus,
@@ -21,6 +22,7 @@ import ToolsPage from './pages/ToolsPage'
 import UploadPage from './pages/UploadPage'
 import PluginsPage from './pages/PluginsPage'
 import SettingsPage from './pages/SettingsPage'
+import HostsPage from './pages/HostsPage'
 import { ToastProvider, useToast } from './components/Toast'
 
 /**
@@ -52,6 +54,7 @@ type Page =
   | 'tools'
   | 'upload'
   | 'gesture'
+  | 'hosts'
   | 'plugins'
   | 'settings'
 
@@ -61,6 +64,7 @@ const NAV: Array<{ id: Page; label: string; icon: React.ReactNode }> = [
   { id: 'tools', label: '图片工具', icon: <IconImage size={16} /> },
   { id: 'upload', label: '图床', icon: <IconUpload size={16} /> },
   { id: 'gesture', label: '鼠标手势', icon: <IconGesture size={16} /> },
+  { id: 'hosts', label: 'Hosts', icon: <IconHosts size={16} /> },
   { id: 'plugins', label: '插件', icon: <IconPlugin size={16} /> },
   { id: 'settings', label: '设置', icon: <IconSettings size={16} /> }
 ]
@@ -220,6 +224,7 @@ function Shell() {
             {page === 'gesture' && (
               <GesturePage settings={settings} onChange={updateSettings} />
             )}
+            {page === 'hosts' && <HostsPage />}
             {page === 'plugins' && <PluginsPage />}
             {page === 'settings' && <SettingsPage settings={settings} onChange={updateSettings} />}
           </main>

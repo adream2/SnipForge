@@ -29,8 +29,8 @@ import { featureLabel, useFeatures } from '../lib/features'
  */
 
 const ARROW: Record<string, string> = { U: '↑', D: '↓', L: '←', R: '→' }
-/** 形状手势（曲线画的），后端 `shape` 模块认，目前只有 S */
-const SHAPE: Record<string, string> = { S: 'S' }
+/** 形状手势（画出来的），后端 `shape` 模块认，目前 S / H */
+const SHAPE: Record<string, string> = { S: 'S', H: 'H' }
 
 function arrows(pattern: string): string {
   return pattern

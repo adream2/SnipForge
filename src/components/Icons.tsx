@@ -183,3 +183,33 @@ export const IconGesture = ({ size, className, strokeWidth = 1.7 }: IconProps) =
     <circle cx="4" cy="17" r="1.4" />
   </svg>
 )
+
+export const IconRefresh = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+    <path d="M20 4v5h-5" />
+  </svg>
+)
+
+export const IconFolder = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2.5h8.5A1.5 1.5 0 0 1 21 10v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z" />
+  </svg>
+)
+
+export const IconHistory = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <path d="M3.5 12a8.5 8.5 0 1 0 2.8-6.3" />
+    <path d="M3.5 4.5V10h5.5" />
+    <path d="M12 8v4.5l3 1.8" />
+  </svg>
+)
+
+/** hosts 页用：一张带"网络行"的纸 */
+export const IconHosts = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+    <path d="M9 12h6M9 15.5h6M9 19h3.5" />
+  </svg>
+)

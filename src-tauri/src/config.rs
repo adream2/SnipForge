@@ -389,6 +389,10 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
         b("DRU", GestureAction::Snip {
             id: "ocr-region".into(),
         }),
+        // 画个 H = 编辑 hosts（横平竖直，和上面的曲线手势不会互相抢）
+        b("H", GestureAction::Snip {
+            id: "hosts".into(),
+        }),
     ]
 }
 
