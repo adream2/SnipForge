@@ -41,6 +41,11 @@ export default function HostsPage() {
     void load()
   }, [load])
 
+  // 从手势进来的人下一步就是改字，光标直接落在编辑区，省一次点击
+  useEffect(() => {
+    if (info) areaRef.current?.focus()
+  }, [info])
+
   const save = async () => {
     if (busy) return
     setBusy('save')
