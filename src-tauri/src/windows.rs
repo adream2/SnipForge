@@ -246,7 +246,9 @@ pub fn open_pin(app: &AppHandle, data_url: String, img_w: u32, img_h: u32, opaci
         .transparent(true)
         .always_on_top(true)
         .skip_taskbar(true)
-        .resizable(true)
+        // 不可调：OS 的边框拖拽是自由拉伸，会把图拉扁。
+        // 等比缩放由前端四角的把手接管（见 pin.tsx）。
+        .resizable(false)
         .shadow(false)
         .inner_size(320.0, 200.0)
         .visible(false)

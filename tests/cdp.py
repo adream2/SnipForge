@@ -105,6 +105,26 @@ def evaluate(ws_url, expression, timeout=8):
         s.close()
 
 
+def call(ws_url, method, params=None, timeout=8):
+    """通用 CDP 调用（Input.dispatchMouseEvent 之类）。"""
+    rest = ws_url.split("://", 1)[1]
+    hostport, path = rest.split("/", 1)
+    path = "/" + path
+    host = hostport.split(":")[0]
+    port = int(hostport.split(":")[1])
+    s = socket.create_connection((host, port), timeout=timeout)
+    s.settimeout(timeout)
+    try:
+        _handshake(s, hostport, path)
+        _send_text(s, json.dumps({"id": 1, "method": method, "params": params or {}}))
+        while True:
+            msg = json.loads(_recv_text(s))
+            if msg.get("id") == 1:
+                return msg
+    finally:
+        s.close()
+
+
 def page_ws(port=9222, title="SnipForge"):
     import urllib.request
 

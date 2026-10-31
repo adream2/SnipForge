@@ -45,8 +45,12 @@ pub enum Event {
     Move { x: i32, y: i32 },
     /// 方向串变了（用来实时更新屏幕上的动作名）
     Turn { pattern: String },
-    /// 抬手。`pattern` 形如 "DR"
-    End { pattern: String },
+    /// 抬手。`pattern` 形如 "DR"；`stroke` 是这一笔的原始轨迹，
+    /// 给"自定义手势"按形状匹配用（方向串表达不了 M、W、Z 这些）。
+    End {
+        pattern: String,
+        stroke: Vec<(i32, i32)>,
+    },
     /// 手势被放弃（动了但没划出方向、或者中途按了左键）
     Cancel,
 }
@@ -75,6 +79,8 @@ struct Track {
     pts: Vec<(i32, i32)>,
     /// 已认出的形状。认出来就锁定，不再走方向判定
     shape: Option<char>,
+    /// 已认出的自定义手势（bindings 下标）
+    custom: Option<usize>,
 }
 
 static TRACK: RwLock<Option<Track>> = RwLock::new(None);
@@ -136,6 +142,9 @@ struct Snapshot {
     pause_fullscreen: bool,
     swallow_down: bool,
     excluded: Vec<String>,
+    /// 自定义手势：(在 bindings 里的下标, 规范笔画)。
+    /// 下标只用来给浮标显示"这一划会执行什么"，真正执行时按笔画重算。
+    custom: Vec<(usize, Vec<[f32; 2]>)>,
 }
 
 fn snapshot() -> Option<Snapshot> {
@@ -149,6 +158,13 @@ fn snapshot() -> Option<Snapshot> {
         "x1" => Trigger::X1,
         _ => Trigger::Right,
     };
+    let custom = cfg
+        .bindings
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.enabled && b.points.len() >= 8)
+        .map(|(i, b)| (i, b.points.clone()))
+        .collect();
     Some(Snapshot {
         trigger,
         threshold: cfg.threshold.clamp(8, 200),
@@ -156,6 +172,7 @@ fn snapshot() -> Option<Snapshot> {
         pause_fullscreen: cfg.pause_fullscreen,
         swallow_down: cfg.swallow_down,
         excluded: cfg.excluded.clone(),
+        custom,
     })
 }
 
@@ -195,11 +212,12 @@ fn on_down(x: i32, y: i32, swallow: bool) -> bool {
         pattern: String::new(),
         pts: vec![(x, y)],
         shape: None,
+        custom: None,
     });
     swallow
 }
 
-fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
+fn on_move(x: i32, y: i32, threshold: i32, step: i32, custom: &[(usize, Vec<[f32; 2]>)]) {
     // 第一段：更新状态，顺带算出要不要发 Begin
     let began = {
         let mut guard = TRACK.write();
@@ -249,7 +267,26 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
             t.pts.push((x, y));
         }
         let mut changed: Option<String> = None;
-        if t.shape.is_none() && t.pts.len() >= 12 && t.pts.len() % 4 == 0 {
+        // 自定义笔画优先：用户特意画的那个形状，比"方向串 / S"更具体
+        if t.custom.is_none() && !custom.is_empty() && t.pts.len() >= 12 && t.pts.len() % 4 == 0
+        {
+            let path = crate::win32::shape::canonical_stroke(&t.pts);
+            let mut best: Option<(f32, usize)> = None;
+            for (idx, tpl) in custom {
+                let d = crate::win32::shape::stroke_distance(&path, tpl);
+                if best.map_or(true, |(bd, _)| d < bd) {
+                    best = Some((d, *idx));
+                }
+            }
+            if let Some((d, idx)) = best {
+                if d <= crate::win32::shape::CUSTOM_MATCH {
+                    t.custom = Some(idx);
+                    t.pattern = format!("#{idx}");
+                    changed = Some(t.pattern.clone());
+                }
+            }
+        }
+        if changed.is_none() && t.shape.is_none() && t.custom.is_none() && t.pts.len() >= 12 && t.pts.len() % 4 == 0 {
             if let Some(c) = crate::win32::shape::recognize(&t.pts) {
                 t.shape = Some(c);
                 // 曲线糊出来的方向串（DLD 之类）作废，直接以形状为准
@@ -261,7 +298,11 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
 
         let (dx, dy) = (x - t.anchor.0, y - t.anchor.1);
         // 已经认出形状就不再记方向，否则浮标会在 "S 截图" 和 "未绑定" 之间乱跳
-        if changed.is_none() && t.shape.is_none() && (dx.abs() >= step || dy.abs() >= step) {
+        if changed.is_none()
+            && t.shape.is_none()
+            && t.custom.is_none()
+            && (dx.abs() >= step || dy.abs() >= step)
+        {
             let d = if dx.abs() > dy.abs() {
                 if dx > 0 {
                     'R'
@@ -303,7 +344,10 @@ fn on_up() -> bool {
     // 没吞按下（swallowDown 关掉）：抬起要放行，右键菜单交给系统
     if !t.swallowed {
         if t.gesture && !t.pattern.is_empty() {
-            emit(Event::End { pattern: t.pattern });
+            emit(Event::End {
+                pattern: t.pattern,
+                stroke: t.pts,
+            });
         }
         return false;
     }
@@ -322,7 +366,10 @@ fn on_up() -> bool {
             crate::win32::shape::diagnose(&t.pts),
             t.shape
         );
-        emit(Event::End { pattern: t.pattern });
+        emit(Event::End {
+            pattern: t.pattern,
+            stroke: t.pts,
+        });
         return true;
     }
 
@@ -399,7 +446,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 return LRESULT(1);
             }
         } else if msg == WM_MOUSEMOVE {
-            on_move(ms.pt.x, ms.pt.y, cfg.threshold, cfg.step);
+            on_move(ms.pt.x, ms.pt.y, cfg.threshold, cfg.step, &cfg.custom);
         } else if msg == WM_LBUTTONDOWN {
             cancel_if_gesturing();
         }

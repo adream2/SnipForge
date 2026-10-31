@@ -27,6 +27,10 @@ const SAMPLES: usize = 32;
 /// 折线版的 S 是 0.24 —— 老版本就是用折线画 S 的，认了它正好兼容肌肉记忆。
 const MATCH_DIST: f32 = 0.28;
 
+/// 自定义手势的命中阈值（规范笔画平均点距）。
+/// 实测：同一手势重复画（含抖动）<0.12；不同手势 L/V/M 之间 >0.2。
+pub const CUSTOM_MATCH: f32 = 0.16;
+
 /// 单笔最多留这么多点（钩子里兜底，防止手抖记录几万个点）
 pub const MAX_POINTS: usize = 1200;
 
@@ -515,5 +519,104 @@ mod tests {
             })
             .collect();
         println!("circle: {:.2} => {}", score(&circle), recognize(&circle).is_some());
+    }
+}
+
+/* ---------------- 自定义手势（用户自己画一笔当模板） ---------------- */
+
+/// 自定义手势的笔画规范化：等距重采样 → 平移居中 → **等比**缩放到长边为 1。
+///
+/// 为什么等比而不是逐轴拉满：逐轴拉满会把"竖 + 横"的 L 和"斜 + 斜"的 V
+/// 拉得一样，两个手势就分不开了。等比缩放只忽略大小，保留形状比例。
+pub fn canonical_stroke(raw: &[(i32, i32)]) -> Vec<[f32; 2]> {
+    let pts = thin(raw, 2.0);
+    if pts.len() < 3 {
+        return Vec::new();
+    }
+    let rs = resample(&pts, SAMPLES);
+    let (w, h) = extent(&rs);
+    let scale = w.max(h).max(1e-3);
+    let (mut x0, mut x1, mut y0, mut y1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+    for &(x, y) in &rs {
+        x0 = x0.min(x);
+        x1 = x1.max(x);
+        y0 = y0.min(y);
+        y1 = y1.max(y);
+    }
+    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    rs.iter()
+        .map(|&(x, y)| [(x - cx) / scale, (y - cy) / scale])
+        .collect()
+}
+
+/// 两条规范笔画的平均点距（0 = 完全重合）。点数不同返回最大值。
+pub fn stroke_distance(a: &[[f32; 2]], b: &[[f32; 2]]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return f32::MAX;
+    }
+    let sum: f32 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(p, q)| ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt())
+        .sum();
+    sum / a.len() as f32
+}
+
+#[cfg(test)]
+mod stroke_tests {
+    use super::*;
+
+    fn line(a: (f32, f32), b: (f32, f32), n: i32, jitter: f32) -> Vec<(i32, i32)> {
+        (0..=n)
+            .map(|i| {
+                let t = i as f32 / n as f32;
+                let j = if jitter > 0.0 {
+                    ((i * 7919) % 13) as f32 / 13.0 - 0.5
+                } else {
+                    0.0
+                };
+                (
+                    (a.0 + (b.0 - a.0) * t + j * jitter) as i32,
+                    (a.1 + (b.1 - a.1) * t + j * jitter) as i32,
+                )
+            })
+            .collect()
+    }
+
+    fn path(pts: &[(f32, f32)], per: i32, jitter: f32) -> Vec<(i32, i32)> {
+        let mut v = Vec::new();
+        for w in pts.windows(2) {
+            v.extend(line(w[0], w[1], per, jitter));
+        }
+        v
+    }
+
+    #[test]
+    fn same_shape_matches() {
+        let a = canonical_stroke(&path(&[(0.0, 0.0), (0.0, 200.0), (200.0, 200.0)], 20, 0.0));
+        // 同一个 L，画大一倍、换个位置
+        let b = canonical_stroke(&path(&[(300.0, 100.0), (300.0, 500.0), (700.0, 500.0)], 20, 0.0));
+        assert!(stroke_distance(&a, &b) < 0.02, "{}", stroke_distance(&a, &b));
+    }
+
+    #[test]
+    fn jitter_still_matches() {
+        let a = canonical_stroke(&path(&[(0.0, 0.0), (0.0, 200.0), (200.0, 200.0)], 20, 0.0));
+        let b = canonical_stroke(&path(&[(0.0, 0.0), (0.0, 200.0), (200.0, 200.0)], 20, 12.0));
+        assert!(stroke_distance(&a, &b) < 0.12, "{}", stroke_distance(&a, &b));
+    }
+
+    #[test]
+    fn different_shapes_differ() {
+        let l = canonical_stroke(&path(&[(0.0, 0.0), (0.0, 200.0), (200.0, 200.0)], 20, 0.0));
+        let v = canonical_stroke(&path(&[(0.0, 0.0), (100.0, 200.0), (200.0, 0.0)], 20, 0.0));
+        let m = canonical_stroke(&path(
+            &[(0.0, 200.0), (0.0, 0.0), (100.0, 150.0), (200.0, 0.0), (200.0, 200.0)],
+            20,
+            0.0,
+        ));
+        println!("L-V {:.3} L-M {:.3}", stroke_distance(&l, &v), stroke_distance(&l, &m));
+        assert!(stroke_distance(&l, &v) > 0.2);
+        assert!(stroke_distance(&l, &m) > 0.2);
     }
 }

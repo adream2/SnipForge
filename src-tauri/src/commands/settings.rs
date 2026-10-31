@@ -188,3 +188,23 @@ pub fn gesture_recognize(points: Vec<[i32; 2]>) -> Option<String> {
     let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
     crate::win32::shape::recognize(&pts).map(|c| c.to_string())
 }
+
+/// 把用户画的一笔规范化成手势模板（32 点，等比归一化）。
+///
+/// 和真手势共用同一份实现：前端自己再算一遍，迟早出现
+/// "录的时候认得出、划的时候不像"。
+#[tauri::command]
+pub fn gesture_normalize(points: Vec<[i32; 2]>) -> Vec<[f32; 2]> {
+    let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
+    crate::win32::shape::canonical_stroke(&pts)
+}
+
+/// 页面"试划"用：这一划会命中哪一条绑定（返回下标）。
+///
+/// 走的是和真手势完全相同的匹配顺序（自定义笔画优先，再方向串），
+/// 所以这里试出来是什么，真划就是什么。
+#[tauri::command]
+pub fn gesture_match(points: Vec<[i32; 2]>, pattern: String) -> Option<usize> {
+    let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
+    crate::gesture::match_index(&pts, &pattern)
+}

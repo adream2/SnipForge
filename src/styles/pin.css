@@ -145,3 +145,32 @@ body,
   background: #fff;
   cursor: pointer;
 }
+
+/* 四角把手：贴图只允许等比缩放，所以只有角，没有边 */
+.pin-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 5;
+}
+
+.pin-root:hover .pin-handle {
+  opacity: 1;
+}
+
+/* 只画角上的那一段 L，不画整块方块：不挡图像内容 */
+.pin-handle::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(108, 92, 231, 0.95);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.pin-handle-nw { left: -1px; top: -1px; cursor: nwse-resize; }
+.pin-handle-ne { right: -1px; top: -1px; cursor: nesw-resize; }
+.pin-handle-sw { left: -1px; bottom: -1px; cursor: nesw-resize; }
+.pin-handle-se { right: -1px; bottom: -1px; cursor: nwse-resize; }

@@ -77,8 +77,13 @@ export type GestureAction =
   | { type: 'snip'; id: string }
 
 export interface GestureBinding {
-  /** 方向串，U/D/L/R 组成，如 "DR" */
+  /** 方向串（U/D/L/R，如 "DR"）、形状字符（"S"）；自定义手势是空串 */
   pattern: string
+  /**
+   * 用户自己画的手势模板（32 点，等比归一化）。
+   * 非空就是"自定义手势"，按形状匹配，不看方向串。
+   */
+  points?: number[][]
   action: GestureAction
   enabled: boolean
 }

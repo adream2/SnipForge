@@ -44,7 +44,10 @@ pub mod mousehook {
     pub enum Event {
         Begin { x: i32, y: i32 },
         Move { x: i32, y: i32 },
-        End { pattern: String },
+        End {
+            pattern: String,
+            stroke: Vec<(i32, i32)>,
+        },
         Cancel,
     }
     pub fn install(_sink: impl Fn(Event) + Send + Sync + 'static) {}

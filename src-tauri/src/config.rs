@@ -284,8 +284,13 @@ pub enum GestureAction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GestureBinding {
-    /// 形如 "L"、"DR"、"UDL"，或者形状 "S"
+    /// 形如 "L"、"DR"、"UDL"，或者形状 "S"。
+    /// 用户自己画的手势这里是空串（只靠 `points` 匹配）。
     pub pattern: String,
+    /// 用户画的笔画模板（32 点，等比归一化到长边 1）。
+    /// 非空就说明这是"自定义手势"，按形状匹配，不看方向串。
+    #[serde(default)]
+    pub points: Vec<[f32; 2]>,
     pub action: GestureAction,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -298,6 +303,7 @@ fn default_true() -> bool {
 fn default_gesture_bindings() -> Vec<GestureBinding> {
     let b = |pattern: &str, action: GestureAction| GestureBinding {
         pattern: pattern.into(),
+        points: Vec::new(),
         action,
         enabled: true,
     };

@@ -1952,7 +1952,29 @@ select.input {
   background: var(--surface-2);
 }
 
-/* 方向串是这一页的核心信息：给足字号，一眼看出几笔 */
+/* 手势缩略图是这一页的核心信息：直接画出那一笔 + 起点圆点 / 终点箭头 */
+.ga-shape {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--accent);
+}
+
+.gesture-shape-svg {
+  display: block;
+}
+
+.gesture-shape-empty {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* 旧样式留着：录制框里还会用 `arrows()` 生成日志/提示文案 */
 .ga-arrow {
   flex: none;
   min-width: 84px;

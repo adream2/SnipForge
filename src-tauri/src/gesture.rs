@@ -75,6 +75,46 @@ fn arrows(pattern: &str) -> String {
 }
 
 /// 这条方向串现在会干什么？没有绑定就返回 None。
+/// 找出最像的自定义手势（返回 bindings 下标和距离）。
+///
+/// 阈值 `CUSTOM_MATCH` 卡得很紧（0.16）：只认"几乎一模一样"的，
+/// 这样它不会把普通的 `↓→` 方向手势抢走。
+fn best_custom(stroke: &[(i32, i32)]) -> Option<(f32, usize)> {
+    let path = crate::win32::shape::canonical_stroke(stroke);
+    if path.len() < 8 {
+        return None;
+    }
+    let g = cfg_lock().read();
+    let mut best: Option<(f32, usize)> = None;
+    for (i, b) in g.bindings.iter().enumerate() {
+        if !b.enabled || b.points.len() != path.len() {
+            continue;
+        }
+        let d = crate::win32::shape::stroke_distance(&path, &b.points);
+        if best.map_or(true, |(bd, _)| d < bd) {
+            best = Some((d, i));
+        }
+    }
+    best.filter(|(d, _)| *d <= crate::win32::shape::CUSTOM_MATCH)
+}
+
+/// 这一划命中哪一条绑定？
+///
+/// **手势执行和页面"试划"共用这一个函数** —— 两边各写一套，
+/// 早晚出现"这里试得出来、真划没反应"。
+pub fn match_index(stroke: &[(i32, i32)], pattern: &str) -> Option<usize> {
+    if let Some((_, i)) = best_custom(stroke) {
+        return Some(i);
+    }
+    if pattern.starts_with('#') {
+        return None;
+    }
+    let g = cfg_lock().read();
+    g.bindings
+        .iter()
+        .position(|b| b.enabled && normalize(&b.pattern) == pattern)
+}
+
 fn lookup(pattern: &str) -> Option<GestureAction> {
     let g = cfg_lock().read();
     g.bindings
@@ -105,8 +145,12 @@ fn handle_event(app: &AppHandle, ev: Event) {
         // 而不是划完才发现"啊，识别错了一个方向"。
         Event::Turn { pattern } => {
             if show_trail {
-                let text = match lookup(&pattern) {
-                    Some(a) => format!("{}  {}", arrows(&pattern), describe(&a)),
+                let custom = pattern.starts_with('#');
+                let text = match describe_pattern(&pattern) {
+                    // 自定义手势没有箭头可画，用 ✍ 标明"这是你画的那个形状"
+                    Some(d) if custom => format!("✍ {d}"),
+                    Some(d) => format!("{}  {d}", arrows(&pattern)),
+                    None if custom => "✍ 自定义手势".to_string(),
                     None => format!("{}  未绑定", arrows(&pattern)),
                 };
                 crate::win32::trail::set_label(text);
@@ -115,13 +159,19 @@ fn handle_event(app: &AppHandle, ev: Event) {
         Event::Cancel => {
             crate::win32::trail::end();
         }
-        Event::End { pattern } => {
+        Event::End { pattern, stroke } => {
             crate::win32::trail::end();
             log::debug!("手势 {pattern}");
 
-            if let Some(action) = lookup(&pattern) {
-                run(app, action);
-                return;
+            // 以落笔的笔画为准重新匹配一次：钩子里那个 #下标 只用于浮标提示，
+            // 配置若在手势中途改过可能已经错位。
+            if let Some(i) = match_index(&stroke, &pattern) {
+                let action = cfg_lock().read().bindings.get(i).map(|b| b.action.clone());
+                if let Some(a) = action {
+                    log::debug!("命中第 {i} 条手势");
+                    run(app, a);
+                    return;
+                }
             }
 
             // 没绑动作：看看是不是"画一下排除当前程序"
@@ -187,6 +237,21 @@ fn describe(a: &GestureAction) -> String {
             other => other.into(),
         },
     }
+}
+
+/// 一条"手势标识"对应的一句话描述。
+///
+/// 方向串/形状字符走 `lookup`；`#3` 是钩子实时认出的自定义手势（bindings 下标）——
+/// 用它只是为了让浮标能当场显示"这一划会干什么"，真正执行时再按笔画重算。
+fn describe_pattern(pattern: &str) -> Option<String> {
+    if let Some(idx) = pattern
+        .strip_prefix('#')
+        .and_then(|n| n.parse::<usize>().ok())
+    {
+        let g = cfg_lock().read();
+        return g.bindings.get(idx).map(|b| describe(&b.action));
+    }
+    lookup(pattern).map(|a| describe(&a))
 }
 
 /// 浮标空间有限，长的路径只留尾巴

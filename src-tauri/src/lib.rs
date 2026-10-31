@@ -639,6 +639,8 @@ pub fn run() {
             commands::app_show_main,
             commands::settings_patch,
             commands::gesture_recognize,
+            commands::gesture_normalize,
+            commands::gesture_match,
             commands::autostart_status,
             commands::settings_reset,
             commands::settings_pick_dir,

@@ -3,6 +3,7 @@ import { api } from '../lib/api'
 import type { AppSettings, GestureAction, GestureBinding, GestureConfig } from '../lib/types'
 import { useToast } from '../components/Toast'
 import { IconPlus, IconTrash } from '../components/Icons'
+import { GestureShape } from '../components/GestureShape'
 
 /**
  * 鼠标手势（独立功能页）。
@@ -143,7 +144,9 @@ function Recorder({
   onDone,
   onCancel
 }: {
-  onDone: (pattern: string) => void
+  /** pattern：方向串/形状字符（自定义手势为空串）；points：后端规范化后的模板；
+   *  raw：原始笔画（页面用它问后端"这一划会命中谁"） */
+  onDone: (pattern: string, points?: number[][], raw?: Array<[number, number]>) => void
   onCancel: () => void
 }) {
   const box = useRef<HTMLDivElement>(null)
@@ -174,20 +177,27 @@ function Recorder({
     const { path, pat } = st.current
     setPts([])
     setPreview('')
-    if (path.length >= 12) {
+    const raw = path.map((p) => [Math.round(p.x), Math.round(p.y)] as [number, number])
+    if (raw.length >= 12) {
       try {
-        const shape = await api.gestureRecognize(
-          path.map((p) => [Math.round(p.x), Math.round(p.y)] as [number, number])
-        )
+        // 内置形状（S）有专用模板，优先用它 —— 比"自定义"更通用
+        const shape = await api.gestureRecognize(raw)
         if (shape) {
-          onDone(shape)
+          onDone(shape, undefined, raw)
+          return
+        }
+        // 其余一律**连笔画一起存**：方向串（UDUD 这种）只是给人和日志看的，
+        // M 和 W 的串可能撞，真正认的是这一笔的形状。
+        const canon = await api.gestureNormalize(raw)
+        if (canon.length >= 8) {
+          onDone(pat, canon, raw)
           return
         }
       } catch {
-        // 后端不可用（比如页面单独跑在浏览器里）：退回方向串，别把功能卡死
+        // 后端不可用（比如页面单独在浏览器里跑）：退回方向串，别把功能卡死
       }
     }
-    if (pat) onDone(pat)
+    if (pat) onDone(pat, undefined, raw)
     else onCancel()
   }
 
@@ -197,7 +207,14 @@ function Recorder({
         ref={box}
         className="gesture-rec-box"
         onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId)
+          // 捕获指针：手滑出录制框也还能继续画。
+          // 但某些注入/合成的指针事件拿不到有效 pointerId，会直接抛 ——
+          // 抛出去就等于整个按下处理没执行，表现是"怎么画都没反应"。
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId)
+          } catch {
+            /* 捕获失败不影响正常绘制 */
+          }
           const p = rel(e)
           st.current = { down: true, anchor: p, last: '', pat: '', path: [p] }
           setPts([p])
@@ -242,7 +259,7 @@ function Recorder({
           </svg>
         ) : (
           <span className="gesture-rec-hint">
-            {preview ? arrows(preview) : '在这里按住鼠标划一下：方向串（↑↓←→）或者直接画个 S'}
+            {preview ? '方向串识别中…' : '按住左键划一下：方向串或任意形状（S / M / 圈…）'}
           </span>
         )}
       </div>
@@ -453,17 +470,43 @@ export default function GesturePage({
 
   const setBindings = (next: GestureBinding[]) => patch({ bindings: next })
 
-  const addPattern = (pattern: string) => {
+  /**
+   * 新增一条手势。
+   *
+   * 先问后端"这一划会命中谁"：命中已有的就不新增，直接把那一行展开 ——
+   * 否则用户会得到两条几乎一样的手势，划的时候永远只触发靠前那条，
+   * 后面那条成了"怎么画都没反应"的幽灵。
+   */
+  const addGesture = (pattern: string, points?: number[][], raw?: Array<[number, number]>) => {
     setRecording(false)
     if (!g) return
     const upper = pattern.toUpperCase()
-    if (g.bindings.some((b) => b.pattern.toUpperCase() === upper)) {
-      toast.push(`${arrows(upper)} 已经有动作了，改那一行就行`, 'error')
+    const insert = () => {
+      const next = [
+        ...g.bindings,
+        { pattern: upper, points: points ?? [], action: defaultAction('keys'), enabled: true }
+      ]
+      setBindings(next)
+      setOpenIdx(next.length - 1)
+    }
+    if (!raw || raw.length < 12) {
+      insert()
       return
     }
-    const next = [...g.bindings, { pattern: upper, action: defaultAction('keys'), enabled: true }]
-    setBindings(next)
-    setOpenIdx(next.length - 1)
+    void api
+      .gestureMatch(raw, upper)
+      .then((idx) => {
+        if (idx !== null && g.bindings[idx]) {
+          toast.push(
+            `这一划会命中第 ${idx + 1} 行（${actionSummary(g.bindings[idx].action)}），改那一行就行`,
+            'error'
+          )
+          setOpenIdx(idx)
+          return
+        }
+        insert()
+      })
+      .catch(insert)
   }
 
   if (!g) {
@@ -650,19 +693,25 @@ export default function GesturePage({
               </button>
             </header>
 
-            {recording && <Recorder onDone={addPattern} onCancel={() => setRecording(false)} />}
+            {recording && <Recorder onDone={addGesture} onCancel={() => setRecording(false)} />}
 
             {testing && (
               <div style={{ borderTop: '1px solid var(--border)' }}>
                 <Recorder
-                  onDone={(p) => {
-                    const hit = g.bindings.find((b) => b.pattern.toUpperCase() === p.toUpperCase())
-                    toast.push(
-                      hit ? `${arrows(p)} → ${actionSummary(hit.action)}` : `${arrows(p)} 没有绑定`,
-                      hit ? 'success' : 'error'
-                    )
+                  onDone={(p, _pts, raw) => {
+                    // 和真手势同一套匹配顺序（自定义笔画优先，再方向串）
+                    void api
+                      .gestureMatch(raw ?? [], p.toUpperCase())
+                      .then((idx) => {
+                        const hit = idx === null ? undefined : g.bindings[idx]
+                        toast.push(
+                          hit ? `这一划 → ${actionSummary(hit.action)}` : '这一划还没有绑定',
+                          hit ? 'success' : 'error'
+                        )
+                      })
+                      .catch(() => toast.push('识别失败', 'error'))
                   }}
-                  onCancel={() => toast.push('没划出方向', 'error')}
+                  onCancel={() => toast.push('没划出东西', 'error')}
                 />
                 <div style={{ padding: '0 16px 12px', fontSize: 11, color: 'var(--text-3)' }}>
                   只试识别，不会真的执行动作。
@@ -681,7 +730,13 @@ export default function GesturePage({
               return (
                 <div className="ga-row-wrap" key={`${b.pattern}-${i}`}>
                   <div className={`ga-row ${open ? 'open' : ''}`} onClick={() => setOpenIdx(open ? null : i)}>
-                    <span className="ga-arrow">{arrows(b.pattern)}</span>
+                    <span className="ga-shape">
+                      <GestureShape
+                        pattern={b.pattern}
+                        points={b.points}
+                        title={b.pattern ? arrows(b.pattern) : '自定义手势'}
+                      />
+                    </span>
                     <span className="ga-type">{typeLabel(b.action.type)}</span>
                     <span className="ga-summary">{actionSummary(b.action)}</span>
                     <div style={{ flex: 1 }} />
@@ -721,8 +776,10 @@ export default function GesturePage({
           <div className="ga-note" style={{ padding: '10px 4px 24px' }}>
             手势会发送到你按下的那个窗口，所以先在目标窗口里划。改完立刻生效，不用重启。
             <br />
-            两种手势：方向串（↑↓←→ 依次组合，一笔折线）和形状（真的画出一个 S，
-            曲线）。形状目前只认 S 一个 —— 再多会和方向手势抢，误识别一次就够让人不敢用。
+            三种手势：方向串（↑↓←→ 依次组合）、内置形状（S）和**自定义形状**——
+            点「划一个」，随便画一个 M、W、圈或任何你顺手的形状，它就成了一个手势。
+            自定义形状按笔画相似度匹配（阈值很严，只认几乎一样的那一笔），
+            列表里统一画成"起点圆点 + 终点箭头"，不用箭头符号去描述方向。
           </div>
         </div>
       </div>

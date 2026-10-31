@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { PhysicalSize } from '@tauri-apps/api/dpi'
+import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 import { api, events } from './lib/api'
 import './styles/pin.css'
 
@@ -11,15 +11,25 @@ import './styles/pin.css'
  * 交互取舍：
  *   - 左键拖动移动（没有标题栏，拖动整块就是唯一的抓手）
  *   - 滚轮缩放窗口尺寸（图片 contain，所以窗口大小 = 可见大小）
+ *   - **四角等比缩放**：只保留角上的把手，并且强制保持宽高比。
+ *     贴图是拿来比对/描画的，被拉扁就没有参考价值了 —— 所以窗口本身
+ *     设成不可调（OS 的边框中拖是自由拉伸的），边和角的拉伸全部由这里接管。
  *   - 右键单击关闭（贴图是临时参考物，用完就想让它消失）
  *   - Ctrl+右键：复制 / 另存 / 透明度菜单
  *   - 双击关闭，Esc 关闭
  */
+
+type Corner = 'nw' | 'ne' | 'sw' | 'se'
+
+const MIN_W = 80
+
 export default function Pin() {
   const [src, setSrc] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [opacity, setOpacity] = useState(1)
   const [flash, setFlash] = useState('')
+  /** 宽高比（宽 / 高），由图片自身决定；等比缩放的唯一依据 */
+  const ratio = useRef(1)
   const win = getCurrentWindow()
 
   useEffect(() => {
@@ -46,12 +56,68 @@ export default function Pin() {
     const factor = e.deltaY > 0 ? 0.9 : 1.1
     try {
       const size = await win.innerSize()
-      const w = Math.max(80, Math.round(size.width * factor))
-      const h = Math.max(60, Math.round(size.height * factor))
+      const w = Math.max(MIN_W, Math.round(size.width * factor))
+      // 高度跟着宽度算，别让滚轮把图越滚越扁
+      const h = Math.max(1, Math.round(w / (ratio.current || 1)))
       await win.setSize(new PhysicalSize(w, h))
     } catch {
       /* 窗口正在销毁时可能失败，忽略 */
     }
+  }
+
+  /**
+   * 四角等比缩放。
+   *
+   * 这里故意不用 CSS resize 或窗口边框：两种都是自由拉伸。拖动一个角时，
+   * 宽度按指针位移算，高度永远由宽高比推出来；同时把窗口位置挪回去，
+   * 让**对角那个角钉在原地** —— 不然图会一边缩一边往左上跑。
+   */
+  const startResize = (corner: Corner) => (e: React.PointerEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.button !== 0) return
+    // 用**屏幕坐标**算位移：窗口自己在缩，clientX 是相对窗口的，
+    // 一缩就跟着变，会把缩放拖成抖动的死循环。
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const start = { x: e.screenX, y: e.screenY }
+    const dpr = window.devicePixelRatio || 1
+    void (async () => {
+      const size = await win.innerSize()
+      const pos = await win.outerPosition()
+      const startW = size.width
+      const startH = size.height
+      const r = ratio.current || startW / Math.max(1, startH)
+
+      const move = async (ev: PointerEvent) => {
+        const dx = (ev.screenX - start.x) * dpr
+        const dy = (ev.screenY - start.y) * dpr
+        // 横向拖用 dx、纵向拖用 dy，哪个幅度大听哪个（斜着拖更跟手）
+        const wByX =
+          corner === 'nw' || corner === 'sw' ? startW - dx : startW + dx
+        const hByY =
+          corner === 'nw' || corner === 'ne' ? startH - dy : startH + dy
+        let w = Math.abs(dx) >= Math.abs(dy) ? wByX : hByY * r
+        w = Math.max(MIN_W, Math.round(w))
+        const h = Math.max(1, Math.round(w / r))
+        try {
+          await win.setSize(new PhysicalSize(w, h))
+          await win.setPosition(
+            new PhysicalPosition(
+              Math.round(corner === 'nw' || corner === 'sw' ? pos.x + startW - w : pos.x),
+              Math.round(corner === 'nw' || corner === 'ne' ? pos.y + startH - h : pos.y)
+            )
+          )
+        } catch {
+          /* 窗口关闭中，忽略 */
+        }
+      }
+      const up = () => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+    })()
   }
 
   const copyImage = async () => {
@@ -93,7 +159,30 @@ export default function Pin() {
       }}
       onDoubleClick={() => void win.close()}
     >
-      {src && <img src={src} alt="" draggable={false} style={{ opacity }} />}
+      {src && (
+        <img
+          src={src}
+          alt=""
+          draggable={false}
+          style={{ opacity }}
+          onLoad={(e) => {
+            const img = e.currentTarget
+            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+              ratio.current = img.naturalWidth / img.naturalHeight
+            }
+          }}
+        />
+      )}
+
+      {/* 四个角是仅有的缩放入口：只等比，不给你拉扁 */}
+      {(['nw', 'ne', 'sw', 'se'] as Corner[]).map((c) => (
+        <div
+          key={c}
+          className={`pin-handle pin-handle-${c}`}
+          onPointerDown={startResize(c)}
+          onMouseDown={(e) => e.stopPropagation()}
+        />
+      ))}
 
       {flash && <div className="pin-flash">{flash}</div>}
 
