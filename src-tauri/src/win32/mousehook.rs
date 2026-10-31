@@ -315,6 +315,13 @@ fn on_up() -> bool {
     }
 
     if t.gesture && !t.pattern.is_empty() {
+        // 一笔结束时把轨迹指标记一行：形状手势最难查的就是"用户说没反应"，
+        // 有了这几个数字（尺寸、弦长、模板距离）才知道是该调阈值还是该改算法。
+        log::debug!(
+            "轨迹 {} 形状={:?}",
+            crate::win32::shape::diagnose(&t.pts),
+            t.shape
+        );
         emit(Event::End { pattern: t.pattern });
         return true;
     }
