@@ -6,6 +6,16 @@
 //!   - `capture/` `clipboard/` `uploader/` 互不直接调用，跨模块通信走 `hooks`
 //!   - 第三方扩展只通过 `uploader::Provider` trait 或声明式 JSON 接入
 
+// release 二进制必须内嵌前端资源。`tauri build` 会自动打开 custom-protocol，
+// 但直接 `cargo build --release` 不会 —— 那样窗口会去连 devUrl（127.0.0.1:5183），
+// 用户看到的是"拒绝连接"，还以为是软件坏了（这个坑真踩过）。
+// 与其发出去一个白屏 exe，不如让构建直接失败并说清楚怎么办。
+#[cfg(all(not(debug_assertions), not(feature = "custom-protocol")))]
+compile_error!(
+    "release 构建缺少 custom-protocol 特性：exe 会去连 devUrl 而不是内嵌前端。
+     用 `npm run tauri -- build --no-bundle` 或 `cargo build --release --features custom-protocol`。"
+);
+
 mod autostart;
 mod capture;
 mod clipboard;
