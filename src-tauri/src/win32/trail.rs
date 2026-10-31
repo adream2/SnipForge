@@ -39,6 +39,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const WM_TRAIL_SHOW: u32 = WM_APP + 1;
 const WM_TRAIL_REPAINT: u32 = WM_APP + 2;
 const WM_TRAIL_FADE: u32 = WM_APP + 3;
+const WM_TRAIL_HIDE_NOW: u32 = WM_APP + 4;
 const TIMER_FADE: usize = 1;
 /// 手势结束后把结果多留一会儿，让用户看清识别成了什么
 const FADE_MS: u32 = 520;
@@ -49,6 +50,9 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static POINTS: Mutex<Vec<(i32, i32)>> = Mutex::new(Vec::new());
 static LABEL: Mutex<String> = Mutex::new(String::new());
+/// 窗口线程"真的已经藏起来了"的计数。截图前要等它 +1，
+/// 否则截出来会把刚画的那道 S 一起带进图里。
+static HIDE_ACK: AtomicU32 = AtomicU32::new(0);
 /// 线条颜色（COLORREF：0x00BBGGRR）
 static COLOR: AtomicU32 = AtomicU32::new(0x00E7_5C_6C);
 
@@ -213,6 +217,35 @@ pub fn end() {
     post(WM_TRAIL_FADE, 0);
 }
 
+/// 立刻隐藏，并**等到窗口真的藏起来**再返回。
+///
+/// 截图/录屏前必须调它：轨迹层的淡出是 520ms，截图只要几十毫秒 ——
+/// 不等就会把用户刚画的 S 一起截进图里（这是实测报上来的 bug）。
+///
+/// 只能在工作线程里调：内部要等窗口线程处理消息，在钩子回调里等会卡住鼠标。
+pub fn hide_blocking(timeout_ms: u64) {
+    ACTIVE.store(false, Ordering::SeqCst);
+    if let Ok(mut p) = POINTS.lock() {
+        p.clear();
+    }
+    if let Ok(mut l) = LABEL.lock() {
+        l.clear();
+    }
+    if hwnd().is_none() {
+        return;
+    }
+    let before = HIDE_ACK.load(Ordering::SeqCst);
+    post(WM_TRAIL_HIDE_NOW, 0);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    while std::time::Instant::now() < deadline {
+        if HIDE_ACK.load(Ordering::SeqCst) != before {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    log::warn!("轨迹层隐藏超时（{}ms），截图可能会带上轨迹", timeout_ms);
+}
+
 /// 立刻隐藏（兜底用：出了问题先让屏幕能点）
 pub fn hide_now() {
     ACTIVE.store(false, Ordering::SeqCst);
@@ -259,6 +292,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_TRAIL_FADE => {
             // 留一小会儿再收，让用户看清"识别成了什么"
             SetTimer(Some(hwnd), TIMER_FADE, FADE_MS, None);
+            LRESULT(0)
+        }
+        WM_TRAIL_HIDE_NOW => {
+            let _ = KillTimer(Some(hwnd), TIMER_FADE);
+            let _ = ShowWindow(hwnd, SW_HIDE);
+            if let Ok(mut p) = POINTS.lock() {
+                p.clear();
+            }
+            if let Ok(mut l) = LABEL.lock() {
+                l.clear();
+            }
+            HIDE_ACK.fetch_add(1, Ordering::SeqCst);
             LRESULT(0)
         }
         WM_TIMER if wparam.0 == TIMER_FADE => {

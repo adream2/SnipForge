@@ -39,6 +39,9 @@ export const api = {
   captureStart: (mode: string) => invoke<void>('capture_start', { mode }),
   captureFrame: () => invoke<FramePayload>('capture_frame'),
   captureWindows: () => invoke<import('./types').NativeWindowInfo[]>('capture_windows'),
+  /** 光标下的窗口 / 组件（物理坐标）。whole=true 只认整个窗口 */
+  captureElement: (x: number, y: number, whole: boolean) =>
+    invoke<import('./types').NativeElement | null>('capture_element', { x, y, whole }),
   cursorPos: () => invoke<[number, number]>('cursor_pos'),
   captureCommit: (displayId: number, rect: Rect) =>
     invoke<CaptureResult>('capture_commit', { displayId, rect }),

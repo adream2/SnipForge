@@ -253,6 +253,15 @@ pub async fn capture_ocr(
     Ok(result)
 }
 
+/// 光标底下的窗口 / 组件（区域截图悬停高亮用）。
+///
+/// 坐标是物理像素；`whole = true` 时只认整个顶层窗口（按住 Ctrl 的用户意图）。
+/// 前端每次移动都会调，所以这里只做纯查询，不碰截图会话。
+#[tauri::command]
+pub fn capture_element(x: i32, y: i32, whole: bool) -> Option<crate::types::NativeElement> {
+    crate::win32::window::element_at(x, y, whole)
+}
+
 /// selector 取消
 #[tauri::command]
 pub fn capture_cancel(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) {

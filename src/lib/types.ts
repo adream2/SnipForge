@@ -219,6 +219,22 @@ export interface NativeWindowInfo {
   ignored: boolean
 }
 
+/**
+ * 光标底下的窗口 / 组件（区域截图高亮用）。
+ *
+ * `kind = "component"` 表示钻进了子窗口（按钮、编辑框、页面渲染区……），
+ * 这种时候点一下选的是这个组件，按住 Ctrl 才退回到整个窗口。
+ */
+export interface NativeElement {
+  hwnd: number
+  rect: Rect
+  kind: 'window' | 'component'
+  title: string
+  className: string
+  windowTitle: string
+  exe: string
+}
+
 export interface ClipboardItem {
   id: string
   kind: 'text' | 'link' | 'image' | 'files' | 'html' | 'color'

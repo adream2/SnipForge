@@ -8,7 +8,7 @@
 
 use crate::types::{NativeWindowInfo, Rect};
 use windows::core::BOOL;
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
 };
@@ -20,10 +20,12 @@ use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect,
-    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, GWL_EXSTYLE,
+    ChildWindowFromPointEx, EnumWindows, GetClassNameW, GetClientRect, GetForegroundWindow,
+    GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GWL_EXSTYLE,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
+use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
 
 /// 进程级 DPI 感知。幂等，重复调用无害。
 pub fn set_dpi_aware() {
@@ -208,6 +210,186 @@ pub fn list_top_level_windows(self_pid: u32) -> Vec<NativeWindowInfo> {
     // 也高亮整屏 —— 用户的感受就是"根本识别不到窗口"。
     // 用户指的是光标底下**看得见**的那个窗口，那就是 z 序最上面那个。
     out
+}
+
+/* ---------------- 光标下的窗口 / 组件（区域截图的高亮） ---------------- */
+
+/// 这个顶层窗口值不值得被"指着选"。
+///
+/// 和 `list_top_level_windows` 的筛法基本一致，但**不要求有标题**：
+/// 悬停命中要找的是"看得见的那个"，而不是"能列进列表的那个"。
+/// 便宜的初筛。每次鼠标移动都要跑一遍（几百个窗口），只做最基本的几个调用。
+fn pickable_cheap(hwnd: HWND, self_pid: u32) -> bool {
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+            return false;
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+        // 只比 pid：这里每次鼠标移动都会跑一遍，别为了一个 exe 名
+        // 给每个窗口都 OpenProcess 一次
+        if pid == self_pid {
+            return false;
+        }
+        let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        // 鼠标穿透的叠层用户根本点不到，不该被它抢走命中
+        if style & WS_EX_TRANSPARENT.0 != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// 贵一点的筛法：DWM 是否被遮住、是不是桌面/任务栏壳层。
+/// 只在"光标确实落在这个窗口里"之后才调 —— 几百个窗口里通常只剩一两个。
+fn pickable_deep(hwnd: HWND) -> bool {
+    if is_cloaked(hwnd) {
+        return false;
+    }
+    let class_name = read_class(hwnd);
+    !matches!(
+        class_name.as_str(),
+        "Progman"
+            | "WorkerW"
+            | "Shell_TrayWnd"
+            | "Shell_SecondaryTrayWnd"
+            | "Windows.UI.Core.CoreWindow"
+            | "ForegroundStaging"
+            | ""
+    )
+}
+
+fn rect_has(r: &Rect, x: i32, y: i32) -> bool {
+    x >= r.x && x < r.x + r.width as i32 && y >= r.y && y < r.y + r.height as i32
+}
+
+/// 从顶层窗口一层层往下钻到最深的子窗口。
+///
+/// 这就是"组件识别"：原生程序里它是按钮、编辑框、列表；Chromium/Electron
+/// 里通常只剩一层渲染区，那也算一个合理的"内容区"。
+/// `ChildWindowFromPointEx` 只查直接子窗口，所以要循环下钻。
+fn deepest_child(root: HWND, x: i32, y: i32) -> HWND {
+    let mut cur = root;
+    for _ in 0..8 {
+        let mut pt = POINT { x, y };
+        let child = unsafe {
+            if !ScreenToClient(cur, &mut pt).as_bool() {
+                break;
+            }
+            ChildWindowFromPointEx(
+                cur,
+                pt,
+                CWP_SKIPINVISIBLE | CWP_SKIPTRANSPARENT | CWP_SKIPDISABLED,
+            )
+        };
+        if child.0.is_null() || child == cur {
+            break;
+        }
+        cur = child;
+    }
+    cur
+}
+
+/// 子窗口的边界。优先 GetWindowRect，拿不到再退回客户区。
+fn child_bounds(hwnd: HWND) -> Option<Rect> {
+    let mut r = RECT::default();
+    unsafe {
+        if GetWindowRect(hwnd, &mut r).is_ok() {
+            let w = (r.right - r.left).max(0) as u32;
+            let h = (r.bottom - r.top).max(0) as u32;
+            if w >= 4 && h >= 4 {
+                return Some(Rect {
+                    x: r.left,
+                    y: r.top,
+                    width: w,
+                    height: h,
+                });
+            }
+        }
+        if GetClientRect(hwnd, &mut r).is_ok() {
+            let mut p0 = POINT { x: 0, y: 0 };
+            let mut p1 = POINT {
+                x: r.right,
+                y: r.bottom,
+            };
+            if ClientToScreen(hwnd, &mut p0).as_bool() && ClientToScreen(hwnd, &mut p1).as_bool() {
+                let w = (p1.x - p0.x).max(0) as u32;
+                let h = (p1.y - p0.y).max(0) as u32;
+                if w >= 4 && h >= 4 {
+                    return Some(Rect {
+                        x: p0.x,
+                        y: p0.y,
+                        width: w,
+                        height: h,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 光标底下的窗口 / 组件。`whole = true` 时只认整个窗口（按住 Ctrl）。
+///
+/// 为什么自己枚举 z 序，而不用 `WindowFromPoint`：
+/// 选区覆盖层本身就是一块全屏置顶窗口，`WindowFromPoint` 永远返回它自己。
+pub fn element_at(x: i32, y: i32, whole: bool) -> Option<crate::types::NativeElement> {
+    set_dpi_aware();
+    let mut hwnds: Vec<HWND> = Vec::with_capacity(128);
+    unsafe {
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut hwnds as *mut _ as isize));
+    }
+    let self_pid = std::process::id();
+
+    for hwnd in hwnds {
+        if !pickable_cheap(hwnd, self_pid) {
+            continue;
+        }
+        let Some(root_rect) = window_bounds(hwnd) else {
+            continue;
+        };
+        if !rect_has(&root_rect, x, y) || !pickable_deep(hwnd) {
+            continue;
+        }
+
+        let target = if whole { hwnd } else { deepest_child(hwnd, x, y) };
+        let is_root = target == hwnd;
+        let rect = if is_root {
+            root_rect.clone()
+        } else {
+            child_bounds(target).unwrap_or_else(|| root_rect.clone())
+        };
+        // 组件把窗口铺满时按窗口报 —— 标签上写"组件"没有意义
+        let same_as_root = rect.x == root_rect.x
+            && rect.y == root_rect.y
+            && rect.width == root_rect.width
+            && rect.height == root_rect.height;
+        let kind = if is_root || same_as_root {
+            "window"
+        } else {
+            "component"
+        };
+
+        let mut pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+        }
+        let title = read_text(target);
+        return Some(crate::types::NativeElement {
+            hwnd: target.0 as i64,
+            rect,
+            kind: kind.into(),
+            class_name: read_class(target),
+            title: if title.is_empty() && kind == "component" {
+                read_class(target)
+            } else {
+                title.clone()
+            },
+            window_title: if is_root { title } else { read_text(hwnd) },
+            exe: process_exe(pid),
+        });
+    }
+    None
 }
 
 /// 当前前台窗口。用于"窗口截图"和剪贴板来源识别。
@@ -473,4 +655,49 @@ pub fn foreground_exe_cached() -> String {
         *guard = Some((now, exe.clone()));
     }
     exe
+}
+
+#[cfg(test)]
+mod element_probe {
+    use super::*;
+
+    /// 手动跑：`cargo test --lib element_probe -- --ignored --nocapture`
+    /// 用来确认 z 序命中 + 组件下钻在真机上确实是通的（CI 里没有桌面，默认忽略）。
+    #[test]
+    #[ignore]
+    fn probe() {
+        let mut list: Vec<HWND> = Vec::new();
+        unsafe {
+            let _ = EnumWindows(Some(enum_proc), LPARAM(&mut list as *mut Vec<HWND> as isize));
+        }
+        let self_pid = std::process::id();
+        let ok: Vec<HWND> = list
+            .iter()
+            .copied()
+            .filter(|h| pickable_cheap(*h, self_pid) && pickable_deep(*h))
+            .collect();
+        println!("ENUM total={} pickable={}", list.len(), ok.len());
+        for h in ok.iter().take(12) {
+            println!(
+                "  WIN title='{}' class='{}' rect={:?}",
+                read_text(*h),
+                read_class(*h),
+                window_bounds(*h)
+            );
+        }
+        let mut probes: Vec<(i32, i32)> = vec![(100, 100), (600, 400), (1200, 700)];
+        if let Some(r) = ok.iter().find_map(|h| window_bounds(*h)) {
+            probes.push((r.x + r.width as i32 / 2, r.y + r.height as i32 / 2));
+        }
+        for (x, y) in probes {
+            match element_at(x, y, false) {
+                Some(e) => println!(
+                    "PROBE ({x},{y}) kind={} '{}' {}x{} at ({},{}) class='{}' win='{}'",
+                    e.kind, e.title, e.rect.width, e.rect.height, e.rect.x, e.rect.y,
+                    e.class_name, e.window_title
+                ),
+                None => println!("PROBE ({x},{y}) none"),
+            }
+        }
+    }
 }

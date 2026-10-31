@@ -99,6 +99,24 @@ pub struct NativeWindowInfo {
     pub ignored: bool,
 }
 
+/// 光标底下的窗口 / 组件。区域截图的高亮用。
+///
+/// `kind = "component"` 表示钻进了子窗口（按钮、编辑框、页面渲染区……），
+/// 空标题的组件用类名做标签。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeElement {
+    pub hwnd: i64,
+    pub rect: Rect,
+    /// "window" | "component"
+    pub kind: String,
+    pub title: String,
+    pub class_name: String,
+    /// 所属顶层窗口的标题（kind=window 时和 title 相同）
+    pub window_title: String,
+    pub exe: String,
+}
+
 /* ---------------- 剪贴板 ---------------- */
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

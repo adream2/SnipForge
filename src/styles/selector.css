@@ -57,6 +57,13 @@
   box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.3);
 }
 
+/* 组件级高亮：和"整个窗口"区分开（虚线 + 青色），一眼看出点下去选的是控件 */
+.selector-win-hint.is-component {
+  border-style: dashed;
+  border-color: #00d1b2;
+  background: rgba(0, 209, 178, 0.1);
+}
+
 .selector-size-tag {
   position: absolute;
   padding: 3px 8px;
@@ -152,6 +159,14 @@ body {
 .selector-win-tag span {
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
+}
+
+/* "按住 Ctrl 选整个窗口"这类操作提示 */
+.selector-win-tag em {
+  font-style: normal;
+  opacity: 0.8;
+  padding-left: 7px;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 /* 录屏模式：视频 / GIF 切换（工具栏里，必须一眼看出这次录成什么） */

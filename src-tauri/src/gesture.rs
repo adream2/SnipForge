@@ -206,13 +206,29 @@ fn short(s: &str) -> String {
     format!("…{tail}")
 }
 
+/// 要不要在动手前先把轨迹层收干净。
+///
+/// 只有"抓屏幕"的动作才需要：截图/录屏会把屏幕内容抓走，而轨迹层的淡出是
+/// 520ms —— 不等它藏起来，用户刚画的那道 S 就会出现在截图里。
+fn needs_clean_screen(a: &GestureAction) -> bool {
+    matches!(a, GestureAction::Snip { id } if matches!(
+        id.as_str(),
+        "region" | "fullscreen" | "window" | "scroll" | "pin-region" | "ocr-region" | "record" | "record-gif"
+    ))
+}
+
 /// 执行动作。
 ///
 /// 必须 spawn 到别的线程：钩子回调里不能做重活（超时会被系统摘钩），
 /// 而"打开程序""发一串按键"都可能阻塞几十毫秒。
 fn run(app: &AppHandle, action: GestureAction) {
     let handle = app.clone();
+    let clean_first = needs_clean_screen(&action);
     tauri::async_runtime::spawn_blocking(move || {
+        if clean_first {
+            // 同步等窗口真的隐藏 —— 这一步在阻塞线程里做，不会卡住钩子
+            crate::win32::trail::hide_blocking(150);
+        }
         let result = match &action {
             GestureAction::Keys { keys } => crate::win32::input::send_keys(keys),
             GestureAction::Window { op } => {
