@@ -1,4 +1,5 @@
 use crate::error::{AppError, AppResult};
+use std::sync::Mutex;
 use crate::types::{CaptureResult, Rect};
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
@@ -11,6 +12,8 @@ const EDITOR: &str = "editor";
 const RECORD_OVERLAY: &str = "record-overlay";
 /// 录制控制条。**必须排除在画面之外** —— 否则每段录像都带着一个控制条。
 const RECORD_BAR: &str = "record-bar";
+/// 取字结果窗口：框选 OCR 之后弹出来显示文本，可复制、可翻译。
+const OCR: &str = "ocr";
 
 /// 点是否落在矩形内（物理像素坐标）
 pub fn rect_contains(rect: &Rect, x: i32, y: i32) -> bool {
@@ -75,6 +78,28 @@ pub fn open_selector(
     display_id: u32,
     record_fmt: Option<&str>,
 ) -> AppResult<()> {
+    open_selector_inner(app, display_rect, display_id, record_fmt, None)
+}
+
+/// 框选完直接做别的（`pin` 贴图 / `ocr` 取字），不打开编辑器。
+///
+/// 手势要求"框一圈就贴上去""框一圈就出文字"，中间夹一个编辑器就断了。
+pub fn open_selector_after(
+    app: &AppHandle,
+    display_rect: Rect,
+    display_id: u32,
+    after: &str,
+) -> AppResult<()> {
+    open_selector_inner(app, display_rect, display_id, None, Some(after))
+}
+
+fn open_selector_inner(
+    app: &AppHandle,
+    display_rect: Rect,
+    display_id: u32,
+    record_fmt: Option<&str>,
+    after: Option<&str>,
+) -> AppResult<()> {
     close_selector(app);
 
     let cursor = app
@@ -82,9 +107,10 @@ pub fn open_selector(
         .map_err(|e| AppError::Msg(format!("读取鼠标位置失败: {e}")))?;
 
     let for_record = record_fmt.is_some();
-    let url = match record_fmt {
-        Some(fmt) => WebviewUrl::App(format!("selector.html?mode=record&fmt={fmt}").into()),
-        None => WebviewUrl::App("selector.html".into()),
+    let url = match (record_fmt, after) {
+        (Some(fmt), _) => WebviewUrl::App(format!("selector.html?mode=record&fmt={fmt}").into()),
+        (None, Some(a)) => WebviewUrl::App(format!("selector.html?after={a}").into()),
+        (None, None) => WebviewUrl::App("selector.html".into()),
     };
     let builder = WebviewWindowBuilder::new(app, SELECTOR, url)
         .title(if for_record {
@@ -122,6 +148,48 @@ pub fn close_selector(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(SELECTOR) {
         let _ = win.destroy();
     }
+}
+
+/// 打开取字窗口并把识别结果递过去。
+///
+/// 独立小窗而不是塞进主窗口：用户是在别的程序上框选取字，
+/// 这时候把主窗口弹出来会打断他手上的事。
+/// 待处理的取字图片。
+///
+/// 窗口刚 build 完就 `emit` 是收不到的 —— 那时 webview 还没加载、事件监听也没挂上，
+/// 事件直接丢掉。所以这里先把图存着，前端挂好监听后主动来取一次。
+static PENDING_OCR: Mutex<Option<String>> = Mutex::new(None);
+
+/// 前端取走待处理的图（取一次就清空）
+pub fn take_pending_ocr() -> Option<String> {
+    PENDING_OCR.lock().ok().and_then(|mut g| g.take())
+}
+
+pub fn open_ocr(app: &AppHandle, data_url: String) -> AppResult<()> {
+    if let Ok(mut g) = PENDING_OCR.lock() {
+        *g = Some(data_url.clone());
+    }
+    if let Some(win) = app.get_webview_window(OCR) {
+        let _ = win.emit_to(OCR, "ocr://image", data_url);
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    let win = WebviewWindowBuilder::new(app, OCR, WebviewUrl::App("ocr.html".into()))
+        .title("SnipForge 取字")
+        .inner_size(520.0, 560.0)
+        .min_inner_size(360.0, 320.0)
+        .always_on_top(true)
+        .visible(false)
+        .build()
+        .map_err(|e| AppError::Msg(format!("创建取字窗口失败: {e}")))?;
+
+    let _ = win.emit_to(OCR, "ocr://image", data_url);
+    let _ = win.show();
+    let _ = win.set_focus();
+    Ok(())
 }
 
 /// 打开编辑器窗口并把截图递过去

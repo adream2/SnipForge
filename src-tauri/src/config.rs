@@ -308,8 +308,9 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
     };
     let win = |op: &str| GestureAction::Window { op: op.into() };
 
-    // 按"天天会用"排：后退/前进、关标签、显示桌面、切窗口、音量，
-    // 最后才是本工具的截图。全部可以改、可以删。
+    // 常规手势沿用 mousetroke / 主流手势软件的习惯（后退、关标签、显示桌面……），
+    // 后面三条是本工具自己的：S 形截图、↓→↑← 框选贴图、→↓←↑ 框选 OCR。
+    // 全部可以改、可以删。
     vec![
         b("L", keys("Alt+Left")),
         b("R", keys("Alt+Right")),
@@ -324,11 +325,17 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
         b("LD", keys("Win+D")),
         b("RD", keys("Alt+Tab")),
         b("UDR", media("mute")),
-        b("UR", GestureAction::Snip {
+        // S 形：往下、折回左边、再往下
+        b("DLD", GestureAction::Snip {
             id: "region".into(),
         }),
-        b("UL", GestureAction::Snip {
-            id: "panel".into(),
+        // ⬇️➡️⬆️⬅️ 框一圈 = 框选区域直接贴到屏幕上
+        b("DRUL", GestureAction::Snip {
+            id: "pin-region".into(),
+        }),
+        // ➡️⬇️⬅️⬆️ 框一圈 = 框选区域做 OCR
+        b("RDLU", GestureAction::Snip {
+            id: "ocr-region".into(),
         }),
     ]
 }
@@ -347,6 +354,16 @@ pub struct GestureConfig {
     pub show_trail: bool,
     /// 轨迹颜色（#RRGGBB）
     pub trail_color: String,
+    /// 前台窗口全屏时自动暂停（游戏、视频、演示、远程桌面）
+    pub pause_fullscreen: bool,
+    /// 把触发键的"按下"也吞掉（推荐）。
+    /// 关掉会退回"只吞抬起"的老做法 —— 万一补发点击在你的机器上不灵，
+    /// 切到这里至少右键还在，代价是某些程序里会有状态残留。
+    pub swallow_down: bool,
+    /// 不响应手势的程序（exe 文件名，小写）
+    pub excluded: Vec<String>,
+    /// 在这个程序里划一下就能把它加进排除列表（默认 Z 形 →←→）
+    pub exclude_pattern: String,
     pub bindings: Vec<GestureBinding>,
 }
 
@@ -361,6 +378,12 @@ impl Default for GestureConfig {
             step: 55,
             show_trail: true,
             trail_color: "#6C5CE7".into(),
+            // 默认开：全屏多半是在玩游戏/看视频/演示，手势在那时候只会帮倒忙
+            pause_fullscreen: true,
+            swallow_down: true,
+            excluded: Vec::new(),
+            // 横、横回来、横 —— 手写 Z 的简化
+            exclude_pattern: "RLR".into(),
             bindings: default_gesture_bindings(),
         }
     }

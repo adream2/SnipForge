@@ -36,6 +36,20 @@ use config::AppSettings;
 use paths::Paths;
 use state::AppState;
 
+/// 上一版内置的 15 条手势。用户的 bindings 如果跟它一模一样，
+/// 说明从来没自己改过 —— 可以安全地换成新版默认（多了 S 形截图、
+/// 框选贴图、框选取字三条）。
+const LEGACY_GESTURES: [&str; 15] = [
+    "L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "UR", "UL",
+];
+
+fn is_legacy_default(bindings: &[crate::config::GestureBinding]) -> bool {
+    bindings.len() == LEGACY_GESTURES.len()
+        && LEGACY_GESTURES
+            .iter()
+            .all(|p| bindings.iter().any(|b| b.pattern == *p))
+}
+
 fn load_settings(paths: &Paths) -> AppSettings {
     let file = paths.settings_file();
     if !file.exists() {
@@ -51,10 +65,22 @@ fn load_settings(paths: &Paths) -> AppSettings {
                 // 老配置文件里没有新加的字段（比如 gestures）。内存里有默认值、
                 // 功能能用，但用户打开 json 会以为"这功能不存在"，
                 // 也没法手改。所以补写一次完整配置。
+                let mut cfg = cfg;
+                let mut dirty = false;
                 if !text.contains("\"gestures\"") {
+                    dirty = true;
+                    log::info!("配置补写：新增 gestures 段");
+                }
+                // 手势的默认值变过（多了 S 形截图 / 框选贴图 / 框选取字）。
+                // 只在"用户完全没动过默认"时才替换，改过的绝不去碰。
+                if is_legacy_default(&cfg.gestures.bindings) {
+                    cfg.gestures.bindings = crate::config::GestureConfig::default().bindings;
+                    dirty = true;
+                    log::info!("手势默认绑定已升级（新增 S 形截图 / 框选贴图 / 框选取字）");
+                }
+                if dirty {
                     if let Ok(full) = serde_json::to_string_pretty(&cfg) {
                         let _ = std::fs::write(&file, full);
-                        log::info!("配置补写：新增 gestures 段");
                     }
                 }
                 cfg
@@ -596,6 +622,8 @@ pub fn run() {
             commands::capture::capture_windows,
             commands::capture::cursor_pos,
             commands::capture::capture_commit,
+            commands::capture::capture_pin,
+            commands::capture::capture_ocr,
             commands::capture::capture_cancel,
             commands::capture::capture_pending,
             commands::capture::capture_scroll,
@@ -623,6 +651,9 @@ pub fn run() {
             commands::image::image_copy,
             commands::image::image_pin,
             commands::image::image_ocr,
+            commands::image::translate_text,
+            commands::image::ocr_close,
+            commands::image::ocr_take_image,
             commands::image::image_ocr_languages,
             commands::image::ocr_engines,
             commands::image::ocr_open_engine_dir,

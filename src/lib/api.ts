@@ -41,6 +41,12 @@ export const api = {
     invoke<CaptureResult>('capture_commit', { displayId, rect }),
   captureCancel: () => invoke<void>('capture_cancel'),
   capturePending: () => invoke<CaptureResult | null>('capture_pending'),
+  /** 框选完直接贴到屏幕上（手势 ↓→↑←） */
+  capturePin: (displayId: number, rect: Rect) =>
+    invoke<CaptureResult>('capture_pin', { displayId, rect }),
+  /** 框选完直接取字，结果弹独立小窗（手势 →↓←↑） */
+  captureOcr: (displayId: number, rect: Rect) =>
+    invoke<CaptureResult>('capture_ocr', { displayId, rect }),
   captureScroll: (displayId: number, rect: Rect) =>
     invoke<CaptureResult>('capture_scroll', { displayId, rect }),
   captureAbortScroll: () => invoke<void>('capture_abort_scroll'),
@@ -64,6 +70,13 @@ export const api = {
   /** 钉图：把图片钉在屏幕最上层 */
   imagePin: (dataUrl: string) => invoke<void>('image_pin', { dataUrl }),
   imageOcr: (dataUrl: string) => invoke<OcrResult>('image_ocr', { dataUrl }),
+  /** 翻译一段文本（取字窗口用） */
+  translateText: (text: string, to?: string) =>
+    invoke<string>('translate_text', { text, to: to ?? null }),
+  /** 取字窗口关掉自己 */
+  closeOcr: () => invoke<void>('ocr_close'),
+  /** 取走待识别的图（窗口刚建时事件会丢，所以主动取一次） */
+  ocrTakeImage: () => invoke<string | null>('ocr_take_image'),
   ocrEngines: () => invoke<import('./types').OcrEngineInfo[]>('ocr_engines'),
   ocrOpenEngineDir: () => invoke<string>('ocr_open_engine_dir'),
   ocrDownloadPaddle: () => invoke<string>('ocr_download_paddle'),
@@ -213,6 +226,12 @@ export const events = {
     listen<import('./types').PinInit>('pin://init', (e) => handler(e.payload)),
   onSelectorDisplay: (handler: (id: number) => void) =>
     listen<number>('selector://display', (e) => handler(e.payload)),
+  /** 取字窗口收到新图（手势框选完直接推过来） */
+  onOcrImage: (handler: (dataUrl: string) => void) =>
+    listen<string>('ocr://image', (e) => handler(e.payload)),
+  /** 后端把手势排除列表改了（画一下排除程序之后） */
+  onGestureChanged: (handler: () => void) =>
+    listen<Record<string, never>>('app://gesture-changed', () => handler()),
   onOcrDownload: (handler: (p: import('./types').OcrDownloadProgress) => void) =>
     listen<import('./types').OcrDownloadProgress>('ocr://download', (e) => handler(e.payload)),
   onRecordCursor: (handler: (p: import('./types').RecordCursorEvt) => void) =>

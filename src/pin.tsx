@@ -11,7 +11,8 @@ import './styles/pin.css'
  * 交互取舍：
  *   - 左键拖动移动（没有标题栏，拖动整块就是唯一的抓手）
  *   - 滚轮缩放窗口尺寸（图片 contain，所以窗口大小 = 可见大小）
- *   - 右键菜单：复制 / 另存 / 透明度 / 关闭
+ *   - 右键单击关闭（贴图是临时参考物，用完就想让它消失）
+ *   - Ctrl+右键：复制 / 另存 / 透明度菜单
  *   - 双击关闭，Esc 关闭
  */
 export default function Pin() {
@@ -76,9 +77,15 @@ export default function Pin() {
     <div
       className="pin-root"
       onWheel={onWheel}
+      // 右键单击直接关掉：贴图是临时参考物，用完就想让它消失。
+      // 留 Ctrl+右键 弹菜单，复制/另存这些低频操作不至于没有入口。
       onContextMenu={(e) => {
         e.preventDefault()
-        setMenu({ x: e.clientX, y: e.clientY })
+        if (e.ctrlKey) {
+          setMenu({ x: e.clientX, y: e.clientY })
+        } else {
+          void win.close()
+        }
       }}
       onMouseDown={(e) => {
         setMenu(null)

@@ -94,6 +94,14 @@ export interface GestureConfig {
   showTrail: boolean
   /** 轨迹颜色 #RRGGBB */
   trailColor: string
+  /** 前台窗口全屏时自动暂停 */
+  pauseFullscreen: boolean
+  /** 把触发键的按下也吞掉（默认开；关掉退回只吞抬起） */
+  swallowDown: boolean
+  /** 不响应手势的程序（exe 文件名，小写） */
+  excluded: string[]
+  /** 在这个程序里划一下就能加进排除列表（默认 RLR = Z 形） */
+  excludePattern: string
   bindings: GestureBinding[]
 }
 

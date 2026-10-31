@@ -2,19 +2,19 @@
 //!
 //! 分层：
 //!   - `win32/mousehook`：监听触发键，把位移翻译成方向串（U/D/L/R）+ 轨迹点
-//!   - `win32/trail`：把轨迹画出来
+//!   - `win32/trail`：把轨迹和"识别成了什么"画在屏幕上
 //!   - `win32/input` `win32/window`：真正执行动作（发键、开程序、窗口操作）
-//!   - 这里：读配置、匹配方向串、分发动作
+//!   - 这里：读配置、匹配方向串、分发动作、处理"画一下排除这个程序"
 //!
 //! 为什么用"方向串"而不是模板匹配 / 概率识别：
 //!   用户要的是"记住我划的方向"。四个方向、精确相等匹配，行为完全可预测 ——
 //!   划错了就是没反应，而不是"有时候执行错动作"。配置也能用箭头直接显示。
 
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::OnceLock;
 
 use parking_lot::RwLock;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::{GestureAction, GestureConfig};
 use crate::win32::mousehook::{self, Event};
@@ -27,6 +27,9 @@ static CFG: OnceLock<RwLock<GestureConfig>> = OnceLock::new();
 /// （窗口激活的瞬间就是这样）。窗口类动作要用"用户划手势时看着的那个窗口"，
 /// 所以在这里先记一份。
 static BEGIN_HWND: AtomicIsize = AtomicIsize::new(0);
+
+/// 排除确认框正在弹 → 别重复弹
+static ASKING_EXCLUDE: AtomicBool = AtomicBool::new(false);
 
 fn cfg_lock() -> &'static RwLock<GestureConfig> {
     CFG.get_or_init(|| RwLock::new(GestureConfig::default()))
@@ -53,6 +56,29 @@ pub fn update(cfg: GestureConfig) {
     crate::win32::trail::set_style(show, &color);
 }
 
+/// 方向串 → 箭头。屏幕浮标和页面里用同一套符号。
+fn arrows(pattern: &str) -> String {
+    pattern
+        .chars()
+        .map(|c| match c {
+            'U' => '↑',
+            'D' => '↓',
+            'L' => '←',
+            'R' => '→',
+            other => other,
+        })
+        .collect()
+}
+
+/// 这条方向串现在会干什么？没有绑定就返回 None。
+fn lookup(pattern: &str) -> Option<GestureAction> {
+    let g = cfg_lock().read();
+    g.bindings
+        .iter()
+        .find(|b| b.enabled && normalize(&b.pattern) == pattern)
+        .map(|b| b.action.clone())
+}
+
 fn handle_event(app: &AppHandle, ev: Event) {
     let (show_trail, color) = {
         let g = cfg_lock().read();
@@ -71,25 +97,33 @@ fn handle_event(app: &AppHandle, ev: Event) {
                 crate::win32::trail::push(x, y);
             }
         }
+        // 方向一变就更新浮标：让用户在**划的过程中**就知道会执行什么，
+        // 而不是划完才发现"啊，识别错了一个方向"。
+        Event::Turn { pattern } => {
+            if show_trail {
+                let text = match lookup(&pattern) {
+                    Some(a) => format!("{}  {}", arrows(&pattern), describe(&a)),
+                    None => format!("{}  未绑定", arrows(&pattern)),
+                };
+                crate::win32::trail::set_label(text);
+            }
+        }
         Event::Cancel => {
             crate::win32::trail::end();
         }
         Event::End { pattern } => {
             crate::win32::trail::end();
+            log::debug!("手势 {pattern}");
 
-            let action = {
-                let g = cfg_lock().read();
-                g.bindings
-                    .iter()
-                    .find(|b| b.enabled && normalize(&b.pattern) == pattern)
-                    .map(|b| b.action.clone())
-            };
-            match action {
-                Some(a) => {
-                    log::debug!("手势 {pattern} → {}", describe(&a));
-                    run(app, a);
-                }
-                None => log::debug!("手势 {pattern} 没有绑定"),
+            if let Some(action) = lookup(&pattern) {
+                run(app, action);
+                return;
+            }
+
+            // 没绑动作：看看是不是"画一下排除当前程序"
+            let exclude_pattern = normalize(&cfg_lock().read().exclude_pattern);
+            if !exclude_pattern.is_empty() && pattern == exclude_pattern {
+                ask_exclude(app);
             }
         }
     }
@@ -106,19 +140,63 @@ fn normalize(pattern: &str) -> String {
         .collect()
 }
 
-/// 日志用的一句话描述
+/// 日志和浮标用的一句话描述
 fn describe(a: &GestureAction) -> String {
     match a {
         GestureAction::Keys { keys } => format!("按键 {keys}"),
-        GestureAction::Window { op } => format!("窗口 {op}"),
-        GestureAction::App { path } => format!("打开 {path}"),
-        GestureAction::Url { url } => format!("打开网址 {url}"),
-        GestureAction::Cmd { cmd } => format!("运行 {cmd}"),
+        GestureAction::Window { op } => format!(
+            "窗口{}",
+            match op.as_str() {
+                "close" => "关闭",
+                "minimize" => "最小化",
+                "maximize" => "最大化",
+                "restore" => "还原",
+                "topmost" => "置顶切换",
+                other => other,
+            }
+        ),
+        GestureAction::App { path } => format!("打开 {}", short(path)),
+        GestureAction::Url { url } => format!("打开 {}", short(url)),
+        GestureAction::Cmd { cmd } => format!("运行 {}", short(cmd)),
         GestureAction::Media { key } => format!("媒体键 {key}"),
-        GestureAction::Text { text } => format!("输入文字（{} 字）", text.chars().count()),
-        GestureAction::Scroll { dir, amount } => format!("滚动 {dir} x{amount}"),
-        GestureAction::Snip { id } => format!("SnipForge {id}"),
+        GestureAction::Text { text } => format!("输入 {} 字", text.chars().count()),
+        GestureAction::Scroll { dir, amount } => {
+            format!(
+                "{}滚动 {amount} 格",
+                if dir == "down" { "向下" } else { "向上" }
+            )
+        }
+        GestureAction::Snip { id } => match id.as_str() {
+            "region" => "截图".into(),
+            "fullscreen" => "全屏截图".into(),
+            "window" => "窗口截图".into(),
+            "scroll" => "长截图".into(),
+            "panel" => "剪贴板面板".into(),
+            "pin" => "剪贴板贴图".into(),
+            "record" => "录屏".into(),
+            "record-gif" => "录 GIF".into(),
+            "pin-region" => "框选贴图".into(),
+            "ocr-region" => "框选取字".into(),
+            other => other.into(),
+        },
     }
+}
+
+/// 浮标空间有限，长的路径只留尾巴
+fn short(s: &str) -> String {
+    let s = s.trim();
+    if s.chars().count() <= 22 {
+        return s.to_string();
+    }
+    let tail: String = s
+        .chars()
+        .rev()
+        .take(20)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("…{tail}")
 }
 
 /// 执行动作。
@@ -155,7 +233,7 @@ fn run(app: &AppHandle, action: GestureAction) {
             GestureAction::Text { text } => crate::win32::input::send_text(text),
             GestureAction::Scroll { dir, amount } => {
                 let step = crate::win32::input::WHEEL_STEP * amount.max(&1).min(&20);
-                // 手势里"上划"= 内容往上走 = 滚轮向上（正数）
+                // "上划"= 内容往上走 = 滚轮向上（正数）
                 let delta = if dir == "down" { -step } else { step };
                 crate::win32::input::wheel(delta)
             }
@@ -184,6 +262,9 @@ fn run_snip(app: &AppHandle, id: &str) {
         "fullscreen" => crate::commands::capture::trigger(app, "fullscreen"),
         "window" => crate::commands::capture::trigger(app, "active-window"),
         "scroll" => crate::commands::capture::trigger(app, "scroll"),
+        // 框选完直接贴到屏幕上 / 直接取字，不进编辑器
+        "pin-region" => crate::commands::capture::trigger(app, "pin-region"),
+        "ocr-region" => crate::commands::capture::trigger(app, "ocr-region"),
         "panel" => crate::panel::toggle(app),
         "record" => crate::commands::record::toggle(app, crate::commands::record::Fmt::Mp4),
         "record-gif" => crate::commands::record::toggle(app, crate::commands::record::Fmt::Gif),
@@ -199,12 +280,74 @@ fn run_snip(app: &AppHandle, id: &str) {
     }
 }
 
+/// "画一下排除这个程序"的确认流程。
+///
+/// 用系统 MessageBox 而不是自建窗口：这是个一次性、阻塞式的确认，
+/// 弹在后台线程里不会卡界面，也不用为它多维护一个 webview。
+fn ask_exclude(app: &AppHandle) {
+    if ASKING_EXCLUDE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let exe = crate::win32::window::foreground_exe_cached();
+    if exe.is_empty() {
+        ASKING_EXCLUDE.store(false, Ordering::SeqCst);
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            MessageBoxW, IDYES, MB_ICONQUESTION, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO,
+        };
+
+        let text = format!(
+            "以后在「{exe}」里不响应鼠标手势？\n\n（随时可以在「鼠标手势」页的排除列表里删掉）"
+        );
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let title: Vec<u16> = "SnipForge 鼠标手势"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let ret = unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(wide.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND,
+            )
+        };
+
+        if ret == IDYES {
+            if let Some(st) = handle.try_state::<std::sync::Arc<crate::state::AppState>>() {
+                let state = st.inner().clone();
+                {
+                    let mut s = state.settings.write();
+                    if !s
+                        .gestures
+                        .excluded
+                        .iter()
+                        .any(|e| e.eq_ignore_ascii_case(&exe))
+                    {
+                        s.gestures.excluded.push(exe.clone());
+                    }
+                }
+                if let Err(e) = state.persist_settings() {
+                    log::warn!("保存排除列表失败: {e}");
+                } else {
+                    log::info!("已排除程序: {exe}");
+                }
+                // 让钩子立刻用上新配置
+                let cfg = state.settings.read().gestures.clone();
+                update(cfg);
+                let _ = handle.emit_to("main", "app://gesture-changed", serde_json::json!({}));
+            }
+        }
+        ASKING_EXCLUDE.store(false, Ordering::SeqCst);
+    });
+}
+
 /// 钩子是否装上了（页面显示状态用）
 pub fn is_active() -> bool {
     mousehook::is_installed() && cfg_lock().read().enabled
-}
-
-/// 当前配置快照（给命令层用）
-pub fn snapshot() -> GestureConfig {
-    cfg_lock().read().clone()
 }

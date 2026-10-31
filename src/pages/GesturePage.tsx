@@ -66,7 +66,9 @@ const SNIP_IDS = [
   { id: 'panel', label: '剪贴板面板' },
   { id: 'pin', label: '剪贴板贴图' },
   { id: 'record', label: '录屏（视频）' },
-  { id: 'record-gif', label: '录屏（GIF）' }
+  { id: 'record-gif', label: '录屏（GIF）' },
+  { id: 'pin-region', label: '框选贴图' },
+  { id: 'ocr-region', label: '框选取字' }
 ]
 
 const TRIGGERS = [
@@ -501,6 +503,67 @@ export default function GesturePage({
 
             <div className="setting-row">
               <div className="label">
+                <strong>全屏时暂停</strong>
+                <span>游戏、视频、演示、远程桌面里不响应 —— 那些场景手势只会帮倒忙</span>
+              </div>
+              <div className="control">
+                <button
+                  className={`switch ${g.pauseFullscreen ? 'on' : ''}`}
+                  onClick={() => patch({ pauseFullscreen: !g.pauseFullscreen })}
+                />
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div className="label">
+                <strong>接管右键按下</strong>
+                <span>
+                  推荐开启：手势期间目标程序收不到任何右键事件，状态最干净。
+                  若你的机器上发现右键点不动，关掉它退回老做法（只吞抬起）
+                </span>
+              </div>
+              <div className="control">
+                <button
+                  className={`switch ${g.swallowDown ? 'on' : ''}`}
+                  onClick={() => patch({ swallowDown: !g.swallowDown })}
+                />
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div className="label">
+                <strong>例外程序</strong>
+                <span>
+                  列表里的程序完全不响应手势（右键菜单照常）。
+                  想加一个：在那个程序里按住右键画 Z 形（→←→），弹窗确认即可
+                </span>
+              </div>
+              <div className="control">
+                <span className="ga-excl-count">
+                  {g.excluded.length === 0 ? '没有' : `${g.excluded.length} 个`}
+                </span>
+              </div>
+            </div>
+
+            {g.excluded.length > 0 && (
+              <div className="ga-excl-list">
+                {g.excluded.map((exe) => (
+                  <div className="ga-excl" key={exe}>
+                    <span className="ga-excl-name">{exe}</span>
+                    <button
+                      className="btn sm danger"
+                      title="从例外里移除"
+                      onClick={() => patch({ excluded: g.excluded.filter((e) => e !== exe) })}
+                    >
+                      <IconTrash size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="setting-row">
+              <div className="label">
                 <strong>灵敏度</strong>
                 <span>按下后移动超过这个距离才算手势</span>
               </div>
@@ -648,7 +711,9 @@ function DEFAULT_BINDINGS(): GestureBinding[] {
     b('LD', { type: 'keys', keys: 'Win+D' }),
     b('RD', { type: 'keys', keys: 'Alt+Tab' }),
     b('UDR', { type: 'media', key: 'mute' }),
-    b('UR', { type: 'snip', id: 'region' }),
-    b('UL', { type: 'snip', id: 'panel' })
+    // S 形截图 / 框选贴图 / 框选取字
+    b('DLD', { type: 'snip', id: 'region' }),
+    b('DRUL', { type: 'snip', id: 'pin-region' }),
+    b('RDLU', { type: 'snip', id: 'ocr-region' })
   ]
 }

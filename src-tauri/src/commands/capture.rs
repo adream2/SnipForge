@@ -59,6 +59,23 @@ async fn run_capture(app: &AppHandle, mode: &str) -> AppResult<()> {
             let result = capture::screen::capture_window(fg.hwnd)?;
             finish(app, &state, result)?;
         }
+        // 框选完不打开编辑器，直接贴图 / 直接取字（手势用）
+        "pin-region" | "ocr-region" => {
+            let payload = capture::begin(&state, "region")?;
+            let first = payload
+                .displays
+                .first()
+                .ok_or_else(|| AppError::Msg("没有可用显示器".into()))?;
+            let cursor = app.cursor_position().unwrap_or_default();
+            let (cx, cy) = (cursor.x as i32, cursor.y as i32);
+            let target = payload
+                .displays
+                .iter()
+                .find(|d| crate::windows::rect_contains(&d.bounds, cx, cy))
+                .unwrap_or(first);
+            let after = if mode == "pin-region" { "pin" } else { "ocr" };
+            win::open_selector_after(app, target.bounds, target.id, after)?;
+        }
         _ => {
             // region / scroll：抓帧后交给覆盖层
             let payload = capture::begin(&state, mode)?;
@@ -184,6 +201,53 @@ pub fn capture_commit(
             if let Err(e) = finish(&handle, st.inner(), carried) {
                 log::error!("打开编辑器失败: {e}");
             }
+        }
+    });
+    Ok(result)
+}
+
+/// 框选完直接贴到屏幕上（手势 ↓→↑← 用的那条路）。
+///
+/// 和普通截图共用抓帧 + 选区，区别只在收尾：不进编辑器，直接钉在桌面。
+#[tauri::command]
+pub async fn capture_pin(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    display_id: u32,
+    rect: Rect,
+) -> AppResult<CaptureResult> {
+    let result = capture::commit(&state, display_id, rect)?;
+    let handle = app.clone();
+    let inner = state.inner().clone();
+    let data = result.data_url.clone();
+    tauri::async_runtime::spawn(async move {
+        // 先关覆盖层再贴图，否则遮罩会闪在贴图上
+        win::close_selector(&handle);
+        inner.release_capture();
+        if let Err(e) = crate::commands::image::pin_data_url(&handle, &inner, data).await {
+            log::warn!("框选贴图失败: {e}");
+        }
+    });
+    Ok(result)
+}
+
+/// 框选完直接取字（手势 →↓←↑），结果弹在一个独立小窗里。
+#[tauri::command]
+pub async fn capture_ocr(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    display_id: u32,
+    rect: Rect,
+) -> AppResult<CaptureResult> {
+    let result = capture::commit(&state, display_id, rect)?;
+    let handle = app.clone();
+    let inner = state.inner().clone();
+    let data = result.data_url.clone();
+    tauri::async_runtime::spawn(async move {
+        win::close_selector(&handle);
+        inner.release_capture();
+        if let Err(e) = crate::windows::open_ocr(&handle, data) {
+            log::warn!("打开取字窗口失败: {e}");
         }
     });
     Ok(result)

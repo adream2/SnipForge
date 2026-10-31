@@ -1,15 +1,20 @@
 //! 低级鼠标钩子 —— 鼠标手势的输入源。
 //!
-//! 和 `keyhook.rs` 同一套纪律：
+//! 三条纪律（都在 keyhook.rs 里踩过，这里不能破）：
 //!   1. 钩子必须跑在有消息循环的线程里；
-//!   2. 回调有超时限制，所以这里**只做计算**，具体动作丢给上层 spawn；
+//!   2. 回调有超时限制，超时会被系统**静默摘钩** —— 所以回调里只做计算，
+//!      画轨迹/执行动作全部异步，绝不能同步等别的线程；
 //!   3. 吞事件返回 `LRESULT(1)`，放行 `CallNextHookEx`。
 //!
-//! 为什么"不吞按下、只吞抬起"：
-//!   绝大多数程序的右键菜单是在 `WM_RBUTTONUP` 才弹的，所以只要在抬手时
-//!   吞掉，菜单就不会出现；而按住右键不放的正常操作（游戏、3D 软件里转视角）
-//!   在按下阶段完全不受影响。反过来若吞掉按下，那些程序会进入"半按下"状态，
-//!   问题更大。
+//! 为什么"吞掉按下"而不是"只吞抬起"：
+//!   只吞抬起时，按下已经送到目标程序了。有些程序在右键按下就进入"捕获鼠标"
+//!   状态，抬起被我们吞掉后它一直等不到，表现就是**之后左右键都失灵** ——
+//!   这正是用户报的"会导致无法进行鼠标的操作"。
+//!   改成吞下按：目标程序一个事件都收不到，状态永远干净；
+//!   如果用户只是点了一下（没划成手势），我们在抬起时**补发**一次右键点击。
+//!
+//! 全屏游戏/视频/远程桌面里自动让路：那些场景手势只会帮倒忙，
+//! 而且吞掉右键真的会影响操作。
 //!
 //! 状态机里所有加锁的地方都用**块作用域**：`parking_lot` 的 guard 不是重入的，
 //! 读锁没放掉就写锁会直接死锁，而这个线程卡死 = 整个系统鼠标卡死。
@@ -21,22 +26,24 @@ use parking_lot::RwLock;
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-    MSLLHOOKSTRUCT, MSG, WH_MOUSE_LL, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    MSLLHOOKSTRUCT, MSG, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
 use crate::config::GestureConfig;
 
-/// 钩子吐出的事件。上层（`gesture.rs`）据此画轨迹、匹配动作。
+/// 钩子吐出的事件。
 #[derive(Debug, Clone)]
 pub enum Event {
     /// 拖动距离越过阈值，正式进入手势模式
     Begin { x: i32, y: i32 },
     /// 手势过程中的每一次移动
     Move { x: i32, y: i32 },
+    /// 方向串变了（用来实时更新屏幕上的动作名）
+    Turn { pattern: String },
     /// 抬手。`pattern` 形如 "DR"
     End { pattern: String },
-    /// 手势被放弃（动了但没划出方向）
+    /// 手势被放弃（动了但没划出方向、或者中途按了左键）
     Cancel,
 }
 
@@ -52,9 +59,11 @@ struct Track {
     down: bool,
     /// 是否已越过阈值（进入手势模式）
     gesture: bool,
-    /// 按下的位置
+    /// 这次按下有没有被我们吞掉（吞了才需要补发点击）
+    swallowed: bool,
+    /// 中途按了左键 → 放弃手势，且不补发右键
+    canceled: bool,
     origin: (i32, i32),
-    /// 上一次"转向"的基准点
     anchor: (i32, i32),
     last_dir: Option<char>,
     pattern: String,
@@ -62,7 +71,7 @@ struct Track {
 
 static TRACK: RwLock<Option<Track>> = RwLock::new(None);
 
-/// 刷新配置。设置页改了触发键/阈值之后调这个，钩子立刻按新配置走。
+/// 刷新配置。设置页改了规则之后调这个。
 pub fn update_config(cfg: GestureConfig) {
     match CFG.get() {
         Some(lock) => *lock.write() = cfg,
@@ -111,8 +120,17 @@ enum Trigger {
     X1,
 }
 
-/// 读一次配置。关掉时返回 None，钩子只放行不做事。
-fn current() -> Option<(Trigger, i32, i32)> {
+/// 钩子需要的全部配置，一次读出来，避免回调里反复加锁
+struct Snapshot {
+    trigger: Trigger,
+    threshold: i32,
+    step: i32,
+    pause_fullscreen: bool,
+    swallow_down: bool,
+    excluded: Vec<String>,
+}
+
+fn snapshot() -> Option<Snapshot> {
     let lock = CFG.get()?;
     let cfg = lock.read();
     if !cfg.enabled {
@@ -123,11 +141,14 @@ fn current() -> Option<(Trigger, i32, i32)> {
         "x1" => Trigger::X1,
         _ => Trigger::Right,
     };
-    Some((
+    Some(Snapshot {
         trigger,
-        cfg.threshold.clamp(8, 200),
-        cfg.step.clamp(16, 300),
-    ))
+        threshold: cfg.threshold.clamp(8, 200),
+        step: cfg.step.clamp(16, 300),
+        pause_fullscreen: cfg.pause_fullscreen,
+        swallow_down: cfg.swallow_down,
+        excluded: cfg.excluded.clone(),
+    })
 }
 
 fn emit(ev: Event) {
@@ -136,19 +157,40 @@ fn emit(ev: Event) {
     }
 }
 
-fn on_down(x: i32, y: i32) {
+/// 这次按下要不要管？
+///
+/// 全屏（游戏/视频/演示/远程桌面）和用户排除的程序一律让路 ——
+/// 在这些地方手势不是"便利"，而是"捣乱"。
+fn should_handle(cfg: &Snapshot) -> bool {
+    if cfg.pause_fullscreen && crate::win32::window::foreground_is_fullscreen() {
+        return false;
+    }
+    if !cfg.excluded.is_empty() {
+        let exe = crate::win32::window::foreground_exe_cached();
+        if !exe.is_empty() && cfg.excluded.iter().any(|e| e.eq_ignore_ascii_case(&exe)) {
+            return false;
+        }
+    }
+    true
+}
+
+/// 触发键按下。返回 true = 吞掉这次按下。
+fn on_down(x: i32, y: i32, swallow: bool) -> bool {
     *TRACK.write() = Some(Track {
         down: true,
         gesture: false,
+        swallowed: swallow,
+        canceled: false,
         origin: (x, y),
         anchor: (x, y),
         last_dir: None,
         pattern: String::new(),
     });
+    swallow
 }
 
 fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
-    // 第一段：更新状态，算出要不要发 Begin
+    // 第一段：更新状态，顺带算出要不要发 Begin
     let began = {
         let mut guard = TRACK.write();
         let Some(t) = guard.as_mut() else { return };
@@ -175,13 +217,14 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
     }
 
     // 第二段：方向判定
-    {
+    let turned = {
         let mut guard = TRACK.write();
         let Some(t) = guard.as_mut() else { return };
         if !t.gesture {
             return;
         }
         let (dx, dy) = (x - t.anchor.0, y - t.anchor.1);
+        let mut changed = None;
         if dx.abs() >= step || dy.abs() >= step {
             let d = if dx.abs() > dy.abs() {
                 if dx > 0 {
@@ -197,74 +240,131 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
             if Some(d) != t.last_dir {
                 t.last_dir = Some(d);
                 t.pattern.push(d);
+                changed = Some(t.pattern.clone());
             }
-            // 锚点跟着走：同一方向连续移动只会记一次
+            // 锚点跟着走：同一方向连续移动只记一次
             t.anchor = (x, y);
         }
-    }
+        changed
+    };
 
     emit(Event::Move { x, y });
+    if let Some(pattern) = turned {
+        emit(Event::Turn { pattern });
+    }
 }
 
-/// 触发键抬起。返回 true 表示要把这次抬起吞掉。
+/// 触发键抬起。返回 true = 吞掉这次抬起。
 fn on_up() -> bool {
     let taken = {
         let mut guard = TRACK.write();
         guard.take()
     };
     let Some(t) = taken else { return false };
-    if !t.down || !t.gesture {
-        // 只是点了一下右键 → 完全放行，菜单照常弹
+    if !t.down {
         return false;
     }
-    if t.pattern.is_empty() {
-        // 动了但没划出方向（手抖）→ 也放行，否则这次右键就白按了
+    // 没吞按下（swallowDown 关掉）：抬起要放行，右键菜单交给系统
+    if !t.swallowed {
+        if t.gesture && !t.pattern.is_empty() {
+            emit(Event::End { pattern: t.pattern });
+        }
+        return false;
+    }
+
+    // 中途按了左键：用户的意图已经变了，什么都别做（也不补发右键）
+    if t.canceled {
         emit(Event::Cancel);
-        return false;
+        return true;
     }
-    emit(Event::End { pattern: t.pattern });
+
+    if t.gesture && !t.pattern.is_empty() {
+        emit(Event::End { pattern: t.pattern });
+        return true;
+    }
+
+    // 没形成手势 = 用户只是点了一下右键。补发一次真正的右键点击，
+    // 否则"右键菜单打不开"会变成新的 bug。
+    if !t.gesture {
+        // 补发：让系统认为这就是一次普通右键点击
+        if let Err(e) = crate::win32::input::inject_right_click() {
+            log::warn!("补发右键失败: {e}");
+        }
+        return true;
+    }
+
+    // 动了但没划出方向（手抖到刚过阈值）：不补发 ——
+    // 在鼠标已经移开的位置弹出右键菜单反而更莫名其妙
+    emit(Event::Cancel);
     true
+}
+
+/// 手势进行中按下左键 → 放弃这次手势
+fn cancel_if_gesturing() {
+    let mut guard = TRACK.write();
+    if let Some(t) = guard.as_mut() {
+        if t.down {
+            t.canceled = true;
+            t.gesture = false;
+            t.pattern.clear();
+        }
+    }
 }
 
 unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code >= 0 {
-        if let Some((trigger, threshold, step)) = current() {
-            let ms = &*(lparam.0 as *const MSLLHOOKSTRUCT);
-            let msg = wparam.0 as u32;
+        let ms = &*(lparam.0 as *const MSLLHOOKSTRUCT);
 
-            let (down_msg, up_msg) = match trigger {
-                Trigger::Right => (WM_RBUTTONDOWN, WM_RBUTTONUP),
-                Trigger::Middle => (WM_MBUTTONDOWN, WM_MBUTTONUP),
-                Trigger::X1 => (WM_XBUTTONDOWN, WM_XBUTTONUP),
-            };
-            // 侧键要确认是 XBUTTON1（靠近手心那个）
-            let is_x1 = if matches!(trigger, Trigger::X1) {
-                ((ms.mouseData >> 16) & 0xFFFF) == 1
-            } else {
-                true
-            };
+        // 自己补发的点击：立刻放行，绝不处理（否则无限递归）
+        if ms.dwExtraInfo == crate::win32::input::INJECT_MAGIC {
+            return CallNextHookEx(None, code, wparam, lparam);
+        }
 
-            if msg == down_msg && is_x1 {
-                on_down(ms.pt.x, ms.pt.y);
-            } else if msg == up_msg && is_x1 {
-                if on_up() {
-                    return LRESULT(1);
-                }
-            } else if msg == WM_MOUSEMOVE {
-                on_move(ms.pt.x, ms.pt.y, threshold, step);
-            }
-        } else {
-            // 配置被关掉时清掉残留状态（读锁先放掉再取写锁）
+        let Some(cfg) = snapshot() else {
+            // 配置关掉了：清掉残留状态（读锁先放，再取写锁）
             let has = TRACK.read().is_some();
             if has {
                 *TRACK.write() = None;
             }
+            return CallNextHookEx(None, code, wparam, lparam);
+        };
+
+        let msg = wparam.0 as u32;
+        let (down_msg, up_msg) = match cfg.trigger {
+            Trigger::Right => (WM_RBUTTONDOWN, WM_RBUTTONUP),
+            Trigger::Middle => (WM_MBUTTONDOWN, WM_MBUTTONUP),
+            Trigger::X1 => (WM_XBUTTONDOWN, WM_XBUTTONUP),
+        };
+        // 侧键要确认是 XBUTTON1（靠手心那个）
+        let is_x1 = if matches!(cfg.trigger, Trigger::X1) {
+            ((ms.mouseData >> 16) & 0xFFFF) == 1
+        } else {
+            true
+        };
+
+        if msg == down_msg && is_x1 {
+            // 全屏/排除程序：完全不介入，让系统照常处理
+            if !should_handle(&cfg) {
+                log::debug!("手势: 本次按下被忽略（全屏或排除程序）");
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
+            if on_down(ms.pt.x, ms.pt.y, cfg.swallow_down) {
+                return LRESULT(1);
+            }
+        } else if msg == up_msg && is_x1 {
+            if on_up() {
+                return LRESULT(1);
+            }
+        } else if msg == WM_MOUSEMOVE {
+            on_move(ms.pt.x, ms.pt.y, cfg.threshold, cfg.step);
+        } else if msg == WM_LBUTTONDOWN {
+            cancel_if_gesturing();
         }
     }
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-/// 钩子是否真的装上了（设置页用来显示状态）。
+/// 钩子是否真的装上了（页面显示状态用）。
 pub fn is_installed() -> bool {
     INSTALLED.load(Ordering::SeqCst)
 }

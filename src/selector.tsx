@@ -20,6 +20,8 @@ const PARAMS =
 
 /** 从 URL 读模式：selector.html?mode=record&fmt=gif 表示框完直接录 GIF */
 const IS_RECORD = PARAMS.get('mode') === 'record'
+/** 框完直接干什么：pin = 贴到屏幕，ocr = 取字。空 = 进编辑器 */
+const AFTER = PARAMS.get('after')
 /** 进来时带的格式（由点击的按钮/热键决定）；在选区里还能按 G / V 改 */
 const INITIAL_FMT: RecordFormat = PARAMS.get('fmt') === 'gif' ? 'gif' : 'mp4'
 
@@ -237,7 +239,13 @@ export default function Selector() {
       height: Math.round(selection.height * scale)
     }
     try {
-      if (mode === 'scroll' && !IS_RECORD) {
+      if (AFTER === 'pin') {
+        // 手势 ↓→↑←：框完直接贴到屏幕上
+        await api.capturePin(display.id, phys)
+      } else if (AFTER === 'ocr') {
+        // 手势 →↓←↑：框完直接取字
+        await api.captureOcr(display.id, phys)
+      } else if (mode === 'scroll' && !IS_RECORD) {
         // 录屏没有"滚动长录"这种东西，这里只可能来自截图模式
         await api.captureScroll(display.id, phys)
       } else {

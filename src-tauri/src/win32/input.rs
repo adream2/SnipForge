@@ -228,3 +228,44 @@ pub fn wheel(delta: i32) -> Result<(), String> {
     }
     Ok(())
 }
+
+/* ============================ 手势用：补发右键点击 ============================ */
+
+/// 注入标记：钩子看到这个 `dwExtraInfo` 就知道"这次点击是我们自己补发的"，
+/// 直接放行，不再当作手势输入处理。没有这个标记会无限递归。
+pub const INJECT_MAGIC: usize = 0x534E_4950; // 'SNIP'
+
+fn mouse_input(flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS) -> INPUT {
+    INPUT {
+        r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: windows::Win32::UI::Input::KeyboardAndMouse::MOUSEINPUT {
+                dx: 0,
+                dy: 0,
+                mouseData: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: INJECT_MAGIC,
+            },
+        },
+    }
+}
+
+/// 补发一次右键点击。
+///
+/// 手势的策略是"吞掉按下"，所以普通右键点击必须由我们补回来 ——
+/// 否则用户的右键就没了。必须用 `SendInput` 而不是 `mouse_event`：
+/// 只有前者能带 `dwExtraInfo`，没有标记钩子会把自己注入的点击再吞一次。
+pub fn inject_right_click() -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP};
+    let inputs = [
+        mouse_input(MOUSEEVENTF_RIGHTDOWN),
+        mouse_input(MOUSEEVENTF_RIGHTUP),
+    ];
+    unsafe {
+        if SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) == 0 {
+            return Err("补发右键失败".into());
+        }
+    }
+    Ok(())
+}

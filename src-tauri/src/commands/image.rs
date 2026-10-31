@@ -286,6 +286,18 @@ pub async fn image_pin(
     state: tauri::State<'_, Arc<AppState>>,
     data_url: String,
 ) -> AppResult<()> {
+    pin_data_url(&app, state.inner(), data_url).await
+}
+
+/// 把一张 dataURL 钉到屏幕上。
+///
+/// 抽出来是因为"框选完直接贴图"的手势也要用 —— 那条路不经过编辑器，
+/// 手里只有一个 CaptureResult。
+pub(crate) async fn pin_data_url(
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    data_url: String,
+) -> AppResult<()> {
     let opacity = state.settings.read().editor.pin_opacity as f64;
 
     // 解码放阻塞线程池，别占着 IPC 线程
@@ -299,5 +311,97 @@ pub async fn image_pin(
     .await
     .map_err(|e| AppError::Msg(format!("解码任务失败: {e}")))??;
 
-    crate::windows::open_pin(&app, data_url, w, h, opacity)
+    crate::windows::open_pin(app, data_url, w, h, opacity)
+}
+
+/* ------------------------- 取字窗口 ------------------------- */
+
+/// 取走待识别的图。
+///
+/// 窗口新建时后端 emit 的事件会丢（webview 还没加载），所以前端加载完
+/// 主动来取一次 —— 事件只作为"窗口已经开着"时的快速通道。
+#[tauri::command]
+pub fn ocr_take_image() -> Option<String> {
+    crate::windows::take_pending_ocr()
+}
+
+/// 关掉取字窗口
+#[tauri::command]
+pub fn ocr_close(app: tauri::AppHandle) {
+    if let Some(win) = tauri::Manager::get_webview_window(&app, "ocr") {
+        let _ = win.close();
+    }
+}
+
+/// 翻译一段文本。
+///
+/// 走 Google 的免密钥端点（`translate_a/single`）。够用、不用申请 key，
+/// 但国内网络下可能连不上 —— 失败时把原因原样带回去，让窗口显示
+/// "翻译服务不可达"，而不是默默转圈。
+#[tauri::command]
+pub async fn translate_text(text: String, to: Option<String>) -> AppResult<String> {
+    let target = to.unwrap_or_else(|| "zh-CN".into());
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(AppError::Msg("没有可翻译的内容".into()));
+    }
+    // 端点限长，超了直接拒绝，别发出一个注定失败的请求
+    if text.chars().count() > 4000 {
+        return Err(AppError::Msg("文本太长，先选一段再翻译".into()));
+    }
+
+    let url = format!(
+        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={target}&dt=t&q={}",
+        percent_encode(text)
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| AppError::Msg(format!("创建请求失败: {e}")))?;
+
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0 SnipForge")
+        .send()
+        .await
+        .map_err(|e| AppError::Msg(format!("翻译服务不可达: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(AppError::Msg(format!("翻译服务返回 {}", resp.status())));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Msg(format!("翻译结果解析失败: {e}")))?;
+
+    // 结构是 [[["译文","原文",...], ...], ...]，把每一段译文连起来
+    let mut out = String::new();
+    if let Some(segments) = body.get(0).and_then(|v| v.as_array()) {
+        for seg in segments {
+            if let Some(t) = seg.get(0).and_then(|v| v.as_str()) {
+                out.push_str(t);
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(AppError::Msg("翻译服务没返回内容".into()));
+    }
+    Ok(out)
+}
+
+/// 最小可用的 URL 编码：只保留 unreserved 字符，其余按 UTF-8 字节转 %XX。
+/// 不为这一处请求引入整个 urlencoding crate。
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }

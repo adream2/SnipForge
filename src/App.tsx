@@ -117,6 +117,13 @@ function Shell() {
     void events
       .on<string>('record://error', (msg) => toast.push(`录制失败：${msg}`, 'error'))
       .then((u) => unsubs.push(u))
+    // 手势里"画一下排除这个程序"之后，配置在后端被改了 —— 重新拉一次，
+    // 页面上就能看到新加的例外（否则要等下次重启）
+    void events
+      .onGestureChanged(() => {
+        void api.settingsGet().then((r) => setSettings(r.settings))
+      })
+      .then((u) => unsubs.push(u))
     // 面板选中后要粘到 SnipForge 自己的输入框。
     // Chromium 会丢弃程序模拟的 Ctrl+V（安全策略），所以后端把文本推过来，
     // 由页面插进最近聚焦的那个输入框。

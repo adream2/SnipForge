@@ -388,3 +388,89 @@ pub fn run_command(cmd: &str) -> Result<(), String> {
         .map_err(|e| format!("运行命令失败: {e}"))?;
     Ok(())
 }
+
+/* ================== 手势用：全屏判断 / 前台程序（带缓存） ================== */
+
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// 前台窗口是不是"真·全屏"。
+///
+/// 判据：窗口矩形**完全盖住**所在显示器的物理边界。
+/// 不去查窗口样式（`WS_POPUP` + 无边框并不等于全屏，很多工具窗口也长这样），
+/// 也不看标题 —— 只看几何，最不容易误判。
+///
+/// 桌面（Progman/WorkerW）和任务栏要排除掉：它们天生就是全屏尺寸，
+/// 但那是"什么都没开"的状态，手势必须能用。
+pub fn foreground_is_fullscreen() -> bool {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowRect};
+
+    set_dpi_aware();
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return false;
+        }
+
+        let mut cls = [0u16; 64];
+        let n = GetClassNameW(hwnd, &mut cls);
+        let class = String::from_utf16_lossy(&cls[..n.max(0) as usize]);
+        if matches!(
+            class.as_str(),
+            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        ) {
+            return false;
+        }
+        // 自己的窗口不算
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+        if pid == std::process::id() {
+            return false;
+        }
+
+        let mut wr = RECT::default();
+        if GetWindowRect(hwnd, &mut wr).is_err() {
+            return false;
+        }
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(monitor, &mut mi).as_bool() {
+            return false;
+        }
+        let m = mi.rcMonitor;
+        // 允许 2px 误差：有些程序会把窗口撑到屏幕外一点点
+        (wr.left - m.left).abs() <= 2
+            && (wr.top - m.top).abs() <= 2
+            && (wr.right - m.right).abs() <= 2
+            && (wr.bottom - m.bottom).abs() <= 2
+    }
+}
+
+/// 前台程序名缓存。
+///
+/// 每次按下都去 OpenProcess + 查路径要 1~2ms，钩子回调里虽然能承受，
+/// 但完全没必要 —— 用户在同一个窗口里连续划手势时答案不会变。
+/// 缓存 600ms，足够覆盖一次连续操作，又不会在切窗口后长时间用错答案。
+static EXE_CACHE: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+
+pub fn foreground_exe_cached() -> String {
+    let now = Instant::now();
+    if let Ok(guard) = EXE_CACHE.lock() {
+        if let Some((at, exe)) = guard.as_ref() {
+            if now.duration_since(*at) < Duration::from_millis(600) {
+                return exe.clone();
+            }
+        }
+    }
+    let exe = foreground_exe().to_ascii_lowercase();
+    if let Ok(mut guard) = EXE_CACHE.lock() {
+        *guard = Some((now, exe.clone()));
+    }
+    exe
+}
