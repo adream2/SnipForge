@@ -18,6 +18,8 @@ pub struct AppSettings {
     pub general: GeneralConfig,
     /// 鼠标手势
     pub gestures: GestureConfig,
+    /// 翻译服务
+    pub translate: TranslateConfig,
     /// 插件开关表：plugin_id -> enabled
     pub plugin_enabled: HashMap<String, bool>,
 }
@@ -35,6 +37,7 @@ impl Default for AppSettings {
             record: RecordConfig::default(),
             general: GeneralConfig::default(),
             gestures: GestureConfig::default(),
+            translate: TranslateConfig::default(),
             plugin_enabled: HashMap::new(),
         }
     }
@@ -154,6 +157,46 @@ impl Default for UploaderConfig {
             compress_quality: 90,
             compress_max_edge: 0,
             providers: HashMap::new(),
+        }
+    }
+}
+
+/// 翻译服务配置。
+///
+/// 默认腾讯：谷歌那个免 key 端点在**国内基本连不上**，用户点开翻译只看到
+/// "不可达"；腾讯（transmart 网页那套）国内直连、免 key，还自带语言识别。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TranslateConfig {
+    /// microsoft | google | deepl | custom
+    pub provider: String,
+    /// 目标语言（规范码：zh-CN / zh-TW / en / ja …）
+    pub target: String,
+    /// DeepL 的 key（`:fx` 结尾是免费版）
+    pub deepl_key: String,
+    /// 自定义接口：URL，可用 `{text}`、`{to}` 占位
+    pub custom_url: String,
+    /// GET | POST
+    pub custom_method: String,
+    /// 每行一个 `Header: value`
+    pub custom_headers: String,
+    /// 请求体模板（POST 用），可用 `{text}`、`{to}` 占位
+    pub custom_body: String,
+    /// 结果的点路径，如 `data.translations.0.text`；留空则整个响应当译文
+    pub custom_result_path: String,
+}
+
+impl Default for TranslateConfig {
+    fn default() -> Self {
+        Self {
+            provider: "tencent".into(),
+            target: "zh-CN".into(),
+            deepl_key: String::new(),
+            custom_url: String::new(),
+            custom_method: "POST".into(),
+            custom_headers: "Content-Type: application/json".into(),
+            custom_body: r#"{"text":"{text}","to":"{to}"}"#.into(),
+            custom_result_path: String::new(),
         }
     }
 }

@@ -3,6 +3,7 @@ import { api, events } from '../lib/api'
 import type { AppInfo, AppSettings, OcrDownloadProgress, OcrEngineInfo } from '../lib/types'
 import { useToast } from '../components/Toast'
 import { HotkeyInput } from '../components/HotkeyInput'
+import { LANGUAGES, PROVIDERS } from '../lib/translate'
 
 function Row({
   title,
@@ -50,6 +51,12 @@ export default function SettingsPage({
   /** 设置项太多，按主题分 tab：通用 / 快捷键 / 输出与识别 */
   const [tab, setTab] = useState<'general' | 'hotkeys' | 'output'>('general')
   const [dl, setDl] = useState<OcrDownloadProgress | null>(null)
+  /** 翻译"试一下"的状态：结果直接显示在按钮旁边 */
+  const [transTest, setTransTest] = useState<{ busy: boolean; ok: boolean; text: string }>({
+    busy: false,
+    ok: false,
+    text: ''
+  })
   const toast = useToast()
 
   // 下载进度由后端推过来，stage/百分比都在里面
@@ -373,6 +380,8 @@ export default function SettingsPage({
           </div>
 
 
+
+
             </>
           )}
 
@@ -535,6 +544,148 @@ export default function SettingsPage({
                 并在语言选项中勾选「光学字符识别」。
               </div>
             )}
+          </div>
+
+          {/* 翻译 */}
+          <div className="setting-card">
+            <header>翻译服务</header>
+            {(() => {
+              const t = settings?.translate
+              const provider = t?.provider ?? 'tencent'
+              const hint = PROVIDERS.find((p) => p.id === provider)?.hint ?? ''
+              const patchTr = (v: Record<string, string>) => void onChange({ translate: v })
+              return (
+                <>
+                  <Row title="服务" desc="取字窗口里的翻译走这里；换完立刻生效，不用重启">
+                    <select
+                      className="input"
+                      value={provider}
+                      onChange={(e) => patchTr({ provider: e.target.value })}
+                    >
+                      {PROVIDERS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Row>
+                  <div style={{ padding: '0 16px 10px', fontSize: 11.5, color: 'var(--text-3)' }}>
+                    {hint}
+                  </div>
+
+                  {provider === 'deepl' && (
+                    <Row title="DeepL Key" desc="以 :fx 结尾的是免费版，会自动走 free 域名">
+                      <input
+                        className="input"
+                        style={{ width: 320 }}
+                        type="password"
+                        spellCheck={false}
+                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx"
+                        value={t?.deeplKey ?? ''}
+                        onChange={(e) => patchTr({ deeplKey: e.target.value })}
+                      />
+                    </Row>
+                  )}
+
+                  {provider === 'custom' && (
+                    <>
+                      <Row title="URL" desc="可用 {text} / {to} 占位，需自己编码好查询参数">
+                        <input
+                          className="input"
+                          style={{ width: 380 }}
+                          spellCheck={false}
+                          placeholder="https://api.example.com/translate?q={text}&to={to}"
+                          value={t?.customUrl ?? ''}
+                          onChange={(e) => patchTr({ customUrl: e.target.value })}
+                        />
+                      </Row>
+                      <Row title="方法">
+                        <select
+                          className="input"
+                          value={t?.customMethod ?? 'POST'}
+                          onChange={(e) => patchTr({ customMethod: e.target.value })}
+                        >
+                          <option value="POST">POST</option>
+                          <option value="GET">GET</option>
+                        </select>
+                      </Row>
+                      <Row title="请求头" desc="每行一个 Header: value">
+                        <textarea
+                          className="input"
+                          style={{ width: 380, height: 58, paddingTop: 6, fontSize: 11.5 }}
+                          spellCheck={false}
+                          value={t?.customHeaders ?? ''}
+                          onChange={(e) => patchTr({ customHeaders: e.target.value })}
+                        />
+                      </Row>
+                      <Row title="请求体" desc="POST 用；{text} / {to} 会被替换">
+                        <textarea
+                          className="input"
+                          style={{ width: 380, height: 58, paddingTop: 6, fontSize: 11.5 }}
+                          spellCheck={false}
+                          value={t?.customBody ?? ''}
+                          onChange={(e) => patchTr({ customBody: e.target.value })}
+                        />
+                      </Row>
+                      <Row title="结果路径" desc="如 data.translations.0.text；留空则整个响应当译文">
+                        <input
+                          className="input"
+                          style={{ width: 280 }}
+                          spellCheck={false}
+                          placeholder="data.translated"
+                          value={t?.customResultPath ?? ''}
+                          onChange={(e) => patchTr({ customResultPath: e.target.value })}
+                        />
+                      </Row>
+                    </>
+                  )}
+
+                  <Row title="默认目标语言" desc="取字窗口顶栏里也能随时改，改了会记住">
+                    <select
+                      className="input"
+                      value={t?.target ?? 'zh-CN'}
+                      onChange={(e) => patchTr({ target: e.target.value })}
+                    >
+                      {LANGUAGES.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Row>
+
+                  <Row title="试一下" desc="用当前配置翻一句示例，确认网络/key 是否正常">
+                    <button
+                      className="btn sm"
+                      disabled={transTest.busy}
+                      onClick={() => {
+                        setTransTest({ busy: true, ok: false, text: '' })
+                        void api
+                          .translateTest(t?.target)
+                          .then((r) => setTransTest({ busy: false, ok: true, text: r }))
+                          .catch((e) =>
+                            setTransTest({ busy: false, ok: false, text: String(e) })
+                          )
+                      }}
+                    >
+                      {transTest.busy ? '翻译中…' : '测试'}
+                    </button>
+                    {transTest.text && (
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          fontSize: 11.5,
+                          color: transTest.ok ? 'var(--text-2)' : 'var(--danger)',
+                          wordBreak: 'break-all'
+                        }}
+                      >
+                        {transTest.text}
+                      </span>
+                    )}
+                  </Row>
+                </>
+              )
+            })()}
           </div>
 
 

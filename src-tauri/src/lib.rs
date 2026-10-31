@@ -34,6 +34,7 @@ mod secrets;
 mod shortcuts;
 mod state;
 mod tray;
+mod translate;
 mod types;
 mod uploader;
 mod win32;
@@ -697,6 +698,7 @@ pub fn run() {
             commands::image::image_pin,
             commands::image::image_ocr,
             commands::image::translate_text,
+            commands::image::translate_test,
             commands::image::ocr_close,
             commands::image::ocr_take_image,
             commands::image::image_ocr_languages,

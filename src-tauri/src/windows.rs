@@ -179,8 +179,9 @@ pub fn open_ocr(app: &AppHandle, data_url: String) -> AppResult<()> {
 
     let win = WebviewWindowBuilder::new(app, OCR, WebviewUrl::App("ocr.html".into()))
         .title("SnipForge 取字")
-        .inner_size(520.0, 560.0)
-        .min_inner_size(360.0, 320.0)
+        // 左右分栏：太窄的话两边都挤成一条，翻译对照就没意义了
+        .inner_size(880.0, 520.0)
+        .min_inner_size(560.0, 360.0)
         .always_on_top(true)
         .visible(false)
         .build()

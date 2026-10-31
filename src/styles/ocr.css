@@ -79,7 +79,7 @@ body {
 
 .ocr-text {
   flex: 1;
-  min-height: 120px;
+  min-height: 0;
   width: 100%;
   padding: 12px 14px;
   border: none;
@@ -101,29 +101,80 @@ body {
   border-top: 1px solid #f3d6d6;
 }
 
-.ocr-trans {
-  max-height: 42%;
-  overflow: auto;
-  border-top: 1px solid var(--border);
+/* 左右分栏：左原文、右译文。取字窗口本身就是"对照着看"的工具，
+   上下堆叠时两边都看不全，还得来回滚 */
+.ocr-split {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+
+.ocr-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ocr-pane + .ocr-pane {
+  border-left: 1px solid var(--border);
   background: var(--surface-2);
 }
 
-.ocr-trans-head {
+.ocr-pane-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px 0;
-  font-size: 11.5px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
   color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.ocr-stale {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fdf3e3;
+  color: #b45309;
+  font-style: normal;
+  font-size: 10.5px;
 }
 
 .ocr-trans-body {
-  padding: 6px 14px 12px;
+  flex: 1;
+  overflow: auto;
+  padding: 12px 14px;
   font-size: 12.5px;
-  line-height: 1.7;
+  line-height: 1.75;
   color: var(--text);
   white-space: pre-wrap;
   user-select: text;
+}
+
+.ocr-placeholder {
+  color: var(--text-3);
+}
+
+/* 顶栏里的语言选择和供应商标签 */
+.ocr-select {
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.ocr-provider {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
 }
 
 .ocr-root > footer {

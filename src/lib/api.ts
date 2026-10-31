@@ -85,6 +85,8 @@ export const api = {
   /** 翻译一段文本（取字窗口用） */
   translateText: (text: string, to?: string) =>
     invoke<string>('translate_text', { text, to: to ?? null }),
+  /** 设置页的"试一下"：用当前配置翻一句固定示例 */
+  translateTest: (to?: string) => invoke<string>('translate_test', { to: to ?? null }),
   /** 取字窗口关掉自己 */
   closeOcr: () => invoke<void>('ocr_close'),
   /** 取走待识别的图（窗口刚建时事件会丢，所以主动取一次） */

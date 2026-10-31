@@ -123,6 +123,20 @@ export interface GestureConfig {
   profiles?: GestureProfile[]
 }
 
+/** 翻译服务配置（对应后端 TranslateConfig） */
+export interface TranslateConfig {
+  /** tencent | google | deepl | custom */
+  provider: string
+  /** 目标语言规范码，如 zh-CN */
+  target: string
+  deeplKey: string
+  customUrl: string
+  customMethod: string
+  customHeaders: string
+  customBody: string
+  customResultPath: string
+}
+
 export interface AppSettings {
   version: number
   hotkeys: Record<string, string>
@@ -187,6 +201,8 @@ export interface AppSettings {
     closeToTray: boolean
   }
   gestures: GestureConfig
+  /** 翻译服务（老配置里可能没有，读取时用默认值兜底） */
+  translate?: TranslateConfig
   pluginEnabled: Record<string, boolean>
 }
 
