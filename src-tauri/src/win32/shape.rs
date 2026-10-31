@@ -1,26 +1,37 @@
 //! 形状手势识别 —— 真正"画出来"的曲线，而不是方向串。
 //!
-//! 方向串（U/D/L/R）对折线手势足够用，但表达不了"S"这种东西：
-//! 用 `DLD` 去近似，用户得刻意画成一段折线，手感完全不对。
+//! 方向串（U/D/L/R）对折线手势够用，但表达不了 "S" 这种东西：用 `DLD` 去近似，
+//! 用户得刻意画成一段折线，手感完全不对。
 //!
-//! 第一版"和标准 S 逐点比距离"在真机上一划就废，两个原因：
-//!   1. 手写 S 几乎都斜（右上起笔、左下收笔），不校正斜度，距离凭空大一截；
-//!   2. 只放了一个模板，而且那个模板其实是"正弦式"（起笔在正上方），
-//!      和真人写的"字体式 S"（起笔在右上角）根本不是一条线。
+//! # 为什么用点云（$P）而不是逐点比
 //!
-//! 现在：
-//!   1. 抖点丢掉，按弧长重采样、平滑两遍；
-//!   2. **把首尾连线转到竖直**再比 —— 斜着写、整体旋转都不影响；
-//!   3. **两个模板都放**（字体式 / 正弦式），正反两个方向都比，取最小距离；
-//!   4. 几何闸门先挡掉直线、画圈、太小的抖动，距离只负责最后判"像不像 S"。
+//! 前两版都是"按弧长重采样成 32 点，然后和第 1 点比第 1 点、第 2 点比第 2 点"。
+//! 这条路走不通：**同一个字，画宽一点，32 个点落在哪就全变了**。窄高 H 的
+//! 32 点里左腿占 9 个，宽扁 H 里左腿占 13 个 —— 序号对不上，逐点距离白算。
 //!
-//! 认几个形状？**克制**。每多一个内置形状，就多一分和别的笔画抢手势的风险，
-//! 误识别一次就够让人不信任整个功能。所以只放真正有人会画的：
-//!   - `S`：截图（最常见的需求）
-//!   - `H`：编辑 hosts（横平竖直，和 S 的曲线完全不是一类，几乎不会互相抢）
+//! 于是只能给每个字补一套"矫正"：S 要把首尾连线转到竖直（手写 S 都斜），
+//! H 要先把宽高拉成正方形再采样。补丁越加越多，而且每加一个字都得再想一套。
 //!
-//! 其余"我想要个 M / W / 圈"的需求交给用户自绘（`canonical_stroke`），
-//! 那条路不需要内置模板。
+//! 现在换成 $P（Vatavu 2012, "Gesture Recognition Without Training"）的做法：
+//! 点与点之间**没有对应关系**，只问"这两堆点有多远"。宽窄、起笔位置、
+//! 正反着画全都不影响，不需要任何按形状定制的归一化。
+//!
+//! 归一化只剩一步：重采样 → 逐轴缩放到 [-1,1] → 居中。没有旋转
+//! （转 90° 的 H 不该还叫 H）。
+//!
+//! 参考过的实现里，$1 靠"转到 indicative angle + 逐点比"、Easystroke 靠
+//! "等比缩放 + 动态规划"、GestureSign / Stroke 靠"角度序列"；它们是各自场景
+//! 下的合理选择，但都需要为"形状"再补一步。$P 是唯一一个把这一步彻底消掉的。
+//!
+//! # 认几个形状
+//!
+//! **克制**。每多一个内置形状，就多一分和别的笔画抢手势的风险，误识别一次就
+//! 够让人不信任整个功能。所以只放真正有人会画的：
+//!   - `S`：截图
+//!   - `H`：编辑 hosts
+//!
+//! 其余"我想要个 M / W / 圈"交给用户自绘（`canonical_stroke`），那条路不需要
+//! 内置模板。
 
 use std::f32::consts::PI;
 use std::sync::OnceLock;
@@ -28,16 +39,17 @@ use std::sync::OnceLock;
 /// 重采样点数。太少糊成一团，太多对抖动敏感。
 const SAMPLES: usize = 32;
 
-/// 弦对齐后的平均点距上限（0 = 完全重合，1 左右 = 毫不相干）。
-/// 实测：手写式 S（含抖动、斜写、不对称）≤0.15；Z / U / V / 圆 / 单段弧 ≥0.72。
-/// 折线版的 S 是 0.24 —— 老版本就是用折线画 S 的，认了它正好兼容肌肉记忆。
-const MATCH_DIST: f32 = 0.28;
-
-/// H 的阈值（等比规范化后的平均点距）。
+/// S 的点云距离上限（原始距离，坐标已归一化到 [-1,1]²）。
 ///
-/// 比 S 紧得多：H 是"直来直去"的三个边，手一抖点就偏；而方向手势
-/// （竖划、横划）都是直的一笔，阈值放太宽会把它们吞掉。
-const H_MATCH_DIST: f32 = 0.16;
+/// 实测（`tests/shape_probe.py`）：正例 ≤0.072（含 12px 抖动、斜写 25°、
+/// 宽扁 2.5 / 瘦高 0.3）；最近的负例是"日"字 0.136，Z / C / 圆 / 波浪 ≥0.15。
+const CLOUD_S_MAX: f32 = 0.10;
+
+/// H 的点云距离上限。
+///
+/// 比 S 紧：H 是"两条腿 + 一道中横"，点云上最容易和 U 撞（0.087）。
+/// 正例 ≤0.065（最差是 200x520 的极扁 H，典型 ≤0.043）。
+const CLOUD_H_MAX: f32 = 0.075;
 
 /// 自定义手势的命中阈值（规范笔画平均点距）。
 /// 实测：同一手势重复画（含抖动）<0.12；不同手势 L/V/M 之间 >0.2。
@@ -48,8 +60,8 @@ pub const MAX_POINTS: usize = 1200;
 
 /// 认一下这一笔是不是某个内置形状。是就返回形状字符（`'S'` / `'H'`）。
 ///
-/// 每个形状用自己的阈值，先用 `距离 / 阈值` 归一化再比 —— 否则阈值宽的
-/// 那个永远赢，S 会把所有"有点像"的笔画都抢走。
+/// 每个形状用自己的阈值，先归一化成 `距离 / 阈值` 再比 —— 否则阈值宽的那个
+/// 永远赢，会把它自己的"有点像"全抢走。
 pub fn recognize(raw: &[(i32, i32)]) -> Option<char> {
     let pts = thin(raw, 2.0);
     if pts.len() < 10 {
@@ -62,11 +74,8 @@ pub fn recognize(raw: &[(i32, i32)]) -> Option<char> {
     if w < 24.0 || h < 26.0 || len < 70.0 {
         return None;
     }
-    // 首尾挨着 = 画了个圈（圆的弦长恒为 0）。
-    // 用短边的比例而不是高度：H 收在右上角时弦 ≈ 宽度，用高度会误伤宽而矮的 H。
-    let start = pts[0];
-    let end = *pts.last()?;
-    if dist(start, end) < 0.5 * w.min(h) {
+    // 首尾挨着 = 画了个圈。按短边比而不是高度：H 收在右上角时弦 ≈ 宽度。
+    if dist(pts[0], *pts.last()?) < 0.5 * w.min(h) {
         return None;
     }
 
@@ -80,7 +89,7 @@ pub fn recognize(raw: &[(i32, i32)]) -> Option<char> {
 
 /// 诊断用：把这一笔的各项指标拼成一行，认不出来时写进日志。
 ///
-/// 形状手势没法靠"再试一次"猜 —— 用户每次画的大小、斜度、快慢都不同，
+/// 形状手势没法靠"再试一次"猜 —— 用户每次画的大小、宽窄、快慢都不同，
 /// 只有把数字记下来才知道是尺寸不够、还是压根不像。
 pub fn diagnose(raw: &[(i32, i32)]) -> String {
     let pts = thin(raw, 2.0);
@@ -89,15 +98,15 @@ pub fn diagnose(raw: &[(i32, i32)]) -> String {
     }
     let len = length(&pts);
     let (w, h) = extent(&pts);
-    let chord = dist(pts[0], *pts.last().unwrap());
+    let chord = dist(pts[0], *pts.last().unwrap_or(&pts[0]));
     let scores: Vec<String> = builtins()
         .iter()
-        .map(|s| format!("{} {:.2}", s.ch, s.score(&pts)))
+        .map(|s| format!("{} {:.3}/{:.3}", s.ch, s.raw_score(&pts), s.max_dist))
         .collect();
     format!(
-        "点 {} 长 {len:.0} 外框 {w:.0}x{h:.0} 弦 {chord:.0} 距离 {}",
+        "点 {} 长 {len:.0} 外框 {w:.0}x{h:.0} 弦 {chord:.0} | 点云 {}",
         pts.len(),
-        scores.join(" / ")
+        scores.join(" ")
     )
 }
 
@@ -182,25 +191,6 @@ fn smooth(p: &[(f32, f32)]) -> Vec<(f32, f32)> {
     cur
 }
 
-/// 把首尾连线（弦）转到竖直向下，中心移到原点。
-///
-/// 这一步解决"斜着写"：手写 S 几乎都是往一边倾的，不校正的话
-/// 逐点距离会凭空大一截（第一版就栽在这里）。
-fn align_down(p: &[(f32, f32)]) -> Vec<(f32, f32)> {
-    let (x0, y0) = p[0];
-    let (x1, y1) = *p.last().unwrap_or(&p[0]);
-    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-    // 屏幕坐标里 +y 是向下，所以"朝下"对应的角度是 +90°
-    let a = PI / 2.0 - (y1 - y0).atan2(x1 - x0);
-    let (s, c) = (a.sin(), a.cos());
-    p.iter()
-        .map(|&(x, y)| {
-            let (px, py) = (x - cx, y - cy);
-            (px * c - py * s, px * s + py * c)
-        })
-        .collect()
-}
-
 /// 每个轴单独拉伸到 [-1,1]：只比"形状"，不比大小和宽高比
 fn normalize(p: &[(f32, f32)]) -> Vec<(f32, f32)> {
     let (mut x0, mut x1, mut y0, mut y1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
@@ -216,57 +206,96 @@ fn normalize(p: &[(f32, f32)]) -> Vec<(f32, f32)> {
     p.iter().map(|&(x, y)| ((x - cx) / sx, (y - cy) / sy)).collect()
 }
 
-fn mean_dist(a: &[(f32, f32)], b: &[(f32, f32)]) -> f32 {
+/* ---------------- 点云匹配（$P） ---------------- */
+
+/// 点云唯一的规范化：重采样 → 平滑 → 逐轴缩放到方 → 居中。
+/// 没有旋转，也没有按形状定制的"先拉方"之类的补丁。
+fn cloud_canonical(raw: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    normalize(&smooth(&resample(raw, SAMPLES)))
+}
+
+/// 两个点云之间的最小加权配对距离，已按点数归一化。
+///
+/// 这就是 $P 的核心：点与点之间**不需要有对应关系**，只问"这堆点到那堆点
+/// 有多远"。所以宽窄、起笔位置、正反着画都不影响 —— 那正是之前给 S/H 各写
+/// 一套归一化想达到的效果，点云天生就有。
+///
+/// 和论文一致的三处细节：
+///   - 起手点轮换（step = √n）、双向都算，取最小 —— 抗"从哪儿起笔"；
+///   - 配对时每次挑最近的未匹配点，权重随序号线性递减 —— 抗"画到一半改道"；
+///   - 结果除以点数，得到"平均每点偏移多少"，和形状大小无关。
+fn cloud_distance(a: &[(f32, f32)], b: &[(f32, f32)]) -> f32 {
     let n = a.len().min(b.len());
-    if n == 0 {
+    if n < 3 {
         return f32::MAX;
     }
-    let sum: f32 = (0..n).map(|i| dist(a[i], b[i])).sum();
-    sum / n as f32
+    let step = (n as f32).sqrt().floor().max(1.0) as usize;
+    let mut best = f32::MAX;
+    let mut start = 0usize;
+    while start < n {
+        best = best.min(cloud_from(a, b, start)).min(cloud_from(b, a, start));
+        start += step;
+    }
+    best / n as f32
 }
 
-fn reversed(p: &[(f32, f32)]) -> Vec<(f32, f32)> {
-    p.iter().rev().copied().collect()
-}
-
-/// 和模板比距离：正反两个方向都试（S 转 180° 还是 S，H 从下往上画也一样）。
-fn best_distance(path: &[(f32, f32)], templates: &[Vec<(f32, f32)>]) -> f32 {
-    templates
-        .iter()
-        .map(|t| mean_dist(path, t).min(mean_dist(path, &reversed(t))))
-        .fold(f32::MAX, f32::min)
+/// 从 `start` 开始的一次贪心配对（返回加权总和，未除以点数）
+fn cloud_from(a: &[(f32, f32)], b: &[(f32, f32)], start: usize) -> f32 {
+    let n = a.len().min(b.len());
+    let mut matched = vec![false; n];
+    let mut sum = 0.0;
+    let mut i = start;
+    let mut taken = 0usize;
+    loop {
+        let mut best = f32::MAX;
+        let mut pick = 0usize;
+        for j in 0..n {
+            if matched[j] {
+                continue;
+            }
+            let d = dist(a[i], b[j]);
+            if d < best {
+                best = d;
+                pick = j;
+            }
+        }
+        matched[pick] = true;
+        // 越往后越"没得挑"，权重从 1 线性降到 1/n
+        sum += (1.0 - taken as f32 / n as f32) * best;
+        taken += 1;
+        i = (i + 1) % n;
+        if i == start {
+            break;
+        }
+    }
+    sum
 }
 
 /* ---------------- 内置形状注册表 ---------------- */
 
-/// 一个内置形状。
+/// 一个内置形状：字符 + 点云模板 + 距离上限。
 ///
-/// `chord_aligned` 决定"要不要先把弦转到竖直"：
-///   - S 是斜着写的（右上起笔、左下收笔），不校正斜度距离会凭空大一截；
-///   - H 是横平竖直写的，转了反而错 —— 竖着的 H 和横着的 H 是两个字。
+/// 只有这三个字段 —— 换方案之前这里还有 `chord_aligned`、两套模板、
+/// 两套规范化，每加一个字都要再想一套规则。
 struct Builtin {
     ch: char,
-    chord_aligned: bool,
     max_dist: f32,
     templates: Vec<Vec<(f32, f32)>>,
 }
 
 impl Builtin {
-    /// 用户轨迹和模板必须走同一套规范化，否则比出来的距离没有意义。
-    ///
-    /// 传进来的是**原始点**而不是重采样后的点：H 要先把宽高拉成正方形再采样，
-    /// 顺序反了就白做了。
-    fn canon(&self, raw: &[(f32, f32)]) -> Vec<(f32, f32)> {
-        if self.chord_aligned {
-            canonical(&smooth(&resample(raw, SAMPLES)))
-        } else {
-            h_canonical(raw)
-        }
+    /// 到最近模板的原始点云距离（诊断和调阈值看这个）
+    fn raw_score(&self, raw: &[(f32, f32)]) -> f32 {
+        let p = cloud_canonical(raw);
+        self.templates
+            .iter()
+            .map(|t| cloud_distance(&p, t))
+            .fold(f32::MAX, f32::min)
     }
 
-    /// 1.0 = 正好卡在阈值上，越小越像
+    /// 归一化到阈值：1.0 = 正好卡在线上，越小越像
     fn score(&self, raw: &[(f32, f32)]) -> f32 {
-        best_distance(&self.canon(raw), &self.templates) / self.max_dist
+        self.raw_score(raw) / self.max_dist
     }
 }
 
@@ -276,90 +305,25 @@ fn builtins() -> &'static [Builtin] {
         vec![
             Builtin {
                 ch: 'S',
-                chord_aligned: true,
-                max_dist: MATCH_DIST,
-                templates: s_templates(),
+                max_dist: CLOUD_S_MAX,
+                // 两种写法：字体式（右上起笔）和正弦式（正上方起笔）。
+                // 真人写的几乎都是前者，但两种都放进模板成本极低。
+                templates: vec![
+                    cloud_canonical(&letter_s_curve()),
+                    cloud_canonical(&wave_s_curve()),
+                ],
             },
             Builtin {
                 ch: 'H',
-                chord_aligned: false,
-                max_dist: H_MATCH_DIST,
-                templates: h_templates(),
+                max_dist: CLOUD_H_MAX,
+                templates: h_shapes().iter().map(|p| cloud_canonical(p)).collect(),
             },
         ]
     })
 }
 
-/// S 的两种写法都得认：
-///   - **字体式**：右上角起笔、左下角收笔（和字库里的 S 一样，弦是斜的）；
-///   - **正弦式**：正上方起笔，上下拉满，弦是竖直的。
-/// 只放一个模板，另一种就永远认不出来 —— 第一版只放了正弦式，真人写的全认不出。
-fn s_templates() -> Vec<Vec<(f32, f32)>> {
-    // 不放镜像版（"Ƨ"）：试过，Z 的距离会从 0.79 掉到 0.22 ——
-    // 那正好是程序排除手势，为兼容一个没人会写的方向把排除手势抢走不值得。
-    vec![letter_s(), wave_s()]
-}
-
-/// 一笔能画出来的 H 只有这几种收笔方式（中间那道一定要"回笔"）：
-///   A 左腿下 → 回到中线 → 中横 → 右腿向上 → 右腿向下（收在右下）
-///   B 左腿下 → 回到中线 → 中横 → 右腿向下 → 回到上方（收在右上）
-///   C/D 中横偏下 / 偏上：回笔时手容易停在偏一点的位置，模板得覆盖
-///       （实测偏 0.4 时距离已经到 0.14，不覆盖就会"画得没问题却不认"）
-fn h_templates() -> Vec<Vec<(f32, f32)>> {
-    // 坐标写成"正方形里"的 H（x、y 都是 -1..1）：用户那笔会先被拉成正方形，
-    // 两边对齐同一套比例，采样点才一一对应。
-    let shapes: [&[(f32, f32)]; 4] = [
-        &[
-            (-1.0, -1.0),
-            (-1.0, 1.0),
-            (-1.0, 0.0),
-            (1.0, 0.0),
-            (1.0, -1.0),
-            (1.0, 1.0),
-        ],
-        &[
-            (-1.0, -1.0),
-            (-1.0, 1.0),
-            (-1.0, 0.0),
-            (1.0, 0.0),
-            (1.0, 1.0),
-            (1.0, -1.0),
-        ],
-        &[
-            (-1.0, -1.0),
-            (-1.0, 1.0),
-            (-1.0, 0.35),
-            (1.0, 0.35),
-            (1.0, -1.0),
-            (1.0, 1.0),
-        ],
-        &[
-            (-1.0, -1.0),
-            (-1.0, 1.0),
-            (-1.0, -0.35),
-            (1.0, -0.35),
-            (1.0, -1.0),
-            (1.0, 1.0),
-        ],
-    ];
-    shapes.iter().map(|pts| h_canonical(pts)).collect()
-}
-
-/// H 的规范化：**先**把宽高拉成正方形，**再**按弧长重采样，最后归一化。
-///
-/// 顺序很关键。H 由"两条腿 + 一道回笔的横"组成，横画得长一点，同样 32 个
-/// 采样点落的位置就完全不同 —— 先采样再拉宽，"宽扁的 H"和模板逐点对不上，
-/// 实测距离 0.24（阈值 0.16），直接认不出；先拉成正方形，宽窄就不再影响
-/// 采样点的分布。
-fn h_canonical(raw: &[(f32, f32)]) -> Vec<(f32, f32)> {
-    let (w, h) = extent(raw);
-    let k = if w > 1e-3 { h / w } else { 1.0 };
-    let squared: Vec<(f32, f32)> = raw.iter().map(|&(x, y)| (x * k, y)).collect();
-    normalize(&smooth(&resample(&squared, SAMPLES)))
-}
-
-/// 字体式 S：一条三次贝塞尔，起笔右上、收笔左下
-fn letter_s() -> Vec<(f32, f32)> {
+/// 字体式 S：一条三次贝塞尔，起笔右上、收笔左下（和字库里的 S 一样）
+fn letter_s_curve() -> Vec<(f32, f32)> {
     let (p0, p1) = ((0.6f32, -1.0f32), (-1.0f32, -0.6f32));
     let (p2, p3) = ((1.0f32, 0.6f32), (-0.6f32, 1.0f32));
     let mut out = Vec::with_capacity(SAMPLES);
@@ -372,11 +336,11 @@ fn letter_s() -> Vec<(f32, f32)> {
             b0 * p0.1 + b1 * p1.1 + b2 * p2.1 + b3 * p3.1,
         ));
     }
-    canonical(&out)
+    out
 }
 
 /// 正弦式 S：上下两段半圆，起笔收笔都在正中间
-fn wave_s() -> Vec<(f32, f32)> {
+fn wave_s_curve() -> Vec<(f32, f32)> {
     let mut out = Vec::with_capacity(SAMPLES);
     for i in 0..SAMPLES {
         let t = i as f32 / (SAMPLES - 1) as f32;
@@ -389,318 +353,53 @@ fn wave_s() -> Vec<(f32, f32)> {
         };
         out.push(p);
     }
-    canonical(&out)
+    out
 }
 
-/// 模板也要走和用户轨迹一样的规范化：弦转到竖直 + 逐轴归一化。
-/// 两边流程不一致的话，比出来的距离没有意义。
-fn canonical(p: &[(f32, f32)]) -> Vec<(f32, f32)> {
-    normalize(&align_down(p))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 只看 S 的距离比，绕过几何闸门（调阈值用）
-    fn score(raw: &[(i32, i32)]) -> f32 {
-        let pts = thin(raw, 2.0);
-        let path = smooth(&resample(&pts, SAMPLES));
-        builtins()[0].score(&path)
-    }
-
-    /// 字体式 S：右上起笔、左下收笔（真人手写的样子）
-    fn letter_s_path(h: f32, ratio: f32, noise: f32, n: i32) -> Vec<(i32, i32)> {
-        let (p0, p1) = ((0.6f32, -1.0f32), (-1.0f32, -0.6f32));
-        let (p2, p3) = ((1.0f32, 0.6f32), (-0.6f32, 1.0f32));
-        let mut v = Vec::new();
-        for i in 0..=n {
-            let t = i as f32 / n as f32;
-            let u = 1.0 - t;
-            let (b0, b1, b2, b3) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
-            let x = b0 * p0.0 + b1 * p1.0 + b2 * p2.0 + b3 * p3.0;
-            let y = b0 * p0.1 + b1 * p1.1 + b2 * p2.1 + b3 * p3.1;
-            let jx = ((i * 7919) % 13) as f32 / 13.0 - 0.5;
-            let jy = ((i * 104_729) % 11) as f32 / 11.0 - 0.5;
-            v.push((
-                (500.0 + x * h * ratio * 0.5 + jx * 2.0 * noise) as i32,
-                (400.0 + y * h * 0.5 + jy * 2.0 * noise) as i32,
-            ));
-        }
-        v
-    }
-
-    /// 正弦式 S：从正上方起笔（上半往左鼓、下半往右鼓，和字库里的 S 同向）
-    fn wave_s_path(h: f32, ratio: f32, noise: f32, bottom_up: bool, n: i32) -> Vec<(i32, i32)> {
-        let mut v = Vec::new();
-        for i in 0..=n {
-            let t = i as f32 / n as f32;
-            let t = if bottom_up { 1.0 - t } else { t };
-            let (x, y) = if t < 0.5 {
-                let a = t / 0.5 * PI;
-                (-0.5 * a.sin() * h * ratio, -0.5 - 0.5 * a.cos())
-            } else {
-                let a = (t - 0.5) / 0.5 * PI;
-                (0.5 * a.sin() * h * ratio, 0.5 * (1.0 - a.cos()))
-            };
-            let jx = ((i * 7919) % 13) as f32 / 13.0 - 0.5;
-            let jy = ((i * 104_729) % 11) as f32 / 11.0 - 0.5;
-            v.push((
-                (500.0 + x + jx * 2.0 * noise) as i32,
-                (400.0 + y * h / 2.0 + jy * 2.0 * noise) as i32,
-            ));
-        }
-        v
-    }
-
-    /// 整体旋转（模拟"斜着写"）
-    fn rotated(pts: Vec<(i32, i32)>, deg: f32) -> Vec<(i32, i32)> {
-        let (s, c) = (deg.to_radians().sin(), deg.to_radians().cos());
-        pts.iter()
-            .map(|&(x, y)| {
-                let (px, py) = (x as f32 - 500.0, y as f32 - 400.0);
-                ((500.0 + px * c - py * s) as i32, (400.0 + px * s + py * c) as i32)
-            })
-            .collect()
-    }
-
-    /// 手画的不对称 S：上下两半半径不同、中间被手快画成直线
-    fn irregular() -> Vec<(i32, i32)> {
-        let mut v = Vec::new();
-        for i in 0..=60 {
-            let t = i as f32 / 60.0;
-            let (x, y) = if t < 0.45 {
-                let a = t / 0.45 * PI;
-                (-0.5 * a.sin() * 1.15, -0.5 - 0.5 * a.cos())
-            } else if t < 0.55 {
-                let k = (t - 0.45) / 0.1;
-                (-0.05 + 0.15 * k, -0.12 + 0.24 * k)
-            } else {
-                let a = (t - 0.55) / 0.45 * PI;
-                (0.5 * a.sin() * 0.85, 0.5 * (1.0 - a.cos()))
-            };
-            v.push(((400.0 + x * 260.0) as i32, (300.0 + y * 210.0) as i32));
-        }
-        v
-    }
-
-    fn polyline(pts: &[(f32, f32)], per_seg: i32) -> Vec<(i32, i32)> {
-        let mut v = Vec::new();
-        for w in pts.windows(2) {
-            for i in 0..per_seg {
-                let t = i as f32 / per_seg as f32;
-                v.push((
-                    (w[0].0 + (w[1].0 - w[0].0) * t) as i32,
-                    (w[0].1 + (w[1].1 - w[0].1) * t) as i32,
-                ));
-            }
-        }
-        if let Some(&l) = pts.last() {
-            v.push((l.0 as i32, l.1 as i32));
-        }
-        v
-    }
-
-    #[test]
-    fn recognizes_letter_s() {
-        // 真人写的那种：右上起笔
-        assert_eq!(recognize(&letter_s_path(300.0, 0.7, 0.0, 60)), Some('S'));
-        assert_eq!(recognize(&letter_s_path(180.0, 0.9, 0.0, 40)), Some('S'));
-        assert_eq!(recognize(&letter_s_path(420.0, 0.6, 0.0, 80)), Some('S'));
-        assert_eq!(recognize(&letter_s_path(90.0, 0.8, 0.0, 40)), Some('S'));
-        // 手抖
-        assert_eq!(recognize(&letter_s_path(300.0, 0.7, 6.0, 60)), Some('S'));
-        assert_eq!(recognize(&letter_s_path(300.0, 0.7, 12.0, 60)), Some('S'));
-        // 斜着写（手写 S 基本都斜）
-        for deg in [-25.0, -10.0, 10.0, 25.0] {
-            let p = rotated(letter_s_path(300.0, 0.7, 4.0, 60), deg);
-            assert_eq!(recognize(&p), Some('S'), "斜 {deg}°：{}", diagnose(&p));
-        }
-        // 上下不对称 + 中间拉直
-        let p = irregular();
-        assert_eq!(recognize(&p), Some('S'), "{}", diagnose(&p));
-    }
-
-    /// 一笔画出来的 H：左腿下、回中线、中横、右腿上下收笔
-    fn h_path(h: f32, w: f32, jitter: f32, up_first: bool, n: i32) -> Vec<(i32, i32)> {
-        let (x0, x1, y0, y1) = (500.0 - w / 2.0, 500.0 + w / 2.0, 400.0 - h / 2.0, 400.0 + h / 2.0);
-        let ym = (y0 + y1) / 2.0;
-        let mut v = vec![(x0, y0), (x0, y1), (x0, ym), (x1, ym)];
-        // 右腿：先上后下 / 先下后上
-        if up_first {
-            v.push((x1, y0));
-            v.push((x1, y1));
-        } else {
-            v.push((x1, y1));
-            v.push((x1, y0));
-        }
-        let mut raw = Vec::new();
-        for seg in v.windows(2) {
-            for i in 0..n {
-                let t = i as f32 / n as f32;
-                let jx = ((i * 7919) % 13) as f32 / 13.0 - 0.5;
-                let jy = ((i * 104_729) % 11) as f32 / 11.0 - 0.5;
-                raw.push((
-                    (seg[0].0 + (seg[1].0 - seg[0].0) * t + jx * 2.0 * jitter) as i32,
-                    (seg[0].1 + (seg[1].1 - seg[0].1) * t + jy * 2.0 * jitter) as i32,
-                ));
-            }
-        }
-        raw
-    }
-
-    #[test]
-    fn recognizes_letter_h() {
-        assert_eq!(recognize(&h_path(300.0, 220.0, 0.0, true, 16)), Some('H'));
-        assert_eq!(recognize(&h_path(300.0, 220.0, 0.0, false, 16)), Some('H'));
-        // 画大画小、手抖
-        assert_eq!(recognize(&h_path(160.0, 130.0, 0.0, true, 12)), Some('H'));
-        assert_eq!(recognize(&h_path(320.0, 260.0, 5.0, false, 16)), Some('H'));
-        // 从左下往上画（整笔反向）
-        let mut rev = h_path(300.0, 220.0, 0.0, true, 16);
-        rev.reverse();
-        assert_eq!(recognize(&rev), Some('H'));
-    }
-
-    #[test]
-    fn h_is_not_s_and_s_is_not_h() {
-        // S 不能被认成 H，H 不能被认成 S
-        assert_eq!(recognize(&letter_s_path(300.0, 0.7, 0.0, 60)), Some('S'));
-        assert_eq!(recognize(&h_path(300.0, 220.0, 0.0, true, 16)), Some('H'));
-        // 竖划、横划仍然是方向手势，不能被 H 吞掉
-        assert_eq!(recognize(&polyline(&[(0.0, 0.0), (0.0, 300.0)], 40)), None);
-        assert_eq!(recognize(&polyline(&[(0.0, 0.0), (300.0, 0.0)], 40)), None);
-    }
-
-    #[test]
-    fn recognizes_wave_s() {
-        assert_eq!(recognize(&wave_s_path(320.0, 0.6, 0.0, false, 80)), Some('S'));
-        assert_eq!(recognize(&wave_s_path(240.0, 1.0, 0.0, false, 60)), Some('S'));
-        assert_eq!(recognize(&wave_s_path(300.0, 0.8, 0.0, true, 80)), Some('S'));
-        assert_eq!(recognize(&wave_s_path(120.0, 0.7, 0.0, false, 40)), Some('S'));
-    }
-
-    #[test]
-    fn rejects_straight_lines() {
-        for pts in [
-            vec![(0.0, 0.0), (400.0, 0.0)],
-            vec![(0.0, 0.0), (0.0, 400.0)],
-            vec![(0.0, 0.0), (300.0, 300.0)],
-            vec![(0.0, 0.0), (300.0, 60.0)],
-        ] {
-            assert_eq!(recognize(&polyline(&pts, 40)), None, "{pts:?}");
-        }
-    }
-
-    #[test]
-    fn rejects_polygons() {
-        // Z（程序排除手势）
-        let z = [(0.0, 0.0), (300.0, 0.0), (0.0, 300.0), (300.0, 300.0)];
-        assert_eq!(recognize(&polyline(&z, 40)), None);
-        // L
-        let l = [(0.0, 0.0), (0.0, 300.0), (300.0, 300.0)];
-        assert_eq!(recognize(&polyline(&l, 40)), None);
-        // U
-        let u = [(0.0, 0.0), (0.0, 250.0), (250.0, 250.0), (250.0, 0.0)];
-        assert_eq!(recognize(&polyline(&u, 40)), None);
-    }
-
-    #[test]
-    fn rejects_loops_and_arcs() {
-        // 圆
-        let circle: Vec<(i32, i32)> = (0..=72)
-            .map(|i| {
-                let a = i as f32 / 72.0 * std::f32::consts::TAU;
-                (
-                    (500.0 + 150.0 * a.cos()) as i32,
-                    (400.0 + 150.0 * a.sin()) as i32,
-                )
-            })
-            .collect();
-        assert_eq!(recognize(&circle), None);
-
-        // C 形
-        let c: Vec<(i32, i32)> = (0..=40)
-            .map(|i| {
-                let a = -PI / 2.5 + i as f32 / 40.0 * (PI * 1.25);
-                ((500.0 + 150.0 * a.cos()) as i32, (400.0 + 150.0 * a.sin()) as i32)
-            })
-            .collect();
-        assert_eq!(recognize(&c), None);
-
-        // 一个周期的波浪（横着划）
-        let wave: Vec<(i32, i32)> = (0..=80)
-            .map(|i| {
-                let t = i as f32 / 80.0;
-                (
-                    (300.0 + t * 300.0) as i32,
-                    (400.0 - (t * std::f32::consts::TAU).sin() * 80.0) as i32,
-                )
-            })
-            .collect();
-        assert_eq!(recognize(&wave), None);
-    }
-
-    #[test]
-    fn rejects_tiny_jitter() {
-        let jitter = [(0, 0), (6, 3), (2, 9), (11, 6), (4, 2), (9, 8), (3, 5), (7, 1)];
-        assert_eq!(recognize(&jitter), None);
-    }
-
-    /// 调阈值用：把各用例的距离打出来看分离度
-    #[test]
-    fn metrics() {
-        let pos = [
-            ("letters300", letter_s_path(300.0, 0.7, 0.0, 60)),
-            ("letters300n12", letter_s_path(300.0, 0.7, 12.0, 60)),
-            ("letters180", letter_s_path(180.0, 0.9, 0.0, 40)),
-            ("letters90", letter_s_path(90.0, 0.8, 0.0, 40)),
-            ("letters_wide", letter_s_path(260.0, 1.3, 0.0, 60)),
-            ("letters_thin", letter_s_path(360.0, 0.3, 0.0, 60)),
-            ("letters_slant25", rotated(letter_s_path(300.0, 0.7, 3.0, 60), 25.0)),
-            ("line_diag", polyline(&[(0.0, 0.0), (300.0, 300.0)], 40)),
-            ("line_wiggle", polyline(&[(0.0, 0.0), (150.0, 8.0), (300.0, 0.0)], 40)),
-            ("irregular", irregular()),
-            ("wave320", wave_s_path(320.0, 0.6, 0.0, false, 80)),
-        ];
-        for (name, p) in pos {
-            println!("{name}: {:.2} => {}", score(&p), recognize(&p).is_some());
-        }
-        let neg = [
-            ("Z", polyline(&[(0.0, 0.0), (300.0, 0.0), (0.0, 300.0), (300.0, 300.0)], 40)),
-            ("L", polyline(&[(0.0, 0.0), (0.0, 300.0), (300.0, 300.0)], 40)),
-            ("U", polyline(&[(0.0, 0.0), (0.0, 250.0), (250.0, 250.0), (250.0, 0.0)], 40)),
-            ("V", polyline(&[(0.0, 0.0), (150.0, 300.0), (300.0, 0.0)], 40)),
-            ("zig", polyline(&[(200.0, 0.0), (0.0, 100.0), (200.0, 200.0), (0.0, 300.0)], 40)),
-            (
-                "5",
-                polyline(
-                    &[
-                        (300.0, 0.0),
-                        (0.0, 0.0),
-                        (0.0, 150.0),
-                        (260.0, 150.0),
-                        (300.0, 300.0),
-                        (0.0, 300.0),
-                    ],
-                    40,
-                ),
-            ),
-        ];
-        for (name, p) in neg {
-            println!("{name}: {:.2} => {}", score(&p), recognize(&p).is_some());
-        }
-        let circle: Vec<(i32, i32)> = (0..=72)
-            .map(|i| {
-                let a = i as f32 / 72.0 * std::f32::consts::TAU;
-                (
-                    (500.0 + 150.0 * a.cos()) as i32,
-                    (400.0 + 150.0 * a.sin()) as i32,
-                )
-            })
-            .collect();
-        println!("circle: {:.2} => {}", score(&circle), recognize(&circle).is_some());
-    }
+/// 一笔能画出来的 H：左腿下 → 回到中线 → 中横 → 右腿上下收笔。
+///
+/// 两条腿的收笔方向、中横的高低都有人这么画，模板各放一份
+/// （实测中横偏 0.4 时距离就到 0.05，不覆盖会"画得没问题却不认"）。
+#[allow(clippy::type_complexity)]
+fn h_shapes() -> [&'static [(f32, f32)]; 4] {
+    [
+        // 收在右下
+        &[
+            (-1.0, -1.0),
+            (-1.0, 1.0),
+            (-1.0, 0.0),
+            (1.0, 0.0),
+            (1.0, -1.0),
+            (1.0, 1.0),
+        ],
+        // 收在右上
+        &[
+            (-1.0, -1.0),
+            (-1.0, 1.0),
+            (-1.0, 0.0),
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (1.0, -1.0),
+        ],
+        // 中横偏下
+        &[
+            (-1.0, -1.0),
+            (-1.0, 1.0),
+            (-1.0, 0.35),
+            (1.0, 0.35),
+            (1.0, -1.0),
+            (1.0, 1.0),
+        ],
+        // 中横偏上
+        &[
+            (-1.0, -1.0),
+            (-1.0, 1.0),
+            (-1.0, -0.35),
+            (1.0, -0.35),
+            (1.0, -1.0),
+            (1.0, 1.0),
+        ],
+    ]
 }
 
 /* ---------------- 自定义手势（用户自己画一笔当模板） ---------------- */
@@ -709,6 +408,9 @@ mod tests {
 ///
 /// 为什么等比而不是逐轴拉满：逐轴拉满会把"竖 + 横"的 L 和"斜 + 斜"的 V
 /// 拉得一样，两个手势就分不开了。等比缩放只忽略大小，保留形状比例。
+///
+/// 这条路和内置形状不共用实现，是刻意的：内置形状要"宽窄都能认"
+/// （点云），而用户自绘要"守住自己的比例"（多点 M 和 W 本来就像）。
 pub fn canonical_stroke(raw: &[(i32, i32)]) -> Vec<[f32; 2]> {
     let pts = thin(raw, 2.0);
     if pts.len() < 3 {
@@ -741,6 +443,241 @@ pub fn stroke_distance(a: &[[f32; 2]], b: &[[f32; 2]]) -> f32 {
         .map(|(p, q)| ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt())
         .sum();
     sum / a.len() as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 字体式 S：右上起笔、左下收笔（真人手写的样子）
+    fn letter_s_path(h: f32, ratio: f32, noise: f32, n: i32) -> Vec<(i32, i32)> {
+        let (p0, p1) = ((0.6f32, -1.0f32), (-1.0f32, -0.6f32));
+        let (p2, p3) = ((1.0f32, 0.6f32), (-0.6f32, 1.0f32));
+        let mut v = Vec::new();
+        for i in 0..=n {
+            let t = i as f32 / n as f32;
+            let u = 1.0 - t;
+            let (b0, b1, b2, b3) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+            let x = b0 * p0.0 + b1 * p1.0 + b2 * p2.0 + b3 * p3.0;
+            let y = b0 * p0.1 + b1 * p1.1 + b2 * p2.1 + b3 * p3.1;
+            let jx = ((i * 7919) % 13) as f32 / 13.0 - 0.5;
+            let jy = ((i * 104_729) % 11) as f32 / 11.0 - 0.5;
+            v.push((
+                (500.0 + x * h * ratio * 0.5 + jx * 2.0 * noise) as i32,
+                (400.0 + y * h * 0.5 + jy * 2.0 * noise) as i32,
+            ));
+        }
+        v
+    }
+
+    /// 正弦式 S：从正上方起笔（上半往左鼓、下半往右鼓）
+    fn wave_s_path(h: f32, ratio: f32, noise: f32, bottom_up: bool, n: i32) -> Vec<(i32, i32)> {
+        let mut v = Vec::new();
+        for i in 0..=n {
+            let t = i as f32 / n as f32;
+            let t = if bottom_up { 1.0 - t } else { t };
+            let (x, y) = if t < 0.5 {
+                let a = t / 0.5 * PI;
+                (-0.5 * a.sin() * h * ratio, -0.5 - 0.5 * a.cos())
+            } else {
+                let a = (t - 0.5) / 0.5 * PI;
+                (0.5 * a.sin() * h * ratio, 0.5 * (1.0 - a.cos()))
+            };
+            let jx = ((i * 7919) % 13) as f32 / 13.0 - 0.5;
+            let jy = ((i * 104_729) % 11) as f32 / 11.0 - 0.5;
+            v.push((
+                (500.0 + x + jx * 2.0 * noise) as i32,
+                (400.0 + y * h / 2.0 + jy * 2.0 * noise) as i32,
+            ));
+        }
+        v
+    }
+
+    /// 一笔画出来的 H：左腿下、回中线、中横、右腿上下收笔
+    fn h_path(h: f32, w: f32, jitter: f32, up_first: bool, n: i32) -> Vec<(i32, i32)> {
+        let (x0, x1) = (500.0 - w / 2.0, 500.0 + w / 2.0);
+        let (y0, y1) = (400.0 - h / 2.0, 400.0 + h / 2.0);
+        let ym = (y0 + y1) / 2.0;
+        let mut v = vec![(x0, y0), (x0, y1), (x0, ym), (x1, ym)];
+        if up_first {
+            v.push((x1, y0));
+            v.push((x1, y1));
+        } else {
+            v.push((x1, y1));
+            v.push((x1, y0));
+        }
+        let mut raw = Vec::new();
+        for seg in v.windows(2) {
+            for i in 0..n {
+                let t = i as f32 / n as f32;
+                let jx = ((i * 7919) % 13) as f32 / 13.0 - 0.5;
+                let jy = ((i * 104_729) % 11) as f32 / 11.0 - 0.5;
+                raw.push((
+                    (seg[0].0 + (seg[1].0 - seg[0].0) * t + jx * 2.0 * jitter) as i32,
+                    (seg[0].1 + (seg[1].1 - seg[0].1) * t + jy * 2.0 * jitter) as i32,
+                ));
+            }
+        }
+        raw
+    }
+
+    /// 整体旋转（模拟"斜着写"）
+    fn rotated(pts: Vec<(i32, i32)>, deg: f32) -> Vec<(i32, i32)> {
+        let (s, c) = (deg.to_radians().sin(), deg.to_radians().cos());
+        pts.iter()
+            .map(|&(x, y)| {
+                let (px, py) = (x as f32 - 500.0, y as f32 - 400.0);
+                ((500.0 + px * c - py * s) as i32, (400.0 + px * s + py * c) as i32)
+            })
+            .collect()
+    }
+
+    fn polyline(pts: &[(f32, f32)], per_seg: i32) -> Vec<(i32, i32)> {
+        let mut v = Vec::new();
+        for w in pts.windows(2) {
+            for i in 0..per_seg {
+                let t = i as f32 / per_seg as f32;
+                v.push((
+                    (w[0].0 + (w[1].0 - w[0].0) * t) as i32,
+                    (w[0].1 + (w[1].1 - w[0].1) * t) as i32,
+                ));
+            }
+        }
+        if let Some(&l) = pts.last() {
+            v.push((l.0 as i32, l.1 as i32));
+        }
+        v
+    }
+
+    #[test]
+    fn recognizes_s() {
+        // 真人写的那种：右上起笔
+        for (h, ratio, n) in [(300.0, 0.7, 60), (180.0, 0.9, 40), (90.0, 0.8, 40)] {
+            assert_eq!(recognize(&letter_s_path(h, ratio, 0.0, n)), Some('S'));
+        }
+        // 手抖 / 斜写 / 宽扁 / 瘦高
+        assert_eq!(recognize(&letter_s_path(300.0, 0.7, 12.0, 60)), Some('S'));
+        for deg in [-25.0, -10.0, 10.0, 25.0] {
+            let p = rotated(letter_s_path(300.0, 0.7, 4.0, 60), deg);
+            assert_eq!(recognize(&p), Some('S'), "斜 {deg}°：{}", diagnose(&p));
+        }
+        assert_eq!(recognize(&letter_s_path(300.0, 2.5, 0.0, 60)), Some('S'));
+        assert_eq!(recognize(&letter_s_path(360.0, 0.3, 0.0, 60)), Some('S'));
+        // 正弦式、反向画
+        assert_eq!(recognize(&wave_s_path(320.0, 0.6, 0.0, false, 80)), Some('S'));
+        assert_eq!(recognize(&wave_s_path(300.0, 0.8, 0.0, true, 80)), Some('S'));
+        let mut rev = letter_s_path(300.0, 0.7, 0.0, 60);
+        rev.reverse();
+        assert_eq!(recognize(&rev), Some('S'));
+    }
+
+    #[test]
+    fn recognizes_h() {
+        assert_eq!(recognize(&h_path(300.0, 220.0, 0.0, true, 16)), Some('H'));
+        assert_eq!(recognize(&h_path(300.0, 220.0, 0.0, false, 16)), Some('H'));
+        // 画大画小、手抖、宽扁、瘦高
+        assert_eq!(recognize(&h_path(160.0, 130.0, 0.0, true, 12)), Some('H'));
+        assert_eq!(recognize(&h_path(320.0, 260.0, 5.0, false, 16)), Some('H'));
+        assert_eq!(recognize(&h_path(300.0, 380.0, 0.0, true, 16)), Some('H'));
+        assert_eq!(recognize(&h_path(380.0, 150.0, 0.0, true, 16)), Some('H'));
+        // 整笔反向
+        let mut rev = h_path(300.0, 220.0, 0.0, true, 16);
+        rev.reverse();
+        assert_eq!(recognize(&rev), Some('H'));
+    }
+
+    #[test]
+    fn s_and_h_dont_steal_each_other() {
+        assert_eq!(recognize(&letter_s_path(300.0, 0.7, 0.0, 60)), Some('S'));
+        assert_eq!(recognize(&h_path(300.0, 220.0, 0.0, true, 16)), Some('H'));
+    }
+
+    #[test]
+    fn rejects_straight_and_tiny() {
+        for pts in [
+            vec![(0.0, 0.0), (400.0, 0.0)],
+            vec![(0.0, 0.0), (0.0, 400.0)],
+            vec![(0.0, 0.0), (300.0, 300.0)],
+            vec![(0.0, 0.0), (300.0, 60.0)],
+            // 回笔竖：竖直划下去再回来，没有 S/H 的走向
+            vec![(0.0, 0.0), (0.0, 300.0), (0.0, 100.0)],
+        ] {
+            assert_eq!(recognize(&polyline(&pts, 40)), None, "{pts:?}");
+        }
+        let jitter = [(0, 0), (6, 3), (2, 9), (11, 6), (4, 2), (9, 8), (3, 5), (7, 1)];
+        assert_eq!(recognize(&jitter), None);
+    }
+
+    #[test]
+    fn rejects_polygons() {
+        // Z（程序排除手势）、L、U、V
+        for pts in [
+            vec![(0.0, 0.0), (300.0, 0.0), (0.0, 300.0), (300.0, 300.0)],
+            vec![(0.0, 0.0), (0.0, 300.0), (300.0, 300.0)],
+            vec![(0.0, 0.0), (0.0, 250.0), (250.0, 250.0), (250.0, 0.0)],
+            vec![(0.0, 0.0), (150.0, 300.0), (300.0, 0.0)],
+        ] {
+            assert_eq!(recognize(&polyline(&pts, 40)), None, "{pts:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_loops_and_arcs() {
+        let circle: Vec<(i32, i32)> = (0..=72)
+            .map(|i| {
+                let a = i as f32 / 72.0 * std::f32::consts::TAU;
+                ((500.0 + 150.0 * a.cos()) as i32, (400.0 + 150.0 * a.sin()) as i32)
+            })
+            .collect();
+        assert_eq!(recognize(&circle), None);
+
+        let c: Vec<(i32, i32)> = (0..=40)
+            .map(|i| {
+                let a = -PI / 2.5 + i as f32 / 40.0 * (PI * 1.25);
+                ((500.0 + 150.0 * a.cos()) as i32, (400.0 + 150.0 * a.sin()) as i32)
+            })
+            .collect();
+        assert_eq!(recognize(&c), None);
+
+        // 一个周期的波浪（横着划）
+        let wave: Vec<(i32, i32)> = (0..=80)
+            .map(|i| {
+                let t = i as f32 / 80.0;
+                (
+                    (300.0 + t * 300.0) as i32,
+                    (400.0 - (t * std::f32::consts::TAU).sin() * 80.0) as i32,
+                )
+            })
+            .collect();
+        assert_eq!(recognize(&wave), None);
+    }
+
+    /// 调阈值用：把各用例的点云距离打出来看分离度
+    /// （等价于 `python tests/shape_probe.py -v`，没装 node/没开调试端口时用）
+    #[test]
+    fn metrics() {
+        for (name, p) in [
+            ("s300", letter_s_path(300.0, 0.7, 0.0, 60)),
+            ("s300n12", letter_s_path(300.0, 0.7, 12.0, 60)),
+            ("s_wide", letter_s_path(300.0, 2.5, 0.0, 60)),
+            ("s_thin", letter_s_path(360.0, 0.3, 0.0, 60)),
+            ("s_slant25", rotated(letter_s_path(300.0, 0.7, 3.0, 60), 25.0)),
+            ("h300", h_path(300.0, 220.0, 0.0, true, 16)),
+            ("h_flat", h_path(200.0, 520.0, 0.0, true, 16)),
+            ("h_tall", h_path(380.0, 150.0, 0.0, true, 16)),
+            ("Z", polyline(&[(0.0, 0.0), (300.0, 0.0), (0.0, 300.0), (300.0, 300.0)], 40)),
+            ("L", polyline(&[(0.0, 0.0), (0.0, 300.0), (300.0, 300.0)], 40)),
+            ("U", polyline(&[(0.0, 0.0), (0.0, 250.0), (250.0, 250.0), (250.0, 0.0)], 40)),
+            ("V", polyline(&[(0.0, 0.0), (150.0, 300.0), (300.0, 0.0)], 40)),
+        ] {
+            let pts = thin(&p, 2.0);
+            let s: String = builtins()
+                .iter()
+                .map(|b| format!("{}({:.3}/{:.3}) ", b.ch, b.raw_score(&pts), b.max_dist))
+                .collect();
+            println!("{name:10} {s} => {:?}", recognize(&p));
+        }
+    }
 }
 
 #[cfg(test)]
