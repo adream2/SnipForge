@@ -68,7 +68,6 @@ const MEDIA_KEYS = [
 const SNIP_IDS = [
   { id: 'region', label: '区域截图' },
   { id: 'fullscreen', label: '全屏截图' },
-  { id: 'window', label: '窗口截图' },
   { id: 'scroll', label: '滚动长截图' },
   { id: 'panel', label: '剪贴板面板' },
   { id: 'pin', label: '剪贴板贴图' },

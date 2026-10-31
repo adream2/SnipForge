@@ -226,7 +226,6 @@ fn describe(a: &GestureAction) -> String {
         GestureAction::Snip { id } => match id.as_str() {
             "region" => "截图".into(),
             "fullscreen" => "全屏截图".into(),
-            "window" => "窗口截图".into(),
             "scroll" => "长截图".into(),
             "panel" => "剪贴板面板".into(),
             "pin" => "剪贴板贴图".into(),
@@ -348,7 +347,6 @@ fn run_snip(app: &AppHandle, id: &str) {
     match id {
         "region" => crate::commands::capture::trigger(app, "region"),
         "fullscreen" => crate::commands::capture::trigger(app, "fullscreen"),
-        "window" => crate::commands::capture::trigger(app, "active-window"),
         "scroll" => crate::commands::capture::trigger(app, "scroll"),
         // 框选完直接贴到屏幕上 / 直接取字，不进编辑器
         "pin-region" => crate::commands::capture::trigger(app, "pin-region"),

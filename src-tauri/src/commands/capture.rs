@@ -53,12 +53,6 @@ async fn run_capture(app: &AppHandle, mode: &str) -> AppResult<()> {
             let result = capture::commit_fullscreen(&state)?;
             finish(app, &state, result)?;
         }
-        "active-window" => {
-            let fg = crate::win32::window::foreground_window()
-                .ok_or_else(|| AppError::Msg("没有找到前台窗口".into()))?;
-            let result = capture::screen::capture_window(fg.hwnd)?;
-            finish(app, &state, result)?;
-        }
         // 框选完不打开编辑器，直接贴图 / 直接取字（手势用）
         "pin-region" | "ocr-region" => {
             let payload = capture::begin(&state, "region")?;

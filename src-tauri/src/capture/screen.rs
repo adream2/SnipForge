@@ -177,29 +177,6 @@ pub fn crop_display(display: &CapturedDisplay, rect: Rect) -> AppResult<CaptureR
     })
 }
 
-/// 直接截取一个窗口（含被遮挡部分，走 PrintWindow，比从桌面截图里抠更准）
-pub fn capture_window(hwnd: i64) -> AppResult<CaptureResult> {
-    let windows = xcap::Window::all().map_err(|e| AppError::Msg(e.to_string()))?;
-    let target = windows
-        .into_iter()
-        .find(|w| w.id().map(|id| id as i64 == hwnd).unwrap_or(false))
-        .ok_or_else(|| AppError::Msg("窗口已关闭或不可见".into()))?;
-
-    let image = target
-        .capture_image()
-        .map_err(|e| AppError::Msg(format!("窗口捕获失败: {e}")))?;
-
-    let data_url = to_png_data_url(&image)?;
-    Ok(CaptureResult {
-        width: image.width(),
-        height: image.height(),
-        data_url,
-        scale_factor: 1.0,
-        source: "window".into(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-    })
-}
-
 /// 快照当前所有窗口（供 selector 做悬停高亮）
 pub fn list_windows(self_pid: u32) -> Vec<crate::types::NativeWindowInfo> {
     crate::win32::window::list_top_level_windows(self_pid)
