@@ -201,7 +201,8 @@ pub fn open_editor(app: &AppHandle, capture: CaptureResult) -> AppResult<()> {
         return Ok(());
     }
 
-    let win = WebviewWindowBuilder::new(app, EDITOR, WebviewUrl::App("editor.html".into()))
+    // 窗口句柄后面用不上，事件通过 get_webview_window 重新取（避免跨线程用句柄）
+    WebviewWindowBuilder::new(app, EDITOR, WebviewUrl::App("editor.html".into()))
         .title("SnipForge 编辑器")
         .inner_size(1180.0, 800.0)
         .min_inner_size(880.0, 600.0)

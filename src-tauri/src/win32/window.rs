@@ -153,10 +153,8 @@ fn describe(hwnd: HWND, self_pid: u32) -> Option<NativeWindowInfo> {
 
     let mut pid: u32 = 0;
     unsafe {
-        let mut raw: u32 = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut raw as *mut u32));
-        pid = raw;
-    };
+        GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+    }
     let exe = process_exe(pid);
     let rect = window_bounds(hwnd)?;
 

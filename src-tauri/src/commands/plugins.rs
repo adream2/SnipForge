@@ -2,7 +2,6 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::types::PluginState;
 use std::sync::Arc;
-use tauri::Manager;
 
 #[tauri::command]
 pub fn plugins_state(state: tauri::State<'_, Arc<AppState>>) -> AppResult<PluginState> {

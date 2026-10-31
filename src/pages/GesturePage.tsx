@@ -11,6 +11,7 @@ import { useToast } from '../components/Toast'
 import { IconPlus, IconTrash } from '../components/Icons'
 import { GestureShape } from '../components/GestureShape'
 import { sameStroke, strokeOf } from '../lib/gestureShape'
+import { featureLabel, useFeatures } from '../lib/features'
 
 /**
  * 鼠标手势（独立功能页）。
@@ -72,17 +73,6 @@ const MEDIA_KEYS = [
   { id: 'prev', label: '上一首' }
 ]
 
-const SNIP_IDS = [
-  { id: 'region', label: '区域截图' },
-  { id: 'fullscreen', label: '全屏截图' },
-  { id: 'scroll', label: '滚动长截图' },
-  { id: 'panel', label: '剪贴板面板' },
-  { id: 'pin', label: '剪贴板贴图' },
-  { id: 'record', label: '录屏（视频）' },
-  { id: 'record-gif', label: '录屏（GIF）' },
-  { id: 'pin-region', label: '框选贴图' },
-  { id: 'ocr-region', label: '框选取字' }
-]
 
 const TRIGGERS = [
   { id: 'right', label: '按住右键' },
@@ -110,7 +100,7 @@ function actionSummary(a: GestureAction): string {
     case 'scroll':
       return `${a.dir === 'down' ? '向下' : '向上'} ${a.amount} 格`
     case 'snip':
-      return SNIP_IDS.find((s) => s.id === a.id)?.label ?? a.id
+      return featureLabel(a.id)
     default:
       return '未知动作'
   }
@@ -289,6 +279,7 @@ function ActionEditor({
   onChange: (a: GestureAction) => void
 }) {
   const a = action
+  const features = useFeatures()
   return (
     <div className="ga-editor">
       <select
@@ -441,9 +432,9 @@ function ActionEditor({
           value={a.id}
           onChange={(e) => onChange({ type: 'snip', id: e.target.value })}
         >
-          {SNIP_IDS.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label}
+          {features.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.label}
             </option>
           ))}
         </select>
@@ -473,6 +464,9 @@ function BindingsCard({
   emptyHint?: string
 }) {
   const toast = useToast()
+  // 订阅功能表：列表里的"SnipForge 功能 xxx"要显示后端给的名字。
+  // 不订阅就会一直显示裸 id（region / pin-region），直到别的组件把它拉回来。
+  useFeatures()
   const [recording, setRecording] = useState(false)
   const [testing, setTesting] = useState(false)
   const [openIdx, setOpenIdx] = useState<number | null>(null)
@@ -874,7 +868,11 @@ export default function GesturePage({
                 onChange={(next) => patch({ bindings: next })}
                 scope={null}
                 onRestore={() =>
-                  void onChange({ gestures: { ...g, bindings: DEFAULT_BINDINGS() } })
+                  void api
+                    .gestureDefaults()
+                    .then((d) =>
+                      onChange({ gestures: { ...g, bindings: d.bindings, profiles: d.profiles } })
+                    )
                     .then(() => toast.push('已恢复默认手势', 'success'))
                     .catch((e) => toast.push(String(e), 'error'))
                 }
@@ -1027,30 +1025,4 @@ export default function GesturePage({
       </div>
     </>
   )
-}
-/** 和后端 `default_gesture_bindings` 保持一致 */
-function DEFAULT_BINDINGS(): GestureBinding[] {
-  const b = (pattern: string, action: GestureAction): GestureBinding => ({
-    pattern,
-    action,
-    enabled: true
-  })
-  return [
-    b('L', { type: 'keys', keys: 'Alt+Left' }),
-    b('R', { type: 'keys', keys: 'Alt+Right' }),
-    b('U', { type: 'scroll', dir: 'up', amount: 3 }),
-    b('D', { type: 'scroll', dir: 'down', amount: 3 }),
-    b('DR', { type: 'keys', keys: 'Ctrl+W' }),
-    b('DL', { type: 'keys', keys: 'Ctrl+T' }),
-    b('UD', { type: 'keys', keys: 'F5' }),
-    b('LU', { type: 'window', op: 'minimize' }),
-    b('RU', { type: 'window', op: 'maximize' }),
-    b('LD', { type: 'keys', keys: 'Win+D' }),
-    b('RD', { type: 'keys', keys: 'Alt+Tab' }),
-    b('UDR', { type: 'media', key: 'mute' }),
-    // 画个 S 截图 / 框选贴图 / 框选取字（后者是开口框，别和闭合方框撞脸）
-    b('S', { type: 'snip', id: 'region' }),
-    b('DRUL', { type: 'snip', id: 'pin-region' }),
-    b('DRU', { type: 'snip', id: 'ocr-region' })
-  ]
 }

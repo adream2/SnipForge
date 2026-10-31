@@ -1,9 +1,4 @@
-:root {
-  --accent: #6c5ce7;
-  --mono: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-  --font: "Segoe UI Variable Display", -apple-system, "Segoe UI", "Microsoft YaHei UI",
-    "PingFang SC", sans-serif;
-}
+@import './tokens.css';
 
 * {
   box-sizing: border-box;

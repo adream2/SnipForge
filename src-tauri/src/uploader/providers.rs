@@ -3,7 +3,7 @@
 //! 全部用 reqwest::blocking —— 上传是低频操作，用不着为它铺一层 async 状态机；
 //! 命令层会把它丢进 spawn_blocking，不会卡住 UI 线程。
 
-use super::{cfg_bool, cfg_str, Cfg, Provider, UploadFile};
+use super::{cfg_str, Cfg, Provider, UploadFile};
 use crate::error::{AppError, AppResult};
 use crate::types::{
     ConfigField, DirEntry, FieldOption, ProviderMeta, RemoteImage, UploadResult, VisibleWhen,

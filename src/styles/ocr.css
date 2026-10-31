@@ -1,18 +1,6 @@
-/* 取字窗口：独立小窗，自己带一套最小的变量，不依赖主窗口的 global.css */
+/* 取字窗口：独立小窗。颜色/圆角/阴影统一走 tokens.css，不自己另起一套 */
 
-:root {
-  --bg: #fbfbfd;
-  --surface: #ffffff;
-  --surface-2: #f3f3f7;
-  --border: #e4e4ea;
-  --text: #1c1c22;
-  --text-2: #55555f;
-  --text-3: #8b8b96;
-  --accent: #6c5ce7;
-  --accent-soft: #efecff;
-  --danger: #d64545;
-  --mono: "Cascadia Code", Consolas, "Courier New", monospace;
-}
+@import './tokens.css';
 
 * {
   box-sizing: border-box;

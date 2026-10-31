@@ -74,6 +74,8 @@ Windows 端的一体化截图 / 剪贴板 / 图床 / 图片工具。Tauri 2 + Ru
 - ✅ **PaddleOCR**（可选）：设置页点「下载」自动完成「查最新版 → 下载 88MB → 解 7z → 装好并设为当前引擎」全流程，不需要用户碰压缩包。引擎本体不进安装包，用不用、用哪个版本都由你决定。
 - ✅ 引擎不可用/调用失败时**自动回退**到 Windows，不会让功能整个失效
 - ✅ 词级包围盒（为后续"点击选取文字"留的）
+- ✅ 结果窗口**左右分栏**：左边原文可改，右边译文；识别完**不会自动翻译**，
+  点「翻译」才翻（翻译要走网络、有的供应商计费，不该替用户做主）
 
 引擎目录：`%APPDATA%un.lxzt.snipforge\ocr-engines\`，放好后在设置页点「刷新」。
 想覆盖位置也可以直接在 `settings.json` 里填 `ocr.paddlePath`。
@@ -160,7 +162,8 @@ Windows 端的一体化截图 / 剪贴板 / 图床 / 图片工具。Tauri 2 + Ru
 
 ### 贴图（钉图）
 
-- ✅ 编辑器里点「钉图」或按 `F3`，把当前结果钉在屏幕最上层当参考
+- ✅ 手势 `↓→↑←`：框一圈直接钉在屏幕上（截图编辑器里不再放钉图按钮，
+  钉图统一走手势和 `Alt+P`，避免同一件事三个入口）
 - ✅ 任意地方按 `Alt+P`，把剪贴板里的图片直接钉出来
 - ✅ 位置贴光标、尺寸按屏幕 70% 收口且不放大（4K 全屏图不会糊脸）
 - ✅ 滚轮缩放窗口、拖动移动、双击或 `Esc` 关闭
@@ -363,29 +366,39 @@ Windows 端的一体化截图 / 剪贴板 / 图床 / 图片工具。Tauri 2 + Ru
 
 ## 架构
 
+完整说明见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。速览：
+
 ```
 snipforge/
 ├── src/                    前端（React 19 + TS）
+│   ├── main.tsx App.tsx    主窗口
 │   ├── selector.tsx        选区覆盖层
 │   ├── editor.tsx          标注编辑器
-│   ├── pin.tsx             贴图窗口
+│   ├── ocr.tsx pin.tsx     取字 / 贴图
+│   ├── panel.tsx record.tsx 剪贴板面板 / 录制条
 │   ├── pages/              主窗口各页面
-│   ├── editor/
-│   │   ├── model.ts        标注对象模型（纯数据，零依赖）
-│   │   └── render.ts       Canvas 渲染 + 美化合成
-│   └── lib/api.ts          所有后端能力的唯一入口
+│   ├── components/         跨页面复用
+│   ├── lib/
+│   │   ├── api/            后端能力，按领域拆分，index.ts 拼成 api
+│   │   ├── types/          类型，同样按领域拆分
+│   │   └── features.ts     功能表（名字/顺序由后端定）
+│   ├── editor/             标注模型 + Canvas 渲染（纯函数）
+│   └── styles/tokens.css   设计令牌：所有窗口共用一套颜色/圆角/阴影
 │
 ├── src-tauri/              Rust 后端
 │   ├── src/
-│   │   ├── capture/        屏幕捕获 + 长截图拼接
-│   │   ├── clipboard/      监听 + 存储
-│   │   ├── uploader/       图床（trait + 内置实现 + 声明式）
+│   │   ├── lib.rs          只做「注册」：插件、setup、窗口事件、命令清单
+│   │   ├── bootstrap.rs    启动顺序（日志 → 配置 → 状态 → 钩子 → 窗口）
+│   │   ├── features.rs     功能注册表（见下）
+│   │   ├── capture/ clipboard/ record/ uploader/ ocr/   能力层
+│   │   ├── gesture.rs      手势匹配 + 分发
 │   │   ├── win32/          唯一允许 FFI 的地方
-│   │   ├── ocr.rs          Windows.Media.Ocr 桥接
-│   │   ├── hooks.rs        插件钩子注册表
+│   │   ├── tray.rs shortcuts.rs windows.rs              系统集成
+│   │   ├── devtools.rs     `--smoke` 等命令行自检
 │   │   └── commands/       薄壳命令层
 │   └── tauri.conf.json
 │
+├── docs/ARCHITECTURE.md    结构 + 改动规矩
 └── plugins/                内置声明式图床（打包进安装包）
 ```
 
@@ -400,6 +413,13 @@ snipforge/
 4. **一段屏幕 = 一个覆盖窗口。** WebView2 一个窗口只认一个 DPI 基准，横跨两块缩放不同的屏必有错位。逐屏处理是唯一能保证像素精确的做法，代价是暂不支持跨屏框选。
 
 5. **配置只增不删。** 所有字段带 `#[serde(default)]`，老配置文件缺字段自动补默认值。升级不能让用户配置炸掉。
+
+6. **同一个功能只定义一次。** 能被手势/托盘触发的功能写在 `features.rs` 的表里
+   （id、名字、是否抓屏、怎么执行），浮标文案、执行分发、前端下拉全查它。
+   以前这三处各抄一份，加功能要改四处，漏一处就是"下拉里有、真划没反应"。
+
+7. **颜色只用 `styles/tokens.css` 的变量。** 各窗口别再写自己的 `:root`：
+   以前三个窗口三套灰阶，同一套产品看着像三个软件。
 
 ---
 

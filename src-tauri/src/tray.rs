@@ -1,16 +1,43 @@
+//! 托盘菜单。
+//!
+//! 拆成三件事，别混在一起：
+//!   - `build_menu`：按当前配置**重建菜单**（快捷键文案、手势开关的勾选状态）
+//!   - `register_events`：菜单/图标事件处理。**只注册一次**
+//!   - `refresh_menu`：配置变了、只需要刷新菜单时调，不碰事件处理
+//!
+//! 为什么非要分开：Tauri 的 `TrayIcon::on_menu_event` 是往全局监听列表里
+//! `push` 的，不是覆盖。以前 `refresh_menu` 直接复用 `setup`，于是每改一次
+//! 快捷键（或手势）就多挂一个处理器 —— 点一次"区域截图"会截 N 张图，
+//! 而且旧处理器永远释放不掉。这个坑很难在功能测试里发现，只能靠结构避免。
+
 use crate::commands::record::Fmt;
 use crate::error::AppResult;
 use crate::state::AppState;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager};
 
-/// 构建托盘菜单。
-///
-/// 托盘是常驻截图工具的主入口——用户大多数时候不开主窗口，
-/// 所以每项都带上快捷键，让「按什么键」和「有什么功能」一起呈现，
-/// 而不是让人猜。
+/// 事件处理是否已经挂过
+static EVENTS_REGISTERED: AtomicBool = AtomicBool::new(false);
+
+/// 启动时调一次：建菜单 + 挂事件。
 pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
+    build_menu(app, state)?;
+    register_events(app);
+    Ok(())
+}
+
+/// 只刷新菜单（快捷键文案、手势勾选状态变了之后调）。
+///
+/// 事件处理不会重复注册 —— 见文件头。
+pub fn refresh_menu(app: &AppHandle, state: &Arc<AppState>) {
+    if let Err(e) = build_menu(app, state) {
+        log::warn!("刷新托盘菜单失败: {e}");
+    }
+}
+
+fn build_menu(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     let hk = state.settings.read().hotkeys.clone();
     let accel = |s: &str| -> Option<String> {
         let t = s.trim();
@@ -25,7 +52,6 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     let a_full = accel(&hk.fullscreen_capture);
     let a_scroll = accel(&hk.scroll_capture);
     let a_panel = accel(&hk.clipboard_panel);
-    let a_pin_clip = accel(&hk.pin_from_clipboard);
     let a_record = accel(&hk.toggle_recording);
     let a_record_gif = accel(&hk.toggle_recording_gif);
 
@@ -34,22 +60,29 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     let scroll =
         MenuItem::with_id(app, "capture_scroll", "滚动长截图", true, a_scroll.as_deref())?;
     let sep1 = PredefinedMenuItem::separator(app)?;
-    let panel =
-        MenuItem::with_id(app, "panel_clipboard", "剪贴板面板", true, a_panel.as_deref())?;
-    let history =
-        MenuItem::with_id(app, "show_clipboard", "剪贴板管理", true, None::<&str>)?;
-    let pin_clip =
-        MenuItem::with_id(app, "pin_clipboard", "贴剪贴板图片", true, a_pin_clip.as_deref())?;
+    let panel = MenuItem::with_id(app, "panel_clipboard", "剪贴板面板", true, a_panel.as_deref())?;
+    let history = MenuItem::with_id(app, "show_clipboard", "剪贴板管理", true, None::<&str>)?;
+
+    // 手势总开关：托盘是常驻入口，临时"别管我的右键"时不用翻设置页。
+    // 用勾选项而不是两个菜单项：状态和动作是同一处，不会出现"点了却不知道现在开没开"。
+    let gesture_on = state.settings.read().gestures.enabled;
+    let gesture = CheckMenuItem::with_id(
+        app,
+        "gesture_toggle",
+        "鼠标手势",
+        true,
+        gesture_on,
+        None::<&str>,
+    )?;
+
     let sep_rec = PredefinedMenuItem::separator(app)?;
     // 视频和 GIF 分成两个子菜单：点哪个录哪个，不用先进软件改设置
-    let vid_region =
-        MenuItem::with_id(app, "rec_mp4_region", "录制区域…", true, a_record.as_deref())?;
+    let vid_region = MenuItem::with_id(app, "rec_mp4_region", "录制区域…", true, a_record.as_deref())?;
     let vid_full = MenuItem::with_id(app, "rec_mp4_full", "录制全屏", true, None::<&str>)?;
     let gif_region =
         MenuItem::with_id(app, "rec_gif_region", "录制区域…", true, a_record_gif.as_deref())?;
     let gif_full = MenuItem::with_id(app, "rec_gif_full", "录制全屏", true, None::<&str>)?;
-    let rec_video =
-        Submenu::with_items(app, "录制视频 (MP4)", true, &[&vid_region, &vid_full])?;
+    let rec_video = Submenu::with_items(app, "录制视频 (MP4)", true, &[&vid_region, &vid_full])?;
     let rec_gif = Submenu::with_items(app, "录制 GIF", true, &[&gif_region, &gif_full])?;
     let rec_stop = MenuItem::with_id(app, "record_stop", "停止录制", true, None::<&str>)?;
     let tools = MenuItem::with_id(app, "show_tools", "图片工具", true, None::<&str>)?;
@@ -67,7 +100,7 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
             &sep1,
             &panel,
             &history,
-            &pin_clip,
+            &gesture,
             &sep_rec,
             &rec_video,
             &rec_gif,
@@ -87,6 +120,20 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
 
     tray.set_menu(Some(menu))?;
     tray.set_tooltip(Some("SnipForge · 截图 / 剪贴板 / 图床"))?;
+    log::debug!("托盘菜单已刷新（鼠标手势={}）", if gesture_on { "开" } else { "关" });
+    Ok(())
+}
+
+fn register_events(app: &AppHandle) {
+    // 只挂一次：重复挂的后果见文件头
+    if EVENTS_REGISTERED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let Some(tray) = app.tray_by_id("main-tray") else {
+        EVENTS_REGISTERED.store(false, Ordering::SeqCst);
+        return;
+    };
 
     let handle = app.clone();
     tray.on_menu_event(move |_app, event| {
@@ -104,11 +151,16 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
                     crate::panel::toggle(&h);
                 });
             }
-            "pin_clipboard" => {
+            "gesture_toggle" => {
+                // 菜单回调在主线程：这里只翻配置 + 重画菜单，不碰窗口
                 let h = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::commands::clipboard::clipboard_pin_current(h).await {
-                        log::warn!("贴剪贴板图片失败: {e}");
+                    if let Some(st) = h.try_state::<Arc<AppState>>() {
+                        let on = !st.settings.read().gestures.enabled;
+                        if let Err(e) = crate::commands::settings::set_gestures_enabled(&h, &st, on)
+                        {
+                            log::warn!("切换手势开关失败: {e}");
+                        }
                     }
                 });
             }
@@ -161,13 +213,4 @@ pub fn setup(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
             crate::commands::capture::toggle_main(&handle2);
         }
     });
-
-    Ok(())
-}
-
-/// 快捷键改了之后刷新菜单上的显示
-pub fn refresh_menu(app: &AppHandle, state: &Arc<AppState>) {
-    if let Err(e) = setup(app, state) {
-        log::warn!("刷新托盘菜单失败: {e}");
-    }
 }

@@ -3,33 +3,7 @@
    克制、留白、可读。不堆装饰，靠间距和层次说话。
    ============================================================ */
 
-:root {
-  --bg: #f5f5f7;
-  --surface: #ffffff;
-  --surface-2: #fafafa;
-  --surface-3: #f0f0f3;
-  --border: #e6e6ea;
-  --border-strong: #d6d6dd;
-  --text: #18181b;
-  --text-2: #6b6b76;
-  --text-3: #9a9aa4;
-  --accent: #6c5ce7;
-  --accent-hover: #5b4bd6;
-  --accent-soft: #efecff;
-  --danger: #e5484d;
-  --danger-soft: #fdecec;
-  --success: #12805c;
-  --warn: #b7791f;
-  --radius: 10px;
-  --radius-sm: 7px;
-  --radius-lg: 14px;
-  --shadow-sm: 0 1px 2px rgba(16, 16, 24, 0.05);
-  --shadow-md: 0 6px 20px rgba(16, 16, 24, 0.07);
-  --shadow-lg: 0 18px 48px rgba(16, 16, 24, 0.14);
-  --font: "Segoe UI Variable Display", -apple-system, "Segoe UI", "Microsoft YaHei UI",
-    "PingFang SC", "Hiragino Sans GB", sans-serif;
-  --mono: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-}
+@import './tokens.css';
 
 * {
   box-sizing: border-box;

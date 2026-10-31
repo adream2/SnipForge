@@ -46,6 +46,8 @@ pub fn settings_patch(
         if !g.is_null() {
             let cfg = state.settings.read().gestures.clone();
             crate::gesture::update(cfg);
+            // 托盘的"鼠标手势"勾选状态跟着走，不然页面里暂停了、托盘还打着勾
+            crate::tray::refresh_menu(&app, state.inner());
             log::debug!("手势配置已更新（{} 条绑定）", {
                 let c = state.settings.read().gestures.clone();
                 c.bindings.len()
@@ -66,6 +68,26 @@ pub fn settings_patch(
     Ok(AppSettingsView {
         settings: state.settings_snapshot(),
     })
+}
+
+/// 手势总开关。托盘菜单、设置页共用这一条路径 ——
+/// 各自写一遍的话，早晚出现"页面说开了、托盘还停着"。
+pub fn set_gestures_enabled(
+    app: &tauri::AppHandle,
+    state: &std::sync::Arc<AppState>,
+    on: bool,
+) -> AppResult<bool> {
+    {
+        let mut g = state.settings.write();
+        g.gestures.enabled = on;
+    }
+    state.persist_settings()?;
+    // 钩子常驻，这里只换规则：不需要重装，下一次划就按新状态走
+    crate::gesture::update(state.settings.read().gestures.clone());
+    crate::tray::refresh_menu(app, state);
+    crate::windows::emit_to_main(app, "app://gesture-changed", serde_json::json!({}));
+    log::info!("鼠标手势已{}", if on { "启用" } else { "暂停" });
+    Ok(on)
 }
 
 /// 恢复默认配置（保留 provider 凭据，避免用户手滑把 token 清了）

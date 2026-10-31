@@ -275,18 +275,8 @@ fn describe(a: &GestureAction) -> String {
                 if dir == "down" { "向下" } else { "向上" }
             )
         }
-        GestureAction::Snip { id } => match id.as_str() {
-            "region" => "截图".into(),
-            "fullscreen" => "全屏截图".into(),
-            "scroll" => "长截图".into(),
-            "panel" => "剪贴板面板".into(),
-            "pin" => "剪贴板贴图".into(),
-            "record" => "录屏".into(),
-            "record-gif" => "录 GIF".into(),
-            "pin-region" => "框选贴图".into(),
-            "ocr-region" => "框选取字".into(),
-            other => other.into(),
-        },
+        // 名字统一由注册表给：同一个功能在浮标、托盘、下拉里必须是同一个叫法
+        GestureAction::Snip { id } => crate::features::label(id).to_string(),
     }
 }
 
@@ -326,11 +316,12 @@ fn short(s: &str) -> String {
 ///
 /// 只有"抓屏幕"的动作才需要：截图/录屏会把屏幕内容抓走，而轨迹层的淡出是
 /// 520ms —— 不等它藏起来，用户刚画的那道 S 就会出现在截图里。
+/// 哪些算"抓屏幕"写在 `features::FEATURES` 里，不在这重复一遍。
 fn needs_clean_screen(a: &GestureAction) -> bool {
-    matches!(a, GestureAction::Snip { id } if matches!(
-        id.as_str(),
-        "region" | "fullscreen" | "window" | "scroll" | "pin-region" | "ocr-region" | "record" | "record-gif"
-    ))
+    match a {
+        GestureAction::Snip { id } => crate::features::grabs_screen(id),
+        _ => false,
+    }
 }
 
 /// 执行动作。
@@ -377,8 +368,12 @@ fn run(app: &AppHandle, action: GestureAction) {
                 crate::win32::input::wheel(delta)
             }
             GestureAction::Snip { id } => {
-                run_snip(&handle, id);
-                Ok(())
+                // 分发也走注册表：加功能不用回来改这里
+                if !crate::features::run(&handle, id) {
+                    Err(format!("未知功能：{id}"))
+                } else {
+                    Ok(())
+                }
             }
         };
 
@@ -392,30 +387,6 @@ fn run(app: &AppHandle, action: GestureAction) {
             );
         }
     });
-}
-
-/// 本工具自己的功能，和其他动作平级
-fn run_snip(app: &AppHandle, id: &str) {
-    match id {
-        "region" => crate::commands::capture::trigger(app, "region"),
-        "fullscreen" => crate::commands::capture::trigger(app, "fullscreen"),
-        "scroll" => crate::commands::capture::trigger(app, "scroll"),
-        // 框选完直接贴到屏幕上 / 直接取字，不进编辑器
-        "pin-region" => crate::commands::capture::trigger(app, "pin-region"),
-        "ocr-region" => crate::commands::capture::trigger(app, "ocr-region"),
-        "panel" => crate::panel::toggle(app),
-        "record" => crate::commands::record::toggle(app, crate::commands::record::Fmt::Mp4),
-        "record-gif" => crate::commands::record::toggle(app, crate::commands::record::Fmt::Gif),
-        "pin" => {
-            let h = app.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::commands::clipboard::clipboard_pin_current(h).await {
-                    log::warn!("手势贴图失败: {e}");
-                }
-            });
-        }
-        other => log::warn!("不认识的 SnipForge 动作：{other}"),
-    }
 }
 
 /// "画一下排除这个程序"的确认流程。

@@ -12,7 +12,8 @@ import './styles/ocr.css'
  * 放在旁边，边看边抄。
  *
  * 左右分栏：左边是识别出来的原文（可以改），右边是译文。
- * 改完原文点「重译」；换语言会自动重译。
+ * 翻译**不自动做**：识别完只放到左边，要不要翻、翻成什么语言由用户按按钮决定
+ * （翻译要走网络、有的供应商还计费，默认替人做主不合适）。
  */
 function Ocr() {
   const [img, setImg] = useState('')
@@ -27,12 +28,10 @@ function Ocr() {
   const [provider, setProvider] = useState('tencent')
   const [target, setTarget] = useState('zh-CN')
   const areaRef = useRef<HTMLTextAreaElement>(null)
-  /** 自动翻译发生在"识别完成"那一刻，而那个回调是挂载时注册的；
-      直接读 state 会拿到挂载时的旧值（比如配置里是英文也按中文翻） */
-  const targetRef = useRef(target)
-  targetRef.current = target
   /** 当前这笔译文对应的原文，避免"改了原文但右边还是旧译文"时看不出 */
   const [translatedFrom, setTranslatedFrom] = useState('')
+  /** 这笔译文是用哪个目标语言翻的 —— 换语言后要能提示"这译文过期了" */
+  const [translatedLang, setTranslatedLang] = useState('')
 
   const run = useRef<(dataUrl: string) => void>(() => {})
   const doTranslate = useRef<(value: string, lang: string) => void>(() => {})
@@ -47,10 +46,12 @@ function Ocr() {
       .then((r) => {
         setTranslated(r)
         setTranslatedFrom(t)
+        setTranslatedLang(lang)
       })
       .catch((e) => {
         setTranslated('')
         setTranslatedFrom('')
+        setTranslatedLang('')
         setTransErr(String(e))
       })
       .finally(() => setTransBusy(false))
@@ -69,6 +70,7 @@ function Ocr() {
       setText('')
       setTranslated('')
       setTranslatedFrom('')
+      setTranslatedLang('')
       setErr('')
       setTransErr('')
       setPreview(false)
@@ -82,8 +84,8 @@ function Ocr() {
             setErr('这张图里没认出文字')
             return
           }
-          // 识别完直接翻：用户点开这个窗口多半就是想看懂它
-          doTranslate.current(t, targetRef.current)
+          // 不自动翻译：翻译要花钱、要等网络，而且很多时候用户只是想把
+          // 原文抄走。翻不翻由他自己按按钮决定。
         })
         .catch((e) => setErr(String(e)))
         .finally(() => setBusy(false))
@@ -113,11 +115,10 @@ function Ocr() {
     }
   }
 
-  /** 换语言：存下来 + 立刻重译 */
+  /** 换语言：只记下选择，翻译仍由用户按按钮触发 */
   const changeTarget = (lang: string) => {
     setTarget(lang)
     void api.settingsPatch({ translate: { target: lang } }).catch(() => {})
-    if (text.trim()) doTranslate.current(text, lang)
   }
 
   // Esc 关闭，Ctrl+C（没选中文本时）复制原文
@@ -140,6 +141,8 @@ function Ocr() {
   }, [text])
 
   const stale = !!translated && translatedFrom !== text.trim()
+  /** 译文存在、但目标语言已经换过 —— 也提示一下，别让人以为译文是新的 */
+  const langChanged = !!translated && !!translatedLang && translatedLang !== target
   const chars = text.replace(/\s/g, '').length
 
   return (
@@ -200,13 +203,14 @@ function Ocr() {
         <section className="ocr-pane">
           <div className="ocr-pane-head">
             <span>译文</span>
+            {langChanged && <em className="ocr-stale">语言改过</em>}
             <div style={{ flex: 1 }} />
             <button
               className="ocr-btn tiny"
               onClick={() => doTranslate.current(text, target)}
               disabled={!text.trim() || transBusy}
             >
-              {transBusy ? '翻译中…' : stale ? '重译' : '重新翻译'}
+              {transBusy ? '翻译中…' : stale || langChanged ? '重新翻译' : '翻译'}
             </button>
             <button
               className="ocr-btn tiny"
@@ -223,7 +227,7 @@ function Ocr() {
               translated
             ) : (
               <span className="ocr-placeholder">
-                {text.trim() ? '点「重新翻译」' : '还没有内容'}
+                {text.trim() ? '点上面的「翻译」开始' : '还没有内容'}
               </span>
             )}
           </div>

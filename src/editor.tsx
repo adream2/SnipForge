@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { api, events } from './lib/api'
-import type { CaptureResult, OcrResult } from './lib/types'
+import type { CaptureResult } from './lib/types'
 import { extOf, prepareWithSettings } from './lib/compress'
 import {
   ASPECTS,
@@ -40,12 +40,10 @@ import {
   IconCopy,
   IconLoader,
   IconLayers,
-  IconPin,
   IconSave,
   IconText,
   IconUpload,
   IconX,
-  IconOcr,
   IconMinus
 } from './components/Icons'
 import './styles/editor.css'
@@ -78,7 +76,6 @@ export default function Editor() {
   const [beautify, setBeautify] = useState<BeautifyOptions>(defaultBeautify())
   const [watermark, setWatermark] = useState<WatermarkOptions>(defaultWatermark())
   const [frame, setFrame] = useState<FrameOptions>(defaultFrame())
-  const [ocr, setOcr] = useState<OcrResult | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   /** 导出失败的提示，直接显示在界面上 */
   const [error, setError] = useState('')
@@ -581,12 +578,6 @@ export default function Editor() {
         setZoom(1)
         return
       }
-      // F3 钉图，和 Snipaste 的键位一致
-      if (e.key === 'F3') {
-        e.preventDefault()
-        void exportPin()
-        return
-      }
       if (e.key === 'Escape') {
         e.preventDefault()
         void api.closeEditor()
@@ -646,21 +637,6 @@ export default function Editor() {
     }
   }
 
-  const exportPin = async () => {
-    const dataUrl = buildFinal()
-    if (!dataUrl) return
-    setBusy('pin')
-    try {
-      await api.imagePin(dataUrl)
-      // 钉在屏幕上之后编辑器就没事了，收起来免得两个窗口叠一起
-      await api.closeEditor()
-    } catch (e) {
-      fail('钉图失败', e)
-    } finally {
-      setBusy(null)
-    }
-  }
-
   const exportSave = async (as = false) => {
     const dataUrl = buildFinal()
     if (!dataUrl) return
@@ -688,19 +664,6 @@ export default function Editor() {
       window.setTimeout(() => setError(''), 8000)
     } catch (e) {
       fail('上传失败', e)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const runOcr = async () => {
-    const dataUrl = buildFinal()
-    if (!dataUrl) return
-    setBusy('ocr')
-    try {
-      setOcr(await api.imageOcr(dataUrl))
-    } catch (e) {
-      fail('识别失败', e)
     } finally {
       setBusy(null)
     }
@@ -737,9 +700,6 @@ export default function Editor() {
           重做
         </button>
         <div style={{ width: 8 }} />
-        <button className="btn sm" style={{ background: '#2c2c30', border: 'none', color: '#e4e4e7' }} onClick={() => void runOcr()}>
-          {busy === 'ocr' ? <IconLoader /> : <IconOcr size={14} />} 取字
-        </button>
         <button className="btn sm" style={{ background: '#2c2c30', border: 'none', color: '#e4e4e7' }} onClick={() => void exportUpload()}>
           {busy === 'upload' ? <IconLoader /> : <IconUpload size={14} />} 上传
         </button>
@@ -748,14 +708,6 @@ export default function Editor() {
         </button>
         <button className="btn sm" style={{ background: '#2c2c30', border: 'none', color: '#e4e4e7' }} onClick={() => void exportSave(false)}>
           {busy === 'save' ? <IconLoader /> : <IconSave size={14} />} 保存
-        </button>
-        <button
-          className="btn sm"
-          style={{ background: '#2c2c30', border: 'none', color: '#e4e4e7' }}
-          title="钉在屏幕最上层当参考 (F3)"
-          onClick={() => void exportPin()}
-        >
-          {busy === 'pin' ? <IconLoader /> : <IconPin size={14} />} 钉图
         </button>
         <button className="btn sm primary" onClick={() => void exportCopy()}>
           {busy === 'copy' ? <IconLoader /> : <IconCopy size={14} />} 复制
@@ -1460,31 +1412,6 @@ export default function Editor() {
             )}
           </div>
 
-          {ocr && (
-            <div className="panel-group">
-              <div className="title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>OCR 结果</span>
-                <span style={{ textTransform: 'none', color: '#52525b' }}>
-                  {ocr.durationMs}ms
-                </span>
-              </div>
-              <textarea
-                className="dark-input"
-                style={{ height: 130, padding: 8, fontFamily: 'var(--mono)', fontSize: 11, resize: 'vertical' }}
-                value={ocr.text}
-                onChange={(e) => setOcr({ ...ocr, text: e.target.value })}
-              />
-              <button
-                className="btn sm"
-                style={{ background: '#2c2c30', border: 'none', color: '#e4e4e7' }}
-                onClick={async () => {
-                  await api.clipboardCopyText(ocr.text)
-                }}
-              >
-                <IconCopy size={13} /> 复制文字
-              </button>
-            </div>
-          )}
         </div>
       </div>
     </div>

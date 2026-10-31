@@ -449,6 +449,25 @@ fn default_profiles() -> Vec<GestureProfile> {
     }]
 }
 
+/// 出厂的默认手势（通用 + 程序专用）。前端"恢复默认"要用它，
+/// 不能自己再抄一份表 —— 抄了就会和后端漂移。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GestureDefaults {
+    pub bindings: Vec<GestureBinding>,
+    pub profiles: Vec<GestureProfile>,
+}
+
+impl GestureDefaults {
+    pub fn load() -> Self {
+        let d = GestureConfig::default();
+        Self {
+            bindings: d.bindings,
+            profiles: d.profiles,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GestureConfig {
