@@ -75,52 +75,108 @@ fn arrows(pattern: &str) -> String {
 }
 
 /// 这条方向串现在会干什么？没有绑定就返回 None。
-/// 找出最像的自定义手势（返回 bindings 下标和距离）。
+/// 在一组绑定里找这一划命中的那一条。
 ///
-/// 阈值 `CUSTOM_MATCH` 卡得很紧（0.16）：只认"几乎一模一样"的，
-/// 这样它不会把普通的 `↓→` 方向手势抢走。
-fn best_custom(stroke: &[(i32, i32)]) -> Option<(f32, usize)> {
+/// 顺序：先比自定义笔画（阈值 `CUSTOM_MATCH` 很紧，只认几乎一样的），
+/// 再比方向串。`#n` 是钩子给的"疑似自定义手势"提示，这里不当串处理。
+fn find_in(
+    bindings: &[crate::config::GestureBinding],
+    stroke: &[(i32, i32)],
+    pattern: &str,
+) -> Option<usize> {
     let path = crate::win32::shape::canonical_stroke(stroke);
-    if path.len() < 8 {
-        return None;
-    }
-    let g = cfg_lock().read();
-    let mut best: Option<(f32, usize)> = None;
-    for (i, b) in g.bindings.iter().enumerate() {
-        if !b.enabled || b.points.len() != path.len() {
-            continue;
+    if path.len() >= 8 {
+        let mut best: Option<(f32, usize)> = None;
+        for (i, b) in bindings.iter().enumerate() {
+            if !b.enabled || b.points.len() != path.len() {
+                continue;
+            }
+            let d = crate::win32::shape::stroke_distance(&path, &b.points);
+            if best.map_or(true, |(bd, _)| d < bd) {
+                best = Some((d, i));
+            }
         }
-        let d = crate::win32::shape::stroke_distance(&path, &b.points);
-        if best.map_or(true, |(bd, _)| d < bd) {
-            best = Some((d, i));
+        if let Some((d, i)) = best {
+            if d <= crate::win32::shape::CUSTOM_MATCH {
+                return Some(i);
+            }
         }
-    }
-    best.filter(|(d, _)| *d <= crate::win32::shape::CUSTOM_MATCH)
-}
-
-/// 这一划命中哪一条绑定？
-///
-/// **手势执行和页面"试划"共用这一个函数** —— 两边各写一套，
-/// 早晚出现"这里试得出来、真划没反应"。
-pub fn match_index(stroke: &[(i32, i32)], pattern: &str) -> Option<usize> {
-    if let Some((_, i)) = best_custom(stroke) {
-        return Some(i);
     }
     if pattern.starts_with('#') {
         return None;
     }
-    let g = cfg_lock().read();
-    g.bindings
+    bindings
         .iter()
         .position(|b| b.enabled && normalize(&b.pattern) == pattern)
 }
 
+/// 这一划该执行什么：**先用当前程序的专用集，没命中再回落通用**。
+///
+/// 手势执行和页面"试划"共用同一套查找 —— 两边各写一套，
+/// 早晚出现"这里试得出来、真划没反应"。
+pub fn match_action(stroke: &[(i32, i32)], pattern: &str) -> Option<GestureAction> {
+    if let Some(p) = active_profile() {
+        if let Some(i) = find_in(&p.bindings, stroke, pattern) {
+            return Some(p.bindings[i].action.clone());
+        }
+    }
+    let g = cfg_lock().read();
+    find_in(&g.bindings, stroke, pattern).map(|i| g.bindings[i].action.clone())
+}
+
+/// 页面查重用：在指定范围（某个专用集 / 通用）里找命中的下标。
+pub fn match_scoped(scope: Option<&str>, stroke: &[(i32, i32)], pattern: &str) -> Option<usize> {
+    let g = cfg_lock().read();
+    match scope {
+        Some(id) => {
+            let p = g.profiles.iter().find(|p| p.id == id)?;
+            find_in(&p.bindings, stroke, pattern)
+        }
+        None => find_in(&g.bindings, stroke, pattern),
+    }
+}
+
 fn lookup(pattern: &str) -> Option<GestureAction> {
+    // 专用集优先：同一个 `DR`，在浏览器里是关标签，在桌面别处可能是别的
+    if let Some(p) = active_profile() {
+        if let Some(b) = p
+            .bindings
+            .iter()
+            .find(|b| b.enabled && normalize(&b.pattern) == pattern)
+        {
+            return Some(b.action.clone());
+        }
+    }
     let g = cfg_lock().read();
     g.bindings
         .iter()
         .find(|b| b.enabled && normalize(&b.pattern) == pattern)
         .map(|b| b.action.clone())
+}
+
+/// 进程名比较：忽略大小写和 `.exe` 后缀（用户填 `chrome` 也得认）
+fn same_exe(a: &str, b: &str) -> bool {
+    // 先去空白再转小写，最后才剥后缀 —— 先剥的话 "Chrome.EXE" 剥不掉，
+    // trim_end_matches 是大小写敏感的
+    fn stem(s: &str) -> String {
+        let t = s.trim().to_ascii_lowercase();
+        t.strip_suffix(".exe").unwrap_or(&t).to_string()
+    }
+    let a = stem(a);
+    !a.is_empty() && a == stem(b)
+}
+
+/// 当前前台程序命中的专用手势集（多个命中取第一个）。
+fn active_profile() -> Option<crate::config::GestureProfile> {
+    let exe = crate::win32::window::foreground_exe_cached();
+    if exe.is_empty() {
+        return None;
+    }
+    let g = cfg_lock().read();
+    g.profiles
+        .iter()
+        .find(|p| p.exes.iter().any(|e| same_exe(e, &exe)))
+        .cloned()
 }
 
 fn handle_event(app: &AppHandle, ev: Event) {
@@ -165,13 +221,9 @@ fn handle_event(app: &AppHandle, ev: Event) {
 
             // 以落笔的笔画为准重新匹配一次：钩子里那个 #下标 只用于浮标提示，
             // 配置若在手势中途改过可能已经错位。
-            if let Some(i) = match_index(&stroke, &pattern) {
-                let action = cfg_lock().read().bindings.get(i).map(|b| b.action.clone());
-                if let Some(a) = action {
-                    log::debug!("命中第 {i} 条手势");
-                    run(app, a);
-                    return;
-                }
+            if let Some(a) = match_action(&stroke, &pattern) {
+                run(app, a);
+                return;
             }
 
             // 没绑动作：看看是不是"画一下排除当前程序"
@@ -453,5 +505,31 @@ mod tests {
         // 浮标和列表里的显示：方向是箭头，形状就是它自己
         assert_eq!(arrows("DR"), "↓→");
         assert_eq!(arrows("S"), "S");
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    /// 专用集和通用集必须是两套独立的表：
+    /// `UL` 只在浏览器集里有（切左侧标签），`UDR` 只在通用里有（静音）。
+    #[test]
+    fn scoped_lookup_is_separate() {
+        assert_eq!(match_scoped(Some("browser"), &[], "UL"), Some(8));
+        assert_eq!(match_scoped(None, &[], "UL"), None);
+        assert_eq!(match_scoped(None, &[], "UDR"), Some(12));
+        assert_eq!(match_scoped(Some("browser"), &[], "UDR"), None);
+        // 不存在的专用集不能炸
+        assert_eq!(match_scoped(Some("nope"), &[], "UL"), None);
+    }
+
+    #[test]
+    fn exe_name_matching() {
+        assert!(same_exe("chrome", "chrome.exe"));
+        assert!(same_exe("Chrome.EXE", "chrome"));
+        assert!(same_exe(" msedge ", "MSEDGE.exe"));
+        assert!(!same_exe("", "chrome"));
+        assert!(!same_exe("chrome", "firefox"));
     }
 }

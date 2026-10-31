@@ -1,6 +1,12 @@
 import { useRef, useState } from 'react'
 import { api } from '../lib/api'
-import type { AppSettings, GestureAction, GestureBinding, GestureConfig } from '../lib/types'
+import type {
+  AppSettings,
+  GestureAction,
+  GestureBinding,
+  GestureConfig,
+  GestureProfile
+} from '../lib/types'
 import { useToast } from '../components/Toast'
 import { IconPlus, IconTrash } from '../components/Icons'
 import { GestureShape } from '../components/GestureShape'
@@ -445,29 +451,30 @@ function ActionEditor({
   )
 }
 
-/* ---------------- 页面 ---------------- */
+/* ---------------- 绑定列表（通用 / 程序专用共用一个） ---------------- */
 
-export default function GesturePage({
-  settings,
-  onChange
+function BindingsCard({
+  title,
+  subtitle,
+  bindings,
+  onChange,
+  scope,
+  onRestore,
+  emptyHint
 }: {
-  settings: AppSettings | null
-  onChange: (patch: unknown) => Promise<AppSettings>
+  title: string
+  subtitle?: string
+  bindings: GestureBinding[]
+  onChange: (next: GestureBinding[]) => void
+  /** 程序专用集的 id；通用传 null —— 决定"查重"在哪个范围里找 */
+  scope: string | null
+  onRestore?: () => void
+  emptyHint?: string
 }) {
   const toast = useToast()
   const [recording, setRecording] = useState(false)
   const [testing, setTesting] = useState(false)
-  /** 正在编辑的行 */
   const [openIdx, setOpenIdx] = useState<number | null>(null)
-
-  const g: GestureConfig | undefined = settings?.gestures
-
-  const patch = (p: Partial<GestureConfig>) => {
-    if (!g) return
-    void onChange({ gestures: { ...g, ...p } }).catch((e) => toast.push(String(e), 'error'))
-  }
-
-  const setBindings = (next: GestureBinding[]) => patch({ bindings: next })
 
   /**
    * 新增一条手势。
@@ -478,14 +485,13 @@ export default function GesturePage({
    */
   const addGesture = (pattern: string, points?: number[][], raw?: Array<[number, number]>) => {
     setRecording(false)
-    if (!g) return
     const upper = pattern.toUpperCase()
     const insert = () => {
       const next = [
-        ...g.bindings,
+        ...bindings,
         { pattern: upper, points: points ?? [], action: defaultAction('keys'), enabled: true }
       ]
-      setBindings(next)
+      onChange(next)
       setOpenIdx(next.length - 1)
     }
     if (!raw || raw.length < 12) {
@@ -493,11 +499,11 @@ export default function GesturePage({
       return
     }
     void api
-      .gestureMatch(raw, upper)
+      .gestureMatch(raw, upper, scope ?? undefined)
       .then((idx) => {
-        if (idx !== null && g.bindings[idx]) {
+        if (idx !== null && bindings[idx]) {
           toast.push(
-            `这一划会命中第 ${idx + 1} 行（${actionSummary(g.bindings[idx].action)}），改那一行就行`,
+            `这一划会命中第 ${idx + 1} 行（${actionSummary(bindings[idx].action)}），改那一行就行`,
             'error'
           )
           setOpenIdx(idx)
@@ -506,6 +512,291 @@ export default function GesturePage({
         insert()
       })
       .catch(insert)
+  }
+
+  return (
+    <div className="setting-card">
+      <header style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>{title}</span>
+        <span style={{ fontWeight: 400, textTransform: 'none' }}>{bindings.length}</span>
+        <div style={{ flex: 1 }} />
+        {!recording && !testing && (
+          <button className="btn sm" onClick={() => setRecording(true)}>
+            <IconPlus size={12} /> 划一个
+          </button>
+        )}
+        <button className="btn sm" onClick={() => setTesting((v) => !v)}>
+          {testing ? '收起试划' : '试划'}
+        </button>
+        {onRestore && (
+          <button className="btn sm" onClick={onRestore}>
+            恢复默认
+          </button>
+        )}
+      </header>
+
+      {subtitle && (
+        <div style={{ padding: '0 16px 10px', fontSize: 11.5, color: 'var(--text-3)' }}>{subtitle}</div>
+      )}
+
+      {recording && <Recorder onDone={addGesture} onCancel={() => setRecording(false)} />}
+
+      {testing && (
+        <div style={{ borderTop: '1px solid var(--border)' }}>
+          <Recorder
+            onDone={(p, _pts, raw) => {
+              // 和真手势同一套匹配顺序（自定义笔画优先，再方向串）
+              void api
+                .gestureMatch(raw ?? [], p.toUpperCase(), scope ?? undefined)
+                .then((idx) => {
+                  const hit = idx === null ? undefined : bindings[idx]
+                  toast.push(
+                    hit ? `这一划 → ${actionSummary(hit.action)}` : '这一划还没有绑定',
+                    hit ? 'success' : 'error'
+                  )
+                })
+                .catch(() => toast.push('识别失败', 'error'))
+            }}
+            onCancel={() => toast.push('没划出东西', 'error')}
+          />
+          <div style={{ padding: '0 16px 12px', fontSize: 11, color: 'var(--text-3)' }}>
+            只试识别，不会真的执行动作。
+          </div>
+        </div>
+      )}
+
+      {bindings.length === 0 && !recording && (
+        <div style={{ padding: '4px 16px 16px', fontSize: 11.5, color: 'var(--text-3)' }}>
+          {emptyHint ?? '还没有手势。点「划一个」在框里划一下就能新建。'}
+        </div>
+      )}
+
+      {bindings.map((b, i) => {
+        const open = openIdx === i
+        return (
+          <div className="ga-row-wrap" key={`${b.pattern}-${i}`}>
+            <div className={`ga-row ${open ? 'open' : ''}`} onClick={() => setOpenIdx(open ? null : i)}>
+              <span className="ga-shape">
+                <GestureShape
+                  pattern={b.pattern}
+                  points={b.points}
+                  title={b.pattern ? arrows(b.pattern) : '自定义手势'}
+                />
+              </span>
+              <span className="ga-type">{typeLabel(b.action.type)}</span>
+              <span className="ga-summary">{actionSummary(b.action)}</span>
+              <div style={{ flex: 1 }} />
+              <button
+                className={`switch ${b.enabled ? 'on' : ''}`}
+                title={b.enabled ? '停用这一条（不删，随时可恢复）' : '启用这一条'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const next = bindings.slice()
+                  next[i] = { ...b, enabled: !b.enabled }
+                  onChange(next)
+                }}
+              />
+              <button
+                className="btn sm danger"
+                title="删掉这个手势"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onChange(bindings.filter((_, j) => j !== i))
+                  if (openIdx === i) setOpenIdx(null)
+                }}
+              >
+                <IconTrash size={12} />
+              </button>
+            </div>
+
+            {open && (
+              <div className="ga-expand">
+                <ActionEditor
+                  action={b.action}
+                  onChange={(a) => {
+                    const next = bindings.slice()
+                    next[i] = { ...b, action: a }
+                    onChange(next)
+                  }}
+                />
+                <div className="ga-expand-note">
+                  {TYPES.find((t) => t.id === b.action.type)?.hint}
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ---------------- 程序专用 ---------------- */
+
+function ProfilesView({
+  g,
+  patch
+}: {
+  g: GestureConfig
+  patch: (p: Partial<GestureConfig>) => void
+}) {
+  const toast = useToast()
+  const profiles = g.profiles ?? []
+  const [sel, setSel] = useState<string | null>(profiles[0]?.id ?? null)
+  const current = profiles.find((p) => p.id === sel) ?? profiles[0] ?? null
+
+  const save = (next: GestureProfile[]) => patch({ profiles: next })
+
+  const addProfile = () => {
+    const id = `p${Date.now().toString(36)}`
+    const next = [
+      ...profiles,
+      { id, name: '新程序', exes: [] as string[], bindings: [] as GestureBinding[] }
+    ]
+    save(next)
+    setSel(id)
+  }
+
+  const update = (p: Partial<GestureProfile>) => {
+    if (!current) return
+    save(profiles.map((x) => (x.id === current.id ? { ...x, ...p } : x)))
+  }
+
+  return (
+    <div className="ga-profiles">
+      <div className="setting-card ga-profile-list">
+        <header style={{ display: 'flex', alignItems: 'center' }}>
+          <span>程序</span>
+          <div style={{ flex: 1 }} />
+          <button className="btn sm" onClick={addProfile} title="为一个新程序单独配手势">
+            <IconPlus size={12} />
+          </button>
+        </header>
+        {profiles.length === 0 && (
+          <div style={{ padding: '10px 16px', fontSize: 11.5, color: 'var(--text-3)' }}>
+            还没有专用集
+          </div>
+        )}
+        {profiles.map((p) => (
+          <div
+            key={p.id}
+            className={`ga-profile-item ${current?.id === p.id ? 'on' : ''}`}
+            onClick={() => setSel(p.id)}
+          >
+            <b>{p.name}</b>
+            <span>{p.exes.length ? p.exes.join(' / ') : '还没填程序'}</span>
+            <em>{p.bindings.length} 条</em>
+          </div>
+        ))}
+        <div style={{ padding: '10px 14px', fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6 }}>
+          专用集里的手势优先；这里没定义的，仍然按通用手势执行。
+        </div>
+      </div>
+
+      <div style={{ minWidth: 0 }}>
+        {current ? (
+          <>
+            <div className="setting-card" style={{ marginBottom: 14 }}>
+              <header>基本信息</header>
+              <div className="setting-row">
+                <div className="label">
+                  <strong>名称</strong>
+                  <span>只是列表里给人看的</span>
+                </div>
+                <div className="control">
+                  <input
+                    className="input"
+                    style={{ width: 180 }}
+                    value={current.name}
+                    onChange={(e) => update({ name: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="setting-row">
+                <div className="label">
+                  <strong>程序</strong>
+                  <span>
+                    进程名，逗号或空格分隔，带不带 .exe 都行。例如 chrome, msedge, firefox
+                  </span>
+                </div>
+                <div className="control" style={{ flex: 1 }}>
+                  <input
+                    className="input"
+                    style={{ width: '100%', maxWidth: 420 }}
+                    value={current.exes.join(', ')}
+                    spellCheck={false}
+                    placeholder="chrome, msedge, firefox"
+                    onChange={(e) =>
+                      update({
+                        exes: e.target.value
+                          .split(/[,，\s]+/)
+                          .map((x) => x.trim())
+                          .filter(Boolean)
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="setting-row">
+                <div className="label">
+                  <strong>删除这一套</strong>
+                  <span>删掉后这些程序就按通用手势执行</span>
+                </div>
+                <div className="control">
+                  <button
+                    className="btn sm danger"
+                    onClick={() => {
+                      save(profiles.filter((x) => x.id !== current.id))
+                      setSel(profiles.find((x) => x.id !== current.id)?.id ?? null)
+                      toast.push('已删除', 'success')
+                    }}
+                  >
+                    <IconTrash size={12} /> 删除
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <BindingsCard
+              title={`${current.name}的手势`}
+              subtitle="在这些程序里生效；同一条手势在这里优先于通用手势"
+              bindings={current.bindings}
+              onChange={(next) => update({ bindings: next })}
+              scope={current.id}
+              emptyHint="还没有专用手势 —— 点「划一个」加一条，或按通用手势的习惯来配。"
+            />
+          </>
+        ) : (
+          <div className="setting-card">
+            <div style={{ padding: 24, fontSize: 12, color: 'var(--text-3)' }}>
+              左边新建一个程序，就能给它单独配手势了（浏览器已经预置好一套）。
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ---------------- 页面 ---------------- */
+
+type Tab = 'global' | 'profiles' | 'settings'
+
+export default function GesturePage({
+  settings,
+  onChange
+}: {
+  settings: AppSettings | null
+  onChange: (patch: unknown) => Promise<unknown>
+}) {
+  const toast = useToast()
+  const [tab, setTab] = useState<Tab>('global')
+
+  const g: GestureConfig | undefined = settings?.gestures
+
+  const patch = (p: Partial<GestureConfig>) => {
+    if (!g) return
+    void onChange({ gestures: { ...g, ...p } }).catch((e) => toast.push(String(e), 'error'))
   }
 
   if (!g) {
@@ -535,257 +826,187 @@ export default function GesturePage({
 
       <div className="page-body">
         <div className="settings-wrap">
-          {/* 触发方式 */}
-          <div className="setting-card">
-            <header>触发方式</header>
-
-            <div className="setting-row">
-              <div className="label">
-                <strong>触发键</strong>
-                <span>按住它划出方向，松开即执行；不移动就是普通点击</span>
-              </div>
-              <div className="control">
-                <select
-                  className="input"
-                  style={{ width: 130 }}
-                  value={g.trigger}
-                  onChange={(e) => patch({ trigger: e.target.value })}
-                >
-                  {TRIGGERS.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <div className="label">
-                <strong>显示轨迹</strong>
-                <span>划的时候在屏幕上画一条线</span>
-              </div>
-              <div className="control">
-                <input
-                  type="color"
-                  className="ga-color"
-                  value={g.trailColor}
-                  onChange={(e) => patch({ trailColor: e.target.value })}
-                  title="轨迹颜色"
-                />
-                <button
-                  className={`switch ${g.showTrail ? 'on' : ''}`}
-                  onClick={() => patch({ showTrail: !g.showTrail })}
-                />
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <div className="label">
-                <strong>全屏时暂停</strong>
-                <span>游戏、视频、演示、远程桌面里不响应 —— 那些场景手势只会帮倒忙</span>
-              </div>
-              <div className="control">
-                <button
-                  className={`switch ${g.pauseFullscreen ? 'on' : ''}`}
-                  onClick={() => patch({ pauseFullscreen: !g.pauseFullscreen })}
-                />
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <div className="label">
-                <strong>接管右键按下</strong>
-                <span>
-                  推荐开启：手势期间目标程序收不到任何右键事件，状态最干净。
-                  若你的机器上发现右键点不动，关掉它退回老做法（只吞抬起）
-                </span>
-              </div>
-              <div className="control">
-                <button
-                  className={`switch ${g.swallowDown ? 'on' : ''}`}
-                  onClick={() => patch({ swallowDown: !g.swallowDown })}
-                />
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <div className="label">
-                <strong>例外程序</strong>
-                <span>
-                  列表里的程序完全不响应手势（右键菜单照常）。
-                  想加一个：在那个程序里按住右键画 Z 形（→←→），弹窗确认即可
-                </span>
-              </div>
-              <div className="control">
-                <span className="ga-excl-count">
-                  {g.excluded.length === 0 ? '没有' : `${g.excluded.length} 个`}
-                </span>
-              </div>
-            </div>
-
-            {g.excluded.length > 0 && (
-              <div className="ga-excl-list">
-                {g.excluded.map((exe) => (
-                  <div className="ga-excl" key={exe}>
-                    <span className="ga-excl-name">{exe}</span>
-                    <button
-                      className="btn sm danger"
-                      title="从例外里移除"
-                      onClick={() => patch({ excluded: g.excluded.filter((e) => e !== exe) })}
-                    >
-                      <IconTrash size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="setting-row">
-              <div className="label">
-                <strong>灵敏度</strong>
-                <span>按下后移动超过这个距离才算手势</span>
-              </div>
-              <div className="control">
-                <input
-                  type="range"
-                  className="gesture-range"
-                  min={16}
-                  max={80}
-                  step={2}
-                  value={g.threshold}
-                  onChange={(e) => patch({ threshold: Number(e.target.value) })}
-                />
-                <span className="gesture-range-val">{g.threshold}px</span>
-              </div>
-            </div>
-
-            <div className="ga-note">
-              按住触发键不移动、或移动幅度小于灵敏度时，这次点击会原样放行 ——
-              右键菜单照常弹。所有显示器都能用，轨迹层覆盖整个虚拟屏。
-            </div>
+          <div className="ga-tabs">
+            {(
+              [
+                ['global', '通用手势'],
+                ['profiles', '程序专用'],
+                ['settings', '手势设置']
+              ] as Array<[Tab, string]>
+            ).map(([id, label]) => (
+              <button key={id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>
+                {label}
+              </button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <span className="ga-tabs-hint">
+              手势会发到按下的那个窗口；程序专用集优先，其余回落通用
+            </span>
           </div>
 
-          {/* 手势列表 */}
-          <div className="setting-card" style={{ marginTop: 14 }}>
-            <header style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>手势</span>
-              <span style={{ fontWeight: 400, textTransform: 'none' }}>{g.bindings.length}</span>
-              <div style={{ flex: 1 }} />
-              {!recording && !testing && (
-                <button className="btn sm" onClick={() => setRecording(true)}>
-                  <IconPlus size={12} /> 划一个
-                </button>
-              )}
-              <button className="btn sm" onClick={() => setTesting((v) => !v)}>
-                {testing ? '收起试划' : '试划'}
-              </button>
-              <button
-                className="btn sm"
-                onClick={() =>
+          {tab === 'global' && (
+            <>
+              <BindingsCard
+                title="通用手势"
+                subtitle="所有程序里都生效（程序专用集里定义过的，那几个程序里优先用专用集）"
+                bindings={g.bindings}
+                onChange={(next) => patch({ bindings: next })}
+                scope={null}
+                onRestore={() =>
                   void onChange({ gestures: { ...g, bindings: DEFAULT_BINDINGS() } })
                     .then(() => toast.push('已恢复默认手势', 'success'))
                     .catch((e) => toast.push(String(e), 'error'))
                 }
-              >
-                恢复默认
-              </button>
-            </header>
+              />
+              <div className="ga-note" style={{ padding: '10px 4px 24px' }}>
+                手势会发送到你按下的那个窗口，所以先在目标窗口里划。改完立刻生效，不用重启。
+                <br />
+                三种手势：方向串（↑↓←→ 依次组合）、内置形状（S）和**自定义形状** ——
+                点「划一个」，随便画一个 M、W、圈或任何你顺手的形状，它就成了一个手势。
+                自定义形状按笔画相似度匹配（阈值很严，只认几乎一样的那一笔），
+                列表里统一画成"起点圆点 + 终点箭头"，不用箭头符号去描述方向。
+              </div>
+            </>
+          )}
 
-            {recording && <Recorder onDone={addGesture} onCancel={() => setRecording(false)} />}
+          {tab === 'profiles' && <ProfilesView g={g} patch={patch} />}
 
-            {testing && (
-              <div style={{ borderTop: '1px solid var(--border)' }}>
-                <Recorder
-                  onDone={(p, _pts, raw) => {
-                    // 和真手势同一套匹配顺序（自定义笔画优先，再方向串）
-                    void api
-                      .gestureMatch(raw ?? [], p.toUpperCase())
-                      .then((idx) => {
-                        const hit = idx === null ? undefined : g.bindings[idx]
-                        toast.push(
-                          hit ? `这一划 → ${actionSummary(hit.action)}` : '这一划还没有绑定',
-                          hit ? 'success' : 'error'
-                        )
-                      })
-                      .catch(() => toast.push('识别失败', 'error'))
-                  }}
-                  onCancel={() => toast.push('没划出东西', 'error')}
-                />
-                <div style={{ padding: '0 16px 12px', fontSize: 11, color: 'var(--text-3)' }}>
-                  只试识别，不会真的执行动作。
+          {tab === 'settings' && (
+            <div className="setting-card">
+              <header>触发方式</header>
+
+              <div className="setting-row">
+                <div className="label">
+                  <strong>触发键</strong>
+                  <span>按住它划出方向，松开即执行；不移动就是普通点击</span>
+                </div>
+                <div className="control">
+                  <select
+                    className="input"
+                    style={{ width: 130 }}
+                    value={g.trigger}
+                    onChange={(e) => patch({ trigger: e.target.value })}
+                  >
+                    {TRIGGERS.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
-            )}
 
-            {g.bindings.length === 0 && !recording && (
-              <div style={{ padding: '4px 16px 16px', fontSize: 11.5, color: 'var(--text-3)' }}>
-                还没有手势。点「划一个」在框里划一下就能新建。
+              <div className="setting-row">
+                <div className="label">
+                  <strong>显示轨迹</strong>
+                  <span>划的时候在屏幕上画一条线</span>
+                </div>
+                <div className="control">
+                  <input
+                    type="color"
+                    className="ga-color"
+                    value={g.trailColor}
+                    onChange={(e) => patch({ trailColor: e.target.value })}
+                    title="轨迹颜色"
+                  />
+                  <button
+                    className={`switch ${g.showTrail ? 'on' : ''}`}
+                    onClick={() => patch({ showTrail: !g.showTrail })}
+                  />
+                </div>
               </div>
-            )}
 
-            {g.bindings.map((b, i) => {
-              const open = openIdx === i
-              return (
-                <div className="ga-row-wrap" key={`${b.pattern}-${i}`}>
-                  <div className={`ga-row ${open ? 'open' : ''}`} onClick={() => setOpenIdx(open ? null : i)}>
-                    <span className="ga-shape">
-                      <GestureShape
-                        pattern={b.pattern}
-                        points={b.points}
-                        title={b.pattern ? arrows(b.pattern) : '自定义手势'}
-                      />
-                    </span>
-                    <span className="ga-type">{typeLabel(b.action.type)}</span>
-                    <span className="ga-summary">{actionSummary(b.action)}</span>
-                    <div style={{ flex: 1 }} />
-                    <button
-                      className="btn sm danger"
-                      title="删掉这个手势"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setBindings(g.bindings.filter((_, j) => j !== i))
-                        if (openIdx === i) setOpenIdx(null)
-                      }}
-                    >
-                      <IconTrash size={12} />
-                    </button>
-                  </div>
+              <div className="setting-row">
+                <div className="label">
+                  <strong>全屏时暂停</strong>
+                  <span>游戏、视频、演示、远程桌面里不响应 —— 那些场景手势只会帮倒忙</span>
+                </div>
+                <div className="control">
+                  <button
+                    className={`switch ${g.pauseFullscreen ? 'on' : ''}`}
+                    onClick={() => patch({ pauseFullscreen: !g.pauseFullscreen })}
+                  />
+                </div>
+              </div>
 
-                  {open && (
-                    <div className="ga-expand">
-                      <ActionEditor
-                        action={b.action}
-                        onChange={(a) => {
-                          const next = g.bindings.slice()
-                          next[i] = { ...b, action: a }
-                          setBindings(next)
-                        }}
-                      />
-                      <div className="ga-expand-note">
-                        {TYPES.find((t) => t.id === b.action.type)?.hint}
-                      </div>
+              <div className="setting-row">
+                <div className="label">
+                  <strong>接管右键按下</strong>
+                  <span>
+                    推荐开启：手势期间目标程序收不到任何右键事件，状态最干净。
+                    若你的机器上发现右键点不动，关掉它退回老做法（只吞抬起）
+                  </span>
+                </div>
+                <div className="control">
+                  <button
+                    className={`switch ${g.swallowDown ? 'on' : ''}`}
+                    onClick={() => patch({ swallowDown: !g.swallowDown })}
+                  />
+                </div>
+              </div>
+
+              <div className="setting-row">
+                <div className="label">
+                  <strong>例外程序</strong>
+                  <span>
+                    列表里的程序完全不响应手势（右键菜单照常）。
+                    想加一个：在那个程序里按住右键画 Z 形（→←→），弹窗确认即可
+                  </span>
+                </div>
+                <div className="control">
+                  <span className="ga-excl-count">
+                    {g.excluded.length === 0 ? '没有' : `${g.excluded.length} 个`}
+                  </span>
+                </div>
+              </div>
+
+              {g.excluded.length > 0 && (
+                <div className="ga-excl-list">
+                  {g.excluded.map((exe) => (
+                    <div className="ga-excl" key={exe}>
+                      <span className="ga-excl-name">{exe}</span>
+                      <button
+                        className="btn sm danger"
+                        title="从例外里移除"
+                        onClick={() => patch({ excluded: g.excluded.filter((e) => e !== exe) })}
+                      >
+                        <IconTrash size={12} />
+                      </button>
                     </div>
-                  )}
+                  ))}
                 </div>
-              )
-            })}
-          </div>
+              )}
 
-          <div className="ga-note" style={{ padding: '10px 4px 24px' }}>
-            手势会发送到你按下的那个窗口，所以先在目标窗口里划。改完立刻生效，不用重启。
-            <br />
-            三种手势：方向串（↑↓←→ 依次组合）、内置形状（S）和**自定义形状**——
-            点「划一个」，随便画一个 M、W、圈或任何你顺手的形状，它就成了一个手势。
-            自定义形状按笔画相似度匹配（阈值很严，只认几乎一样的那一笔），
-            列表里统一画成"起点圆点 + 终点箭头"，不用箭头符号去描述方向。
-          </div>
+              <div className="setting-row">
+                <div className="label">
+                  <strong>灵敏度</strong>
+                  <span>按下后移动超过这个距离才算手势</span>
+                </div>
+                <div className="control">
+                  <input
+                    type="range"
+                    className="gesture-range"
+                    min={16}
+                    max={80}
+                    step={2}
+                    value={g.threshold}
+                    onChange={(e) => patch({ threshold: Number(e.target.value) })}
+                  />
+                  <span className="gesture-range-val">{g.threshold}px</span>
+                </div>
+              </div>
+
+              <div className="ga-note">
+                按住触发键不移动、或移动幅度小于灵敏度时，这次点击会原样放行 ——
+                右键菜单照常弹。所有显示器都能用，轨迹层覆盖整个虚拟屏。
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>
   )
 }
-
 /** 和后端 `default_gesture_bindings` 保持一致 */
 function DEFAULT_BINDINGS(): GestureBinding[] {
   const b = (pattern: string, action: GestureAction): GestureBinding => ({

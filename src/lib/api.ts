@@ -34,8 +34,8 @@ export const api = {
   gestureNormalize: (points: Array<[number, number]>) =>
     invoke<number[][]>('gesture_normalize', { points }),
   /** 试划：这一划会命中哪一条绑定（下标）。和真手势同一套匹配顺序 */
-  gestureMatch: (points: Array<[number, number]>, pattern: string) =>
-    invoke<number | null>('gesture_match', { points, pattern }),
+  gestureMatch: (points: Array<[number, number]>, pattern: string, profile?: string) =>
+    invoke<number | null>('gesture_match', { points, pattern, profile: profile ?? null }),
   appInfo: () => invoke<AppInfo>('app_info'),
   showMain: (route?: string) => invoke<void>('app_show_main', { route: route ?? null }),
   openDir: (path: string) => invoke<void>('app_open_dir', { path }),

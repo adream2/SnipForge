@@ -204,7 +204,11 @@ pub fn gesture_normalize(points: Vec<[i32; 2]>) -> Vec<[f32; 2]> {
 /// 走的是和真手势完全相同的匹配顺序（自定义笔画优先，再方向串），
 /// 所以这里试出来是什么，真划就是什么。
 #[tauri::command]
-pub fn gesture_match(points: Vec<[i32; 2]>, pattern: String) -> Option<usize> {
+pub fn gesture_match(
+    points: Vec<[i32; 2]>,
+    pattern: String,
+    profile: Option<String>,
+) -> Option<usize> {
     let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
-    crate::gesture::match_index(&pts, &pattern)
+    crate::gesture::match_scoped(profile.as_deref(), &pts, &pattern)
 }

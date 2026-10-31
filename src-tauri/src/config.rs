@@ -345,6 +345,63 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
     ]
 }
 
+/// 一套"程序专用"手势。
+///
+/// 命中这些进程时**先用这里的绑定**，没写到的动作再回落到通用手势 ——
+/// 浏览器里"右键划 `↓→` 关标签"很自然，但在资源管理器里同样一划会把人吓一跳。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GestureProfile {
+    /// 稳定 id：预设用固定串（browser），自定义程序用 exe 名
+    pub id: String,
+    pub name: String,
+    /// 进程名（小写，带不带 .exe 都认）
+    #[serde(default)]
+    pub exes: Vec<String>,
+    #[serde(default)]
+    pub bindings: Vec<GestureBinding>,
+}
+
+/// 出厂带一个"浏览器"专用集：主流的几个壳都塞进去，
+/// 用户不用自己去填 exe 名 —— 这是这一页最容易被卡住的地方。
+fn default_profiles() -> Vec<GestureProfile> {
+    let b = |pattern: &str, action: GestureAction| GestureBinding {
+        pattern: pattern.into(),
+        points: Vec::new(),
+        action,
+        enabled: true,
+    };
+    let keys = |k: &str| GestureAction::Keys { keys: k.into() };
+    vec![GestureProfile {
+        id: "browser".into(),
+        name: "浏览器".into(),
+        exes: vec![
+            "chrome".into(),
+            "msedge".into(),
+            "firefox".into(),
+            "brave".into(),
+            "vivaldi".into(),
+            "opera".into(),
+            "360se".into(),
+            "360chrome".into(),
+            "qqbrowser".into(),
+            "sogouexplorer".into(),
+        ],
+        bindings: vec![
+            b("L", keys("Alt+Left")),
+            b("R", keys("Alt+Right")),
+            b("U", keys("Ctrl+Home")),
+            b("D", keys("Ctrl+End")),
+            b("UD", keys("F5")),
+            b("DU", keys("Ctrl+Shift+R")),
+            b("DR", keys("Ctrl+W")),
+            b("DL", keys("Ctrl+T")),
+            b("UL", keys("Ctrl+PgUp")),
+            b("UR", keys("Ctrl+PgDn")),
+        ],
+    }]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GestureConfig {
@@ -370,6 +427,8 @@ pub struct GestureConfig {
     /// 在这个程序里划一下就能把它加进排除列表（默认 Z 形 →←→）
     pub exclude_pattern: String,
     pub bindings: Vec<GestureBinding>,
+    /// 程序专用手势集（命中进程时优先，其余回落通用）
+    pub profiles: Vec<GestureProfile>,
 }
 
 impl Default for GestureConfig {
@@ -390,6 +449,7 @@ impl Default for GestureConfig {
             // 横、横回来、横 —— 手写 Z 的简化
             exclude_pattern: "RLR".into(),
             bindings: default_gesture_bindings(),
+            profiles: default_profiles(),
         }
     }
 }

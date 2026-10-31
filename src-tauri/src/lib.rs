@@ -89,6 +89,12 @@ fn load_settings(paths: &Paths) -> AppSettings {
                     dirty = true;
                     log::info!("配置补写：新增 gestures 段");
                 }
+                // 新增的 profiles（程序专用集）也要落一次盘：只在内存里默认出来，
+                // 用户打开 json 会以为"这功能不存在"，也没法手改。
+                if !text.contains("\"profiles\"") {
+                    dirty = true;
+                    log::info!("配置补写：手势新增 profiles（程序专用集）");
+                }
                 // 手势的默认值变过（多了 S 形截图 / 框选贴图 / 框选取字）。
                 // 只在"用户完全没动过默认"时才替换，改过的绝不去碰。
                 if is_legacy_default(&cfg.gestures.bindings) {

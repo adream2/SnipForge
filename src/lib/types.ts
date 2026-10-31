@@ -88,6 +88,17 @@ export interface GestureBinding {
   enabled: boolean
 }
 
+/**
+ * 程序专用手势集：进程名命中时先用这里的绑定，没写到的回落通用。
+ */
+export interface GestureProfile {
+  id: string
+  name: string
+  /** 进程名（小写，带不带 .exe 都认） */
+  exes: string[]
+  bindings: GestureBinding[]
+}
+
 export interface GestureConfig {
   enabled: boolean
   /** right / middle / x1 */
@@ -108,6 +119,8 @@ export interface GestureConfig {
   /** 在这个程序里划一下就能加进排除列表（默认 RLR = Z 形） */
   excludePattern: string
   bindings: GestureBinding[]
+  /** 程序专用手势集（命中进程时优先，其余回落通用） */
+  profiles?: GestureProfile[]
 }
 
 export interface AppSettings {
