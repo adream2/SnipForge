@@ -71,10 +71,6 @@ impl UploadHistory {
         self.flush()
     }
 
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-
     fn flush(&self) -> AppResult<()> {
         let text = serde_json::to_string_pretty(&self.items)?;
         let tmp = self.path.with_extension("json.tmp");

@@ -36,6 +36,8 @@ export const imageApi = {
   ocrEngines: () => invoke<import('../types').OcrEngineInfo[]>('ocr_engines'),
   ocrOpenEngineDir: () => invoke<string>('ocr_open_engine_dir'),
   ocrDownloadPaddle: () => invoke<string>('ocr_download_paddle'),
+  /** 用户自备的 7z：只解压，不联网 */
+  ocrInstallLocal: (path: string) => invoke<string>('ocr_install_local', { path }),
   imageInfo: (dataUrl: string) =>
     invoke<{ width: number; height: number; format: string; bytes: number }>('image_info', {
       dataUrl

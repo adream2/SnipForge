@@ -31,6 +31,15 @@ pub fn plugins_reload(
     Ok(crate::plugins::reload(&app, state.inner()))
 }
 
+/// 当前有哪些钩子点、各挂了几个处理器。
+///
+/// 插件页用它展示"扩展点清单"：以前钩子点是写死在文档里的一串字符串，
+/// 早就和代码对不上了；现在从注册表读，加一个点页面自动多一行。
+#[tauri::command]
+pub fn plugins_hooks(state: tauri::State<'_, Arc<AppState>>) -> AppResult<Vec<crate::hooks::HookPoint>> {
+    Ok(state.hooks.points())
+}
+
 #[tauri::command]
 pub fn plugins_open_dir(
     app: tauri::AppHandle,

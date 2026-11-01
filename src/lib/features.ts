@@ -35,7 +35,7 @@ function subscribe(cb: () => void) {
 }
 
 /** 幂等：拉一次就够，失败（比如页面单独跑在浏览器里）下次再试 */
-export function loadFeatures() {
+function loadFeatures() {
   if (started) return
   started = true
   void api
@@ -56,7 +56,21 @@ export function useFeatures(): FeatureInfo[] {
   return useSyncExternalStore(subscribe, snapshot, snapshot)
 }
 
+/**
+ * 老配置里的截图动作（fullscreen / scroll / window）已经并进「截图」了。
+ *
+ * 后端 `features::find` 会把它们映射到 region，所以功能不会失效；
+ * 但前端如果原样显示，下拉里会选中一个**不存在**的选项（看起来像空白）。
+ * 所以取名字和取当前值都要先归一化。
+ */
+const LEGACY_CAPTURE = new Set(['fullscreen', 'scroll', 'window'])
+
+export function normalizeFeatureId(id: string): string {
+  return LEGACY_CAPTURE.has(id) ? 'region' : id
+}
+
 /** 同步取名字。表还没到就回落到 id —— 比显示"未知操作"好排查 */
 export function featureLabel(id: string): string {
-  return cache.find((f) => f.id === id)?.label ?? id
+  const key = normalizeFeatureId(id)
+  return cache.find((f) => f.id === key)?.label ?? key
 }

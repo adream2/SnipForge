@@ -28,6 +28,8 @@ export const recordApi = {
   recordStop: () => invoke<RecordResult>('record_stop'),
   recordCancel: () => invoke<void>('record_cancel'),
   recordStatus: () => invoke<RecordStatus | null>('record_status'),
+  /** 枚举摄像头。只是枚举，不会占用设备 */
+  recordCameraList: () => invoke<import('../types').CameraDevice[]>('record_camera_list'),
   recordRecent: (limit?: number) =>
     invoke<import('../types').RecordFile[]>('record_recent', { limit: limit ?? null }),
   recordSetLens: (on: boolean) => invoke<void>('record_set_lens', { on }),

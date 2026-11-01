@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { api } from '../lib/api'
 import { extOf, prepareWithSettings } from '../lib/compress'
 import { IconImage, IconLoader, IconSave, IconUpload, IconCopy } from '../components/Icons'
@@ -90,6 +91,46 @@ export default function ToolsPage() {
       toast.push(`读取失败：${e}`, 'error')
     }
   }
+
+  // 拖入文件：走 Tauri 的拖放事件拿**磁盘路径**。
+  //
+  // 为什么不用 HTML5 的 onDrop：窗口开了 dragDropEnabled 之后，
+  // 拖放会被 Tauri 拦下来，DOM 那边根本收不到 drop 事件 ——
+  // 表现就是"拖进去没反应"。而拿到的路径还能直接交给后端读，
+  // 比 FileReader 把整张图读成 data URL 再传一遍快得多（大图差几百毫秒）。
+  useEffect(() => {
+    let alive = true
+    let unlisten: (() => void) | undefined
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (!alive) return
+        const p = event.payload
+        if (p.type === 'over' || p.type === 'enter') {
+          setDragging(true)
+        } else if (p.type === 'drop') {
+          setDragging(false)
+          const path = p.paths?.[0]
+          if (!path) return
+          void api
+            .imageLoadFile(path)
+            .then((f) =>
+              loadFromDataUrl(f.dataUrl, path.split(/[\/]/).pop() ?? 'image', path)
+            )
+            .catch((e) => toast.push(String(e), 'error'))
+        } else {
+          setDragging(false)
+        }
+      })
+      .then((fn) => {
+        if (alive) unlisten = fn
+        else fn()
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+      unlisten?.()
+    }
+  }, [loadFromDataUrl, toast])
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()

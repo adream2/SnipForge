@@ -1,0 +1,84 @@
+name: CI
+
+# 为什么只跑这些：
+#   主 crate 链接了完整的 Tauri/WinRT，跑 `cargo test` 在部分机器上
+#   加载不起来（0xc0000139）。所以**断言全在 snipforge-core 里**，
+#   这里跑的是那一份；主工程只做编译检查（不链接，快且稳）。
+#
+# 需要更重的真机验证（抓屏 / 录屏 / 图标提取）请本地跑 README「自检」里的命令 ——
+#   那些要么需要显示器，要么需要摄像头，CI 上没有。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 前端类型检查
+        run: npx tsc --noEmit
+
+      - name: 前端构建
+        run: npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # clippy 只在本地跑；CI 上保持最小编译，省时间
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: 纯逻辑单测（配置 / 路径消毒）
+        run: cargo test --manifest-path src-tauri/core/Cargo.toml
+
+      - name: 主工程编译检查（含测试代码）
+        run: cargo check --all-targets --manifest-path src-tauri/Cargo.toml
+
+  # 下面这组需要真正链接出 exe 并跑起来（WebView2 运行时）。
+  # 环境和本机差异较大，所以**不阻塞合并**，只作为参考信号。
+  selftest:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: 构建 debug exe
+        run: cargo build --manifest-path src-tauri/Cargo.toml
+
+      - name: 主密码保险箱自检
+        run: .\src-tauri\target\debug\snipforge.exe --vault-selftest
+
+      - name: 画中画合成自检
+        run: .\src-tauri\target\debug\snipforge.exe --pip-test "$env:TEMP\pip.png"
+
+      - name: 图标提取自检
+        run: .\src-tauri\target\debug\snipforge.exe --icon-test "$env:WINDIR\System32\notepad.exe"

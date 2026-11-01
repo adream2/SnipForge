@@ -4,6 +4,8 @@ node_modules/
 # 构建产物
 dist/
 src-tauri/target/
+# core 是独立 crate，有自己的 target
+src-tauri/core/target/
 src-tauri/gen/
 
 # 绿色包输出（npm run portable）
@@ -31,3 +33,10 @@ crash.log
 # 环境变量
 .env
 .env.local
+
+# 发布时由 scripts/release-notes.mjs 生成
+.release-notes.md
+
+# 内部审查报告：里面是"哪些地方有洞、哪些还没修"的工作记录。
+# 留本地备查，不进公开仓库 —— 修完的问题写在 CHANGELOG，没修的写在这里只给维护者看。
+docs/CODE_REVIEW_*.md

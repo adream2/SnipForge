@@ -11,7 +11,7 @@ import { useToast } from '../components/Toast'
 import { IconPlus, IconTrash } from '../components/Icons'
 import { GestureShape } from '../components/GestureShape'
 import { sameStroke, strokeOf } from '../lib/gestureShape'
-import { featureLabel, useFeatures } from '../lib/features'
+import { featureLabel, normalizeFeatureId, useFeatures } from '../lib/features'
 
 /**
  * 鼠标手势（独立功能页）。
@@ -429,7 +429,7 @@ function ActionEditor({
         <select
           className="input"
           style={{ width: 150 }}
-          value={a.id}
+          value={normalizeFeatureId(a.id)}
           onChange={(e) => onChange({ type: 'snip', id: e.target.value })}
         >
           {features.map((f) => (

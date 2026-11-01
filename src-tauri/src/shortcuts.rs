@@ -50,8 +50,6 @@ pub fn register_all(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
             }};
         }
         fix!(region_capture);
-        fix!(fullscreen_capture);
-        fix!(scroll_capture);
         fix!(clipboard_panel);
         fix!(pin_from_clipboard);
         fix!(toggle_recording);
@@ -110,9 +108,9 @@ pub fn register_all(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
         }};
     }
 
-    bind!("regionCapture", "区域截图", cfg.region_capture, "region");
-    bind!("fullscreenCapture", "全屏截图", cfg.fullscreen_capture, "fullscreen");
-    bind!("scrollCapture", "长截图", cfg.scroll_capture, "scroll");
+    // 截图只有一个入口：全屏 / 窗口 / 滚动都在选区里选，不再各占一个全局键。
+    // 少注册两个全局快捷键也顺带少了两处冲突风险（Alt+Shift+Q 很容易被别的软件占）
+    bind!("regionCapture", "截图", cfg.region_capture, "region");
 
     // 录屏：视频和 GIF 各一个键，按哪个就录哪种；录着的时候两个键都是"停止"
     for (id, label, accel, fmt) in [
@@ -228,8 +226,4 @@ pub fn register_all(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     log::info!("快捷键注册 {}/{}", ok_count, results.len());
     *state.hotkey_results.write() = results;
     Ok(())
-}
-
-pub fn unregister_all(app: &AppHandle) {
-    let _ = app.global_shortcut().unregister_all();
 }

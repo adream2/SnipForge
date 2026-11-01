@@ -73,8 +73,3 @@ impl From<base64::DecodeError> for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
-
-/// 把任意 error 收敛成一句人话
-pub fn msg<E: std::fmt::Display>(e: E) -> AppError {
-    AppError::Msg(e.to_string())
-}

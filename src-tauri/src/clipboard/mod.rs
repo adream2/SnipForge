@@ -15,10 +15,34 @@ use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use store::ClipboardStore;
+use std::time::{Duration, Instant};
+use store::{AddResult, ClipboardStore};
 use tauri::{AppHandle, Emitter, Manager};
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+
+/// 一次扫描的策略。
+///
+/// 集中成一个结构体而不是散着传参：以前每加一个开关就要改一遍
+/// `start_monitor` / `sync_now` / `scan_clipboard` 三处的签名。
+#[derive(Clone, Debug)]
+pub struct ScanOpts {
+    pub capture_images: bool,
+    /// 跳过形似密钥的内容（默认关，见 ClipboardConfig 注释）
+    pub skip_sensitive: bool,
+    /// 不记录这些程序复制的内容（小写 exe 名，带不带 `.exe` 都认）
+    pub ignore_apps: Vec<String>,
+}
+
+impl ScanOpts {
+    pub fn from_cfg(cfg: &crate::config::ClipboardConfig) -> Self {
+        Self {
+            capture_images: cfg.capture_images,
+            skip_sensitive: cfg.skip_sensitive,
+            ignore_apps: cfg.ignore_apps.clone(),
+        }
+    }
+}
 
 pub struct ClipboardService {
     pub store: ClipboardStore,
@@ -59,8 +83,12 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// 启动监听线程
-pub fn start_monitor(app: AppHandle, state: Arc<AppState>, interval_ms: u64, capture_images: bool, skip_sensitive: bool) {
+/// 启动监听线程。
+///
+/// 配置**每轮现读**，不做启动快照：这样"记录图片 / 过滤敏感内容 / 排除程序"
+/// 在设置页改完立刻生效。以前是启动时把三个 bool 拷进闭包，
+/// 用户关掉"记录图片"后后台照样在存图，只能重启才停 —— 典型的"开关是装饰"。
+pub fn start_monitor(app: AppHandle, state: Arc<AppState>) {
     let service = match app.try_state::<Arc<ClipboardService>>() {
         Some(s) => s.inner().clone(),
         None => {
@@ -76,13 +104,48 @@ pub fn start_monitor(app: AppHandle, state: Arc<AppState>, interval_ms: u64, cap
     std::thread::spawn(move || {
         // 先对齐一次，避免启动瞬间把当前剪贴板当成"新内容"
         *service.last_sequence.lock() = sequence_number();
-        log::info!("剪贴板监听已启动，间隔 {interval_ms}ms");
+        log::info!("剪贴板监听已启动");
+
+        // 保留天数是"天级"策略，半小时查一次就够，不必每轮扫
+        let mut last_purge = Instant::now();
 
         loop {
             if !service.running.load(Ordering::SeqCst) {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+
+            let (interval_ms, enabled, opts, retention_days) = {
+                let s = state.settings.read();
+                (
+                    s.clipboard.poll_interval_ms.clamp(120, 5000),
+                    s.clipboard.enabled,
+                    ScanOpts::from_cfg(&s.clipboard),
+                    s.clipboard.retention_days,
+                )
+            };
+
+            std::thread::sleep(Duration::from_millis(interval_ms));
+
+            // 上一轮被节流掉的写入在这里补上。一个轮询周期（默认 500ms）内
+            // 一定会落到磁盘，同时不会因为连续复制而反复重写几 MB 的索引。
+            let _ = service.store.flush_if_pending();
+
+            if last_purge.elapsed() >= Duration::from_secs(1800) {
+                last_purge = Instant::now();
+                let removed = service.store.purge_older_than(retention_days);
+                if removed > 0 {
+                    log::info!("按保留天数（{retention_days} 天）清理 {removed} 条剪贴板历史");
+                    if let Err(e) = service.store.save() {
+                        log::warn!("清理后保存剪贴板历史失败: {e}");
+                    }
+                    let _ = app.emit("clipboard://stats", service.store.stats());
+                }
+            }
+
+            // 关掉历史记录时只保留清理逻辑，不再采集
+            if !enabled {
+                continue;
+            }
 
             let seq = sequence_number();
             if seq == *service.last_sequence.lock() {
@@ -97,18 +160,34 @@ pub fn start_monitor(app: AppHandle, state: Arc<AppState>, interval_ms: u64, cap
             //
             // 另外这里**不能**因为"是自己写的"就跳过：截图后点复制、OCR 复制文字
             // 都是往剪贴板写内容，用户期望它们出现在历史里。重复内容由 hash 去重兜住。
-            match scan_clipboard(&service, capture_images, skip_sensitive) {
+            match scan_clipboard(&service, &opts) {
                 Ok(ScanResult::New(item)) => {
                     *service.last_sequence.lock() = seq;
                     log::info!("剪贴板收录: {} ({} 字节)", item.kind, item.size);
+                    // 插件扩展点：已经在历史里了，钩子只能做"通知"，不能撤销
+                    state.hooks.run(
+                        crate::hooks::names::CLIPBOARD_CAPTURED,
+                        serde_json::json!({
+                            "id": item.id,
+                            "kind": item.kind,
+                            "size": item.size,
+                            "sourceApp": item.source_app,
+                        }),
+                    );
                     let _ = app.emit("clipboard://new", &item);
                     let _ = app.emit("clipboard://stats", service.store.stats());
-                    let _ = service.store.save();
+                    // 节流写盘：连着复制时不必每条都重写整个索引，
+                    // 被跳过的由下一轮 flush_if_pending 补上
+                    let _ = service.store.save_throttled();
                 }
                 Ok(ScanResult::Duplicate) => {
                     *service.last_sequence.lock() = seq;
                     let _ = app.emit("clipboard://stats", service.store.stats());
-                    let _ = service.store.save();
+                    let _ = service.store.save_throttled();
+                }
+                Ok(ScanResult::Skipped(reason)) => {
+                    *service.last_sequence.lock() = seq;
+                    log::debug!("剪贴板变化已跳过：{reason}");
                 }
                 Ok(ScanResult::Empty) => {
                     *service.last_sequence.lock() = seq;
@@ -142,10 +221,14 @@ pub fn sync_now(app: &AppHandle) -> Option<ClipboardItem> {
         .inner()
         .clone();
     let state = app.try_state::<Arc<AppState>>()?;
-    let (capture_images, skip_sensitive) = {
+    let (enabled, opts) = {
         let s = state.settings.read();
-        (s.clipboard.capture_images, s.clipboard.skip_sensitive)
+        (s.clipboard.enabled, ScanOpts::from_cfg(&s.clipboard))
     };
+    // 历史记录关掉了就别再往里塞：面板打开时也不该偷偷收录
+    if !enabled {
+        return None;
+    }
 
     let seq = sequence_number();
     if seq == *service.last_sequence.lock() {
@@ -157,10 +240,19 @@ pub fn sync_now(app: &AppHandle) -> Option<ClipboardItem> {
     // 「列表里没有刚复制的东西」。所以这里最多重试 4 次（约 60ms），
     // 用 60ms 的延迟换「列表一定是最新的」，值。
     for attempt in 0..4 {
-        match scan_clipboard(&service, capture_images, skip_sensitive) {
+        match scan_clipboard(&service, &opts) {
             Ok(ScanResult::New(item)) => {
                 *service.last_sequence.lock() = seq;
                 log::info!("剪贴板即时收录: {} ({} 字节)", item.kind, item.size);
+                state.hooks.run(
+                    crate::hooks::names::CLIPBOARD_CAPTURED,
+                    serde_json::json!({
+                        "id": item.id,
+                        "kind": item.kind,
+                        "size": item.size,
+                        "sourceApp": item.source_app,
+                    }),
+                );
                 let _ = service.store.save();
                 let _ = app.emit("clipboard://new", &item);
                 return Some(item);
@@ -170,7 +262,7 @@ pub fn sync_now(app: &AppHandle) -> Option<ClipboardItem> {
                 let _ = service.store.save();
                 return None;
             }
-            Ok(ScanResult::Empty) => {
+            Ok(ScanResult::Skipped(_)) | Ok(ScanResult::Empty) => {
                 *service.last_sequence.lock() = seq;
                 return None;
             }
@@ -180,7 +272,7 @@ pub fn sync_now(app: &AppHandle) -> Option<ClipboardItem> {
                     log::debug!("剪贴板持续被占用，留给轮询重试");
                     return None;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(15));
+                std::thread::sleep(Duration::from_millis(15));
             }
             Err(e) => {
                 *service.last_sequence.lock() = seq;
@@ -192,15 +284,8 @@ pub fn sync_now(app: &AppHandle) -> Option<ClipboardItem> {
     None
 }
 
-pub fn stop_monitor(app: &AppHandle) {
-    if let Some(service) = app.try_state::<Arc<ClipboardService>>() {
-        service.running.store(false, Ordering::SeqCst);
-        let _ = service.store.save();
-    }
-}
-
-/// 强特征密钥/凭据。默认不启用（用户要求全部记录），保留给需要的人
-#[allow(dead_code)]
+/// 强特征密钥/凭据。默认不启用（`clipboard.skip_sensitive`），
+/// 打开后由 `scan_clipboard` 在入库前过滤。
 fn looks_sensitive(text: &str) -> bool {
     const MARKERS: &[&str] = &[
         "-----BEGIN",
@@ -221,7 +306,6 @@ fn looks_sensitive(text: &str) -> bool {
 
 enum RawClip {
     Text(String),
-    Html(String, String),
     Image(image::RgbaImage),
     Files(Vec<String>),
 }
@@ -262,11 +346,6 @@ fn read_files() -> Vec<String> {
 #[cfg(not(windows))]
 fn read_files() -> Vec<String> {
     Vec::new()
-}
-
-#[cfg(windows)]
-fn has_format(format: u32) -> bool {
-    unsafe { windows::Win32::System::DataExchange::IsClipboardFormatAvailable(format).is_ok() }
 }
 
 /// 读剪贴板的结果。
@@ -328,22 +407,44 @@ pub enum ScanResult {
     New(ClipboardItem),
     /// 内容已在历史里，只把时间往前挪
     Duplicate,
+    /// 有意跳过（来源程序被排除 / 命中敏感内容过滤），带一句原因便于排查
+    Skipped(String),
     /// 没有可收录的内容
     Empty,
     /// 暂时读不到，下轮再来
     Busy,
 }
 
-fn scan_clipboard(
-    service: &ClipboardService,
-    capture_images: bool,
-    _skip_sensitive: bool,
-) -> AppResult<ScanResult> {
-    let raw = match read_raw(capture_images) {
+fn scan_clipboard(service: &ClipboardService, opts: &ScanOpts) -> AppResult<ScanResult> {
+    // 来源程序过滤放在读图之前：读一张 4K 图再丢掉是纯浪费
+    let source_app = {
+        let app = crate::win32::window::clipboard_source_app();
+        (!app.is_empty()).then_some(app)
+    };
+    if let Some(app) = &source_app {
+        if opts
+            .ignore_apps
+            .iter()
+            .any(|e| crate::win32::window::exe_name_eq(e, app))
+        {
+            return Ok(ScanResult::Skipped(format!("来源程序 {app} 在排除列表里")));
+        }
+    }
+
+    let raw = match read_raw(opts.capture_images) {
         ReadOutcome::Got(r) => r,
         ReadOutcome::Empty => return Ok(ScanResult::Empty),
         ReadOutcome::Busy => return Ok(ScanResult::Busy),
     };
+
+    // 敏感内容过滤只对文本有意义（图片、文件名谈不上"形似密钥"）
+    if opts.skip_sensitive {
+        if let RawClip::Text(t) = &raw {
+            if looks_sensitive(t) {
+                return Ok(ScanResult::Skipped("内容形似密钥，按设置跳过".into()));
+            }
+        }
+    }
 
     let now = chrono::Utc::now().timestamp_millis();
 
@@ -351,14 +452,7 @@ fn scan_clipboard(
         RawClip::Image(img) => (sha256_hex(img.as_raw()), "image"),
         RawClip::Text(t) => (sha256_hex(t.as_bytes()), detect_kind(t)),
         RawClip::Files(f) => (sha256_hex(f.join("|").as_bytes()), "files"),
-        RawClip::Html(h, _) => (sha256_hex(h.as_bytes()), "html"),
     };
-
-    // 相同内容：只更新时间，不重复入库
-    if service.store.find_by_hash(&hash).is_some() {
-        service.store.touch(&hash);
-        return Ok(ScanResult::Duplicate);
-    }
 
     let mut item = ClipboardItem {
         id: format!("c_{}_{}", now, &hash[..6.min(hash.len())]),
@@ -372,10 +466,7 @@ fn scan_clipboard(
         color: None,
         hash: hash.clone(),
         size: 0,
-        source_app: {
-            let app = crate::win32::window::clipboard_source_app();
-            (!app.is_empty()).then_some(app)
-        },
+        source_app,
         pinned: false,
         tags: Vec::new(),
         created_at: now,
@@ -388,11 +479,6 @@ fn scan_clipboard(
             item.size = t.len() as u64;
             item.color = detect_color(&t);
             item.text = Some(t);
-        }
-        RawClip::Html(h, plain) => {
-            item.size = h.len() as u64;
-            item.text = Some(plain);
-            item.html = Some(h);
         }
         RawClip::Files(files) => {
             item.size = files.iter().map(|f| f.len() as u64).sum();
@@ -422,7 +508,11 @@ fn scan_clipboard(
         }
     }
 
-    Ok(ScanResult::New(service.store.add(item)))
+    // 查重和插入在 store 内部同一把锁里完成 —— 两个扫描入口并发也只会进一条
+    Ok(match service.store.add(item) {
+        AddResult::Added(i) => ScanResult::New(i),
+        AddResult::Duplicate => ScanResult::Duplicate,
+    })
 }
 
 fn detect_kind(text: &str) -> &'static str {
@@ -532,13 +622,13 @@ pub fn paste(service: &ClipboardService, id: &str) -> AppResult<String> {
     Ok(item.kind)
 }
 
-pub fn copy_text(service: &ClipboardService, text: &str) -> AppResult<()> {
+pub fn copy_text(text: &str) -> AppResult<()> {
     let mut cb = arboard::Clipboard::new().map_err(|e| AppError::Clipboard(e.to_string()))?;
     cb.set_text(text).map_err(|e| AppError::Clipboard(e.to_string()))?;
     Ok(())
 }
 
-pub fn copy_image_bytes(service: &ClipboardService, png: &[u8]) -> AppResult<()> {
+pub fn copy_image_bytes(png: &[u8]) -> AppResult<()> {
     let img = image::load_from_memory(png)
         .map_err(|e| AppError::Msg(format!("图片解码失败: {e}")))?
         .to_rgba8();

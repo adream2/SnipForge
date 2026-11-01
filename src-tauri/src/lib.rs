@@ -6,14 +6,20 @@
 //!   - `capture/` `clipboard/` `uploader/` 互不直接调用，跨模块通信走 `hooks`
 //!   - 第三方扩展只通过 `uploader::Provider` trait 或声明式 JSON 接入
 
-// release 二进制必须内嵌前端资源。`tauri build` 会自动打开 custom-protocol，
-// 但直接 `cargo build --release` 不会 —— 那样窗口会去连 devUrl（127.0.0.1:5183），
-// 用户看到的是"拒绝连接"，还以为是软件坏了（这个坑真踩过）。
-// 与其发出去一个白屏 exe，不如让构建直接失败并说清楚怎么办。
+// release 二进制必须内嵌前端资源。
+//
+// 注意：Tauri v2 CLI **不会**自动打开本 crate 的 `custom-protocol` 特性 ——
+// 它只带 `tauri/custom-protocol`（依赖的特性），`cfg(feature = "custom-protocol")`
+// 仍然是假的。所以必须显式传：
+//     npx tauri build --features custom-protocol
+//     cargo build --release --features custom-protocol
+// 忘记传就会打出一个去连 devUrl（127.0.0.1:5183）的 exe，用户看到"拒绝连接"，
+// 还以为是软件坏了（这个坑真踩过）。与其发出去一个白屏 exe，不如让构建直接失败。
 #[cfg(all(not(debug_assertions), not(feature = "custom-protocol")))]
 compile_error!(
     "release 构建缺少 custom-protocol 特性：exe 会去连 devUrl 而不是内嵌前端。
-     用 `npm run tauri -- build --no-bundle` 或 `cargo build --release --features custom-protocol`。"
+     正确命令：`npx tauri build --features custom-protocol`
+     或：`cargo build --release --features custom-protocol`。"
 );
 
 mod autostart;
@@ -21,14 +27,15 @@ mod bootstrap;
 mod capture;
 mod clipboard;
 mod commands;
-mod config;
 mod devtools;
 mod error;
 mod features;
 mod gesture;
 mod hooks;
 mod hosts;
+mod icons;
 mod logger;
+mod net;
 mod ocr;
 mod panel;
 mod paths;
@@ -38,12 +45,15 @@ mod secrets;
 mod shortcuts;
 mod state;
 mod tray;
+mod update;
 mod translate;
 mod types;
 mod uploader;
+mod vault;
 mod win32;
 mod windows;
 
+pub use snipforge_core::config;
 pub use devtools::*;
 
 pub fn run() {
@@ -68,6 +78,11 @@ pub fn run() {
             commands::autostart_status,
             commands::settings_reset,
             commands::settings_pick_dir,
+            // 版本检查
+            commands::update::update_check,
+            commands::update::update_cached,
+            commands::update::update_open,
+            commands::pick_file,
             commands::app_info,
             commands::app_open_dir,
             commands::app_log,
@@ -109,6 +124,7 @@ pub fn run() {
             commands::record::record_stop,
             commands::record::record_cancel,
             commands::record::record_status,
+            commands::record::record_camera_list,
             commands::record::record_recent,
             commands::record::record_set_lens,
             commands::record::record_set_interactive,
@@ -123,8 +139,13 @@ pub fn run() {
             commands::image::ocr_engines,
             commands::image::ocr_open_engine_dir,
             commands::image::ocr_download_paddle,
+            commands::image::ocr_install_local,
             commands::image::image_info,
             commands::image::image_open_folder,
+
+            // 图标提取
+            commands::icons::icon_extract,
+            commands::icons::icon_build_ico,
             // 剪贴板
             commands::clipboard::clipboard_list,
             commands::clipboard::clipboard_thumb,
@@ -168,7 +189,16 @@ pub fn run() {
             commands::plugins::plugins_state,
             commands::plugins::plugins_toggle,
             commands::plugins::plugins_reload,
+            commands::plugins::plugins_hooks,
             commands::plugins::plugins_open_dir,
+            // 主密码保险箱
+            commands::vault::vault_status,
+            commands::vault::vault_enable,
+            commands::vault::vault_unlock,
+            commands::vault::vault_lock,
+            commands::vault::vault_change_password,
+            commands::vault::vault_disable,
+            commands::vault::vault_reset,
         ])
         .run(tauri::generate_context!())
         .expect("SnipForge 启动失败");

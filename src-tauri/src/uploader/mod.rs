@@ -124,54 +124,6 @@ pub fn cfg_str(cfg: &Cfg, key: &str) -> String {
         .to_string()
 }
 
-pub fn cfg_bool(cfg: &Cfg, key: &str, fallback: bool) -> bool {
-    cfg.get(key).and_then(|v| v.as_bool()).unwrap_or(fallback)
-}
-
-/// 拼装文件名：{yyyy}{MM}{dd}{HH}{mm}{ss}{rand}{type}
-pub fn render_file_name(template: &str, ext: &str) -> String {
-    let now = chrono::Local::now();
-    let rand: String = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
-        format!("{:04x}", (nanos ^ (std::process::id() << 8)) & 0xffff)
-    };
-
-    let mut out = template.to_string();
-    for (key, value) in [
-        ("{yyyy}", now.format("%Y").to_string()),
-        ("{MM}", now.format("%m").to_string()),
-        ("{dd}", now.format("%d").to_string()),
-        ("{HH}", now.format("%H").to_string()),
-        ("{mm}", now.format("%M").to_string()),
-        ("{ss}", now.format("%S").to_string()),
-        ("{rand}", rand),
-        ("{type}", ext.to_string()),
-    ] {
-        out = out.replace(key, &value);
-    }
-
-    // Windows 文件名非法字符一律替换掉，别让保存莫名其妙失败
-    let sanitized: String = out
-        .chars()
-        .map(|c| match c {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            c if (c as u32) < 32 => '_',
-            c => c,
-        })
-        .collect();
-
-    let trimmed = sanitized.trim().trim_matches('.').to_string();
-    if trimmed.is_empty() {
-        format!("SnipForge_{}", chrono::Local::now().format("%Y%m%d_%H%M%S"))
-    } else {
-        trimmed.chars().take(180).collect()
-    }
-}
-
 pub fn mime_to_ext(mime: &str) -> &'static str {
     match mime {
         "image/jpeg" => "jpg",
@@ -211,28 +163,17 @@ pub fn build_registry() -> UploaderRegistry {
     registry
 }
 
-/// 展开目录模板：{yyyy} {MM} {dd} {HH} {mm} {ss}，并去掉首尾斜杠、合并多余斜杠。
-///
-/// 和文件名的模板是同一套占位符，方便用户写 `blog/{yyyy}/{MM}` 这种"按年月归档"。
-pub fn render_dir(template: &str) -> String {
-    let now = chrono::Local::now();
-    let mut out = template.trim().to_string();
-    for (key, value) in [
-        ("{yyyy}", now.format("%Y").to_string()),
-        ("{yy}", now.format("%y").to_string()),
-        ("{MM}", now.format("%m").to_string()),
-        ("{dd}", now.format("%d").to_string()),
-        ("{HH}", now.format("%H").to_string()),
-        ("{mm}", now.format("%M").to_string()),
-        ("{ss}", now.format("%S").to_string()),
-    ] {
-        out = out.replace(key, &value);
-    }
-    // 干掉空段（a//b → a/b），别让远端出现奇怪的路径
-    let parts: Vec<&str> = out
-        .split('/')
-        .map(|p| p.trim())
-        .filter(|p| !p.is_empty())
-        .collect();
-    parts.join("/")
+/* --------------------- 路径安全 --------------------- */
+// 纯逻辑在 core crate 里（那边有真正能跑的单测）。
+// 这里保留同名入口，调用方不用关心它住在哪个 crate。
+pub use snipforge_core::safe::{render_dir, render_file_name};
+
+/// 见 `snipforge_core::safe::safe_join`。这里只把错误换成 `AppError`。
+pub fn safe_join(root: &str, sub: &str) -> AppResult<std::path::PathBuf> {
+    snipforge_core::safe::safe_join(root, sub).map_err(AppError::Msg)
+}
+
+/// 见 `snipforge_core::safe::safe_file_name`。
+pub fn safe_file_name(name: &str) -> AppResult<String> {
+    snipforge_core::safe::safe_file_name(name).map_err(AppError::Msg)
 }

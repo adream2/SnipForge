@@ -64,7 +64,7 @@ export default function ConfigTab({
   onChange
 }: {
   settings: AppSettings | null
-  onChange: (patch: unknown) => Promise<AppSettings>
+  onChange: (patch: unknown) => Promise<AppSettings | null>
 }) {
   const [providers, setProviders] = useState<ProviderMeta[]>([])
   const [active, setActive] = useState<string>('github')

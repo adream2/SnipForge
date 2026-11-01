@@ -1,12 +1,15 @@
 pub mod capture;
 pub mod features;
 pub mod hosts;
+pub mod icons;
 pub mod clipboard;
 pub mod image;
 pub mod plugins;
 pub mod record;
 pub mod settings;
+pub mod update;
 pub mod upload;
+pub mod vault;
 
 pub use features::*;
 pub use settings::*;

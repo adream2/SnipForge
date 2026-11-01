@@ -36,6 +36,3 @@ export function providerLabel(id: string | undefined): string {
   return PROVIDERS.find((p) => p.id === id)?.label ?? '腾讯（免 key）'
 }
 
-export function languageLabel(id: string): string {
-  return LANGUAGES.find((l) => l.id === id)?.label ?? id
-}

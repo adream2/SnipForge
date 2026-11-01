@@ -17,9 +17,6 @@ impl Rect {
     pub fn bottom(&self) -> i32 {
         self.y + self.height as i32
     }
-    pub fn is_empty(&self) -> bool {
-        self.width == 0 || self.height == 0
-    }
 
     /// 求交集，无交集返回 None
     pub fn intersect(&self, other: &Rect) -> Option<Rect> {
@@ -40,24 +37,7 @@ impl Rect {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Point {
-    pub x: i32,
-    pub y: i32,
-}
-
 /* ---------------- 截图 ---------------- */
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DisplayInfo {
-    pub id: u32,
-    pub name: String,
-    /// 逻辑坐标（DIP）
-    pub bounds: Rect,
-    pub scale_factor: f64,
-    pub is_primary: bool,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

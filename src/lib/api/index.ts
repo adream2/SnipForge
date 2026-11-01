@@ -9,6 +9,9 @@ import { hostsApi } from './hosts'
 import { recordApi } from './record'
 import { uploadApi } from './upload'
 import { pluginApi } from './plugin'
+import { vaultApi } from './vault'
+import { iconApi } from './icon'
+import { updateApi } from './update'
 
 export const api = {
   ...settingsApi,
@@ -19,6 +22,9 @@ export const api = {
   ...recordApi,
   ...uploadApi,
   ...pluginApi,
+  ...vaultApi,
+  ...iconApi,
+  ...updateApi,
 }
 
 export { events } from './events'

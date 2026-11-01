@@ -37,10 +37,18 @@ chrono = "0.4"
 dirs = "6"
 log = "0.4"
 
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "ico"] }
 base64 = "0.22"
 sha2 = "0.10"
+# 纯逻辑层（配置 / 路径消毒）。拆出来是为了让 cargo test 真能跑
+snipforge-core = { path = "core" }
 urlencoding = "2"
+
+# 主密码保险箱：Argon2id 派生 + AES-256-GCM 加密
+argon2 = "0.5"
+aes-gcm = "0.10"
+zeroize = "1"
+rand = "0.8"
 
 xcap = "0.9"
 arboard = "3.7"
@@ -54,6 +62,8 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 hmac = "0.12"
 sevenz-rust = { version = "0.6", features = ["compress"] }
+# 图标提取：APK / IPA 都是 zip 包，只读不写，只要 deflate
+zip = { version = "2", default-features = false, features = ["deflate"] }
 gif = "0.13"
 color_quant = "1"
 
@@ -70,14 +80,17 @@ windows = { version = "0.62", features = [
   "Win32_Graphics_Dxgi",
   "Win32_Media_MediaFoundation",
   "Win32_Media_KernelStreaming",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
   "Win32_System_DataExchange",
   "Win32_System_Memory",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
-  "Win32_System_Com",
-  "Win32_System_SystemInformation",
   "Win32_System_Registry",
+  "Win32_System_SystemInformation",
   "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
   "Foundation",
   "Foundation_Collections",
   "Media_Ocr",

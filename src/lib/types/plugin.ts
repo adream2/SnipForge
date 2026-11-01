@@ -20,3 +20,14 @@ export interface PluginState {
   builtinDir: string
   userDir: string
 }
+
+/**
+ * 一个钩子点（插件可以介入的时机）。
+ *
+ * 清单由后端 `hooks::names::ALL` 提供 —— 前端不再自己抄一份，
+ * 加一个钩子点页面自动多一行，不会出现"文档里有、代码里没有"。
+ */
+export interface HookPoint {
+  name: string
+  handlers: number
+}

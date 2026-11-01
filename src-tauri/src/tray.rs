@@ -49,16 +49,14 @@ fn build_menu(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     };
 
     let a_region = accel(&hk.region_capture);
-    let a_full = accel(&hk.fullscreen_capture);
-    let a_scroll = accel(&hk.scroll_capture);
     let a_panel = accel(&hk.clipboard_panel);
     let a_record = accel(&hk.toggle_recording);
     let a_record_gif = accel(&hk.toggle_recording_gif);
 
-    let region = MenuItem::with_id(app, "capture_region", "区域截图", true, a_region.as_deref())?;
-    let full = MenuItem::with_id(app, "capture_full", "全屏截图", true, a_full.as_deref())?;
-    let scroll =
-        MenuItem::with_id(app, "capture_scroll", "滚动长截图", true, a_scroll.as_deref())?;
+    // 只有"截图"一个入口：全屏（Ctrl+A）、窗口（单击）、滚动（S）都在选区里选。
+    // 以前这里是三项，但后两项点开的是同一个选区界面 —— 用户还得再按一次键，
+    // 等于白占两行菜单
+    let region = MenuItem::with_id(app, "capture", "截图", true, a_region.as_deref())?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let panel = MenuItem::with_id(app, "panel_clipboard", "剪贴板面板", true, a_panel.as_deref())?;
     let history = MenuItem::with_id(app, "show_clipboard", "剪贴板管理", true, None::<&str>)?;
@@ -95,8 +93,6 @@ fn build_menu(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
         app,
         &[
             &region,
-            &full,
-            &scroll,
             &sep1,
             &panel,
             &history,
@@ -139,9 +135,13 @@ fn register_events(app: &AppHandle) {
     tray.on_menu_event(move |_app, event| {
         let id = event.id().as_ref();
         match id {
+            "capture" => crate::commands::capture::trigger(&handle, "region"),
+            // 老版本的三项菜单（区域/全屏/滚动）合并成一项。id 留着是为了
+            // 万一有正在运行的旧托盘没重建完，点了也不至于变成哑键
             "capture_region" => crate::commands::capture::trigger(&handle, "region"),
-            "capture_full" => crate::commands::capture::trigger(&handle, "fullscreen"),
-            "capture_scroll" => crate::commands::capture::trigger(&handle, "scroll"),
+            "capture_full" | "capture_scroll" => {
+                crate::commands::capture::trigger(&handle, "region")
+            }
             // 托盘菜单回调跑在主线程，而 panel::show 里的 cursor_position() /
             // monitor_from_point() 会把请求投递到主线程再等结果 —— 直接调用就自锁。
             // 所以一律丢给异步运行时，这里立刻返回。

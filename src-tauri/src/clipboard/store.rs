@@ -6,9 +6,19 @@
 use crate::error::AppResult;
 use crate::paths::Paths;
 use crate::types::{ClipboardItem, ClipboardQuery, ClipboardStats};
+use parking_lot::Mutex;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+/// 两次落盘的最小间隔。
+///
+/// 历史里有 2000 条长文本时，`save` 每次都要序列化整个索引（几 MB）。
+/// 连着复制五段话就写五次，界面会明显一顿。真正的数据在内存里，
+/// 索引只是重启后的恢复手段，晚 0.5 秒写不影响任何可见行为。
+const SAVE_THROTTLE: Duration = Duration::from_millis(800);
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct IndexFile {
@@ -19,21 +29,39 @@ struct IndexFile {
 }
 
 pub struct ClipboardStore {
+    /// **单一数据源**。以前还有一个 hash → id 的旁路索引，
+    /// 两处状态一旦不同步（并发扫描、单条删除）就会丢映射、失去去重能力；
+    /// 去重改成在 `add` 里同一把锁内线性查一遍（2000 条量级，成本可忽略）。
     items: RwLock<Vec<ClipboardItem>>,
-    by_hash: RwLock<HashMap<String, String>>,
     index_file: PathBuf,
     blobs_dir: PathBuf,
     pub max_items: RwLock<usize>,
+    /// 上次落盘时刻（节流用）
+    save_gate: Mutex<Option<Instant>>,
+    /// 被节流跳过的写入：下一轮要补上，否则"最后复制的那条"会一直不落盘
+    save_pending: AtomicBool,
+}
+
+/// `add` 的结果。
+///
+/// 常驻监控线程和面板的即时扫描（`sync_now`）会并发调到这里：
+/// 以前两边都能先查后插、各插一条，同一份内容进两条。
+pub enum AddResult {
+    /// 真的新增了一条
+    Added(ClipboardItem),
+    /// 同 hash 已存在，只把时间和命中数往前挪
+    Duplicate,
 }
 
 impl ClipboardStore {
     pub fn new(paths: &Paths) -> Self {
         Self {
             items: RwLock::new(Vec::new()),
-            by_hash: RwLock::new(HashMap::new()),
             index_file: paths.clipboard_index.clone(),
             blobs_dir: paths.blobs.clone(),
             max_items: RwLock::new(2000),
+            save_gate: Mutex::new(None),
+            save_pending: AtomicBool::new(false),
         }
     }
 
@@ -63,13 +91,8 @@ impl ClipboardStore {
                         log::info!("补全 {retagged} 条历史的分类（链接/颜色）");
                     }
                     items.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
-                    let mut map = HashMap::new();
-                    for item in &items {
-                        map.insert(item.hash.clone(), item.id.clone());
-                    }
                     log::info!("载入剪贴板历史 {} 条", items.len());
                     *self.items.write() = items;
-                    *self.by_hash.write() = map;
                 }
                 Err(e) => {
                     log::error!("剪贴板索引损坏: {e}");
@@ -81,7 +104,38 @@ impl ClipboardStore {
         }
     }
 
+    /// 节流版落盘：高频收录走这条。
+    ///
+    /// 被跳过时会置 `save_pending`，由调用方（剪贴板轮询线程）下一轮
+    /// `flush_if_pending` 补写 —— 只跳过不补，最后复制的那条就永远不落盘了。
+    pub fn save_throttled(&self) -> AppResult<()> {
+        {
+            let mut gate = self.save_gate.lock();
+            if let Some(at) = *gate {
+                if at.elapsed() < SAVE_THROTTLE {
+                    self.save_pending.store(true, Ordering::SeqCst);
+                    return Ok(());
+                }
+            }
+            *gate = Some(Instant::now());
+        }
+        self.save_pending.store(false, Ordering::SeqCst);
+        self.save()
+    }
+
+    /// 有被节流掉的写入就补一次。轮询线程每轮调一次，成本是一次原子读。
+    pub fn flush_if_pending(&self) -> AppResult<()> {
+        if !self.save_pending.swap(false, Ordering::SeqCst) {
+            return Ok(());
+        }
+        *self.save_gate.lock() = Some(Instant::now());
+        self.save()
+    }
+
+    /// 无条件立即落盘。退出 / 清空 / 用户主动操作时用。
     pub fn save(&self) -> AppResult<()> {
+        *self.save_gate.lock() = Some(Instant::now());
+        self.save_pending.store(false, Ordering::SeqCst);
         let payload = IndexFile {
             version: 1,
             items: self.items.read().clone(),
@@ -91,12 +145,6 @@ impl ClipboardStore {
         std::fs::write(&tmp, text)?;
         std::fs::rename(&tmp, &self.index_file)?;
         Ok(())
-    }
-
-    pub fn find_by_hash(&self, hash: &str) -> Option<ClipboardItem> {
-        let map = self.by_hash.read();
-        let id = map.get(hash)?;
-        self.items.read().iter().find(|i| &i.id == id).cloned()
     }
 
     pub fn find_by_id(&self, id: &str) -> Option<ClipboardItem> {
@@ -115,13 +163,23 @@ impl ClipboardStore {
         Some(updated)
     }
 
-    pub fn add(&self, item: ClipboardItem) -> ClipboardItem {
+    /// 加入一条历史。查重和插入在同一把锁里完成，两个扫描入口并发也只会进一条。
+    pub fn add(&self, item: ClipboardItem) -> AddResult {
         let mut items = self.items.write();
+
+        // 同一内容：更新使用时间、提到最前，不新增
+        if let Some(pos) = items.iter().position(|i| i.hash == item.hash) {
+            let mut existing = items.remove(pos);
+            existing.last_used_at = item.last_used_at.max(existing.last_used_at);
+            existing.hits += 1;
+            items.insert(0, existing);
+            return AddResult::Duplicate;
+        }
+
         items.insert(0, item.clone());
-        self.by_hash.write().insert(item.hash.clone(), item.id.clone());
         drop(items);
         self.enforce_limit();
-        item
+        AddResult::Added(item)
     }
 
     fn enforce_limit(&self) {
@@ -144,9 +202,7 @@ impl ClipboardStore {
         }
         drop(items);
         if !removed.is_empty() {
-            let mut map = self.by_hash.write();
             for item in &removed {
-                map.remove(&item.hash);
                 self.delete_files(item);
             }
             log::debug!("超出上限淘汰 {} 条", removed.len());
@@ -207,7 +263,6 @@ impl ClipboardStore {
         if let Some(pos) = items.iter().position(|i| i.id == id) {
             let item = items.remove(pos);
             drop(items);
-            self.by_hash.write().remove(&item.hash);
             self.delete_files(&item);
             return true;
         }
@@ -226,12 +281,7 @@ impl ClipboardStore {
                 self.delete_files(item);
             }
         }
-        *items = kept.clone();
-        let mut map = self.by_hash.write();
-        map.clear();
-        for item in &kept {
-            map.insert(item.hash.clone(), item.id.clone());
-        }
+        *items = kept;
     }
 
     pub fn purge_older_than(&self, days: u32) -> usize {
@@ -248,9 +298,7 @@ impl ClipboardStore {
         let ids: std::collections::HashSet<&String> = doomed.iter().map(|d| &d.id).collect();
         items.retain(|i| !ids.contains(&i.id));
         drop(items);
-        let mut map = self.by_hash.write();
         for item in &doomed {
-            map.remove(&item.hash);
             self.delete_files(item);
         }
         doomed.len()

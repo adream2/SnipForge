@@ -10,23 +10,19 @@ use crate::uploader::UploaderRegistry;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
-/// 一个声明式图床文件的完整结构
+/// 一个声明式图床文件的完整结构。
+///
+/// 只声明**会被用到**的字段：`version` / `author` / `hooks` 以前也解析进来了，
+/// 但没有任何代码读它们（插件页展示的是原始 JSON，不走这个结构体）。
+/// 声明式插件没有脚本能力，挂不了钩子 —— 写进 JSON 也不会生效，
+/// 与其让作者以为能用，不如根本不声明。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct UploaderSpec {
     pub id: String,
     pub name: String,
-    #[serde(default = "default_version")]
-    pub version: String,
     pub description: Option<String>,
-    pub author: Option<String>,
     /// 图床定义本体
     pub provider: ProviderSpec,
-    #[serde(default)]
-    pub hooks: Vec<String>,
-}
-
-fn default_version() -> String {
-    "1.0.0".into()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

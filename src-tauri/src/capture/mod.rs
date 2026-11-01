@@ -17,7 +17,6 @@ pub fn begin(state: &AppState, mode: &str) -> AppResult<FramePayload> {
     *state.capture.lock() = Some(CaptureSession {
         frame,
         mode: mode.to_string(),
-        scroll_rect: None,
         aborted: false,
     });
     Ok(payload)
@@ -39,24 +38,6 @@ pub fn commit(state: &AppState, display_id: u32, rect: Rect) -> AppResult<Captur
     screen::crop_display(display, rect)
 }
 
-/// 全屏截图：直接取主屏完整画面
-pub fn commit_fullscreen(state: &AppState) -> AppResult<CaptureResult> {
-    let guard = state.capture.lock();
-    let session = guard
-        .as_ref()
-        .ok_or_else(|| AppError::Msg("截图会话已失效".into()))?;
-
-    let display = session
-        .frame
-        .displays
-        .iter()
-        .find(|d| d.is_primary)
-        .or_else(|| session.frame.displays.first())
-        .ok_or_else(|| AppError::Msg("没有可用显示器".into()))?;
-
-    let rect = display.physical;
-    screen::crop_display(display, rect)
-}
 
 /// 取出当前会话的显示器预览（selector 打开时拉一次）
 pub fn payload_of(state: &AppState) -> Option<FramePayload> {
@@ -65,25 +46,6 @@ pub fn payload_of(state: &AppState) -> Option<FramePayload> {
         .lock()
         .as_ref()
         .map(|s| s.frame.payload())
-}
-
-pub fn set_scroll_rect(state: &AppState, rect: Rect) {
-    if let Some(session) = state.capture.lock().as_mut() {
-        session.scroll_rect = Some(rect);
-    }
-}
-
-pub fn scroll_rect(state: &AppState) -> Option<Rect> {
-    state.capture.lock().as_ref().and_then(|s| s.scroll_rect)
-}
-
-pub fn mode_of(state: &AppState) -> String {
-    state
-        .capture
-        .lock()
-        .as_ref()
-        .map(|s| s.mode.clone())
-        .unwrap_or_default()
 }
 
 pub fn abort(state: &AppState) {

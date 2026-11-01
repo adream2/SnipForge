@@ -14,12 +14,11 @@ pub fn available_languages() -> Vec<String> {
     use windows::Media::Ocr::OcrEngine;
 
     let mut out = Vec::new();
-    unsafe {
-        if let Ok(langs) = OcrEngine::AvailableRecognizerLanguages() {
-            for lang in langs {
-                if let Ok(tag) = lang.LanguageTag() {
-                    out.push(tag.to_string());
-                }
+    // WinRT 的这些调用在 windows crate 里是安全函数，不需要 unsafe
+    if let Ok(langs) = OcrEngine::AvailableRecognizerLanguages() {
+        for lang in langs {
+            if let Ok(tag) = lang.LanguageTag() {
+                out.push(tag.to_string());
             }
         }
     }
@@ -67,7 +66,9 @@ pub fn recognize(png_bytes: &[u8]) -> AppResult<OcrResult> {
 
     let started = std::time::Instant::now();
 
-    unsafe {
+    // WinRT 调用本身都是安全函数（windows crate 已封装），这里用普通块分组，
+    // 不再套 `unsafe` —— 保留 unsafe 会让"这块有危险操作"变成误报。
+    {
         let stream =
             InMemoryRandomAccessStream::new().map_err(|e| AppError::Win32(e.to_string()))?;
         let writer =

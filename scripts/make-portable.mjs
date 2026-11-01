@@ -26,7 +26,9 @@ const run = (cmd, args, opts = {}) =>
 
 if (wantBuild) {
   console.log('== 构建 release（tauri build --no-bundle）==')
-  run('npx', ['tauri', 'build', '--no-bundle'])
+  // custom-protocol 不能省：CLI 不会自动打开本 crate 的同名特性，
+  // 漏了打出来的 exe 会去连 devUrl（127.0.0.1:5183）。
+  run('npx', ['tauri', 'build', '--no-bundle', '--features', 'custom-protocol'])
 }
 
 if (!fs.existsSync(exe)) {
@@ -39,8 +41,25 @@ const dirName = `${productName}-${version}-portable`
 const dir = path.join(outRoot, dirName)
 const zip = path.join(outRoot, `${productName}_${version}_x64_portable.zip`)
 
-// 每次都从干净目录开始，避免上一次的残留文件混进包里
-fs.rmSync(dir, { recursive: true, force: true })
+// 每次都从干净目录开始，避免上一次的残留文件混进包里。
+//
+// 但"递归删目录"在某些环境里会被接管（比如安全软件把 rm 改写成"移到回收站"，
+// 而回收站不可用就整个失败）。那种情况下不能直接崩 —— 退一步清空内容，
+// 效果一样，目录名也不用改（改了 zip 里就会多一层带时间戳的目录）。
+try {
+  fs.rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  console.warn(`清理 ${dirName} 失败，改为清空内容: ${e.message}`)
+  if (fs.existsSync(dir)) {
+    for (const name of fs.readdirSync(dir)) {
+      try {
+        fs.rmSync(path.join(dir, name), { recursive: true, force: true })
+      } catch {
+        // 单个文件都删不掉就覆盖写，同名文件反正会被 copyFileSync 盖掉
+      }
+    }
+  }
+}
 fs.mkdirSync(path.join(dir, 'plugins'), { recursive: true })
 
 fs.copyFileSync(exe, path.join(dir, `${productName}.exe`))
@@ -63,7 +82,13 @@ console.log(`  ${productName}.exe  ${exeMb} MB`)
 console.log(`  plugins/            ${pluginCount} 个内置插件`)
 
 // 压缩：Windows 上用系统自带的 Compress-Archive，不额外引入依赖
-if (fs.existsSync(zip)) fs.rmSync(zip, { force: true })
+if (fs.existsSync(zip)) {
+  try {
+    fs.rmSync(zip, { force: true })
+  } catch (e) {
+    console.warn(`删除旧 zip 失败（会被覆盖）: ${e.message}`)
+  }
+}
 if (process.platform === 'win32') {
   run('powershell', [
     '-NoProfile',

@@ -280,6 +280,39 @@ export function hitShapeEdge(shape: Shape, x: number, y: number, tolerance = 6):
 }
 
 /** 图形外接矩形，用来画悬停高亮框 */
+/**
+ * 整体平移一个标注。
+ *
+ * 拖动标注时用。这里**必须穷举所有类型**：加新图形时漏掉一处，
+ * `never` 守卫会直接让编译失败，而不是"拖不动但看着正常"。
+ */
+export function translateShape(shape: Shape, dx: number, dy: number): Shape {
+  switch (shape.type) {
+    case 'rect':
+    case 'ellipse':
+    case 'mosaic':
+    case 'marker':
+      return { ...shape, x: shape.x + dx, y: shape.y + dy }
+    case 'arrow':
+      return {
+        ...shape,
+        x1: shape.x1 + dx,
+        y1: shape.y1 + dy,
+        x2: shape.x2 + dx,
+        y2: shape.y2 + dy
+      }
+    case 'pen':
+      return { ...shape, points: shape.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
+    case 'text':
+    case 'number':
+      return { ...shape, x: shape.x + dx, y: shape.y + dy }
+    default: {
+      const unhandled: never = shape
+      return unhandled
+    }
+  }
+}
+
 export function shapeBounds(shape: Shape): { x: number; y: number; width: number; height: number } {
   switch (shape.type) {
     case 'rect':
@@ -358,8 +391,17 @@ export function shapeParam(shape: Shape): ShapeParam {
       return { key: 'alpha', label: '深浅', min: 0.06, max: 0.9, step: 0.05, percent: true }
     case 'mosaic':
       return { key: 'blockSize', label: '颗粒', min: 3, max: 48, step: 1 }
-    default:
+    case 'rect':
+    case 'ellipse':
+    case 'arrow':
+    case 'pen':
       return { key: 'strokeWidth', label: '粗细', min: 1, max: 24, step: 1 }
+    default: {
+      // 编译期完整性检查：新增 Shape 类型却没定义滚轮参数，这里会报类型错误
+      const unhandled: never = shape
+      void unhandled
+      return { key: 'strokeWidth', label: '粗细', min: 1, max: 24, step: 1 }
+    }
   }
 }
 

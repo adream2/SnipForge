@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
 import type { Secret } from '../lib/types'
+import { isLocked, useVaultStatus } from '../lib/useVault'
 import { IconCheck, IconCopy, IconLoader, IconTrash } from './Icons'
 import { useToast } from './Toast'
 
@@ -20,6 +21,8 @@ const EMPTY: Draft = { name: '', value: '', note: '' }
 
 export default function SecretsDialog({ onClose }: { onClose: () => void }) {
   const toast = useToast()
+  /** 保险箱锁着时列表必然是空的，空态文案要换成"去解锁" */
+  const locked = isLocked(useVaultStatus())
   const [list, setList] = useState<Secret[]>([])
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -216,7 +219,22 @@ export default function SecretsDialog({ onClose }: { onClose: () => void }) {
 
           {!loading && list.length === 0 && !draft && (
             <div className="empty" style={{ height: 140 }}>
-              <span>还没有收藏。点「新增」把常用的密钥存进来，之后在面板里一键粘贴。</span>
+              {locked ? (
+                <>
+                  <span>收藏已用主密码加密，解锁后才能查看。</span>
+                  <button
+                    className="btn sm"
+                    onClick={() => {
+                      onClose()
+                      void api.showMain('settings')
+                    }}
+                  >
+                    去设置里解锁
+                  </button>
+                </>
+              ) : (
+                <span>还没有收藏。点「新增」把常用的密钥存进来，之后在面板里一键粘贴。</span>
+              )}
             </div>
           )}
 

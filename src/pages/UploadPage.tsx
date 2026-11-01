@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { api } from '../lib/api'
+import { isLocked, useVaultStatus } from '../lib/useVault'
 import type { AppSettings } from '../lib/types'
 import UploadTab from './upload/UploadTab'
 import ListTab from './upload/ListTab'
@@ -24,9 +26,10 @@ export default function UploadPage({
   onChange
 }: {
   settings: AppSettings | null
-  onChange: (patch: unknown) => Promise<AppSettings>
+  onChange: (patch: unknown) => Promise<AppSettings | null>
 }) {
   const [tab, setTab] = useState<Tab>('upload')
+  const vault = useVaultStatus()
 
   return (
     <>
@@ -52,6 +55,14 @@ export default function UploadPage({
       </div>
 
       <div className="page-body">
+        {isLocked(vault) && (
+          <div className="vault-banner">
+            <span>图床凭据已用主密码加密，解锁后才能读取 token。</span>
+            <button className="btn sm" onClick={() => void api.showMain('settings')}>
+              去设置里解锁
+            </button>
+          </div>
+        )}
         {tab === 'upload' && <UploadTab settings={settings} onChange={onChange} />}
         {tab === 'list' && <ListTab settings={settings} />}
         {tab === 'config' && <ConfigTab settings={settings} onChange={onChange} />}

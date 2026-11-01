@@ -19,6 +19,8 @@ export interface RecordStatus {
   gif: boolean
   /** 是否在写 MP4 */
   mp4: boolean
+  /** 画中画当前是否真的在合成（摄像头掉线后会变 false） */
+  camera: boolean
 }
 
 export interface RecordResult {
@@ -35,6 +37,19 @@ export interface RecordResult {
   gifFrames: number
   gifWidth: number
   gifHeight: number
+  /** 音轨时长（毫秒）。0 = 本次没有音轨 */
+  audioMs: number
+  /** 本次是否真的录到了人像 */
+  camera: boolean
+  /** 本次是否真的录到了麦克风 */
+  mic: boolean
+}
+
+/** 一个摄像头设备 */
+export interface CameraDevice {
+  /** 设备名（同时用作稳定 id） */
+  id: string
+  name: string
 }
 
 export interface RecordCursorEvt {

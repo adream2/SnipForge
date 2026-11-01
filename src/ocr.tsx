@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, events } from './lib/api'
 import { LANGUAGES, providerLabel } from './lib/translate'
+import type { OcrLine } from './lib/types'
 import './styles/ocr.css'
 
 /**
@@ -24,6 +25,12 @@ function Ocr() {
   const [err, setErr] = useState('')
   const [transErr, setTransErr] = useState('')
   const [copied, setCopied] = useState('')
+  /** 词级包围盒：点词复制要用。整段复制解决不了"只要其中一个词" */
+  const [lines, setLines] = useState<OcrLine[]>([])
+  /** 是否在图上显示可点的词框 */
+  const [pickMode, setPickMode] = useState(false)
+  /** 原图像素尺寸，用来把 OCR 坐标换算成百分比 */
+  const [imgSize, setImgSize] = useState({ w: 0, h: 0 })
   const [preview, setPreview] = useState(false)
   const [provider, setProvider] = useState('tencent')
   const [target, setTarget] = useState('zh-CN')
@@ -74,12 +81,16 @@ function Ocr() {
       setErr('')
       setTransErr('')
       setPreview(false)
+      setLines([])
+      setPickMode(false)
       setBusy(true)
       void api
         .imageOcr(dataUrl)
         .then((r) => {
           const t = (r.text ?? '').trim()
           setText(t)
+          setLines(r.lines ?? [])
+          setPickMode(false)
           if (!t) {
             setErr('这张图里没认出文字')
             return
@@ -115,6 +126,18 @@ function Ocr() {
     }
   }
 
+  /** 复制单个词。点图上任意词就进剪贴板，不用先整段复制再删 */
+  const copyWord = async (w: string) => {
+    try {
+      await api.clipboardCopyText(w)
+      const key = `word:${w}`
+      setCopied(key)
+      window.setTimeout(() => setCopied((c) => (c === key ? '' : c)), 1400)
+    } catch (e) {
+      setErr(String(e))
+    }
+  }
+
   /** 换语言：只记下选择，翻译仍由用户按按钮触发 */
   const changeTarget = (lang: string) => {
     setTarget(lang)
@@ -144,6 +167,7 @@ function Ocr() {
   /** 译文存在、但目标语言已经换过 —— 也提示一下，别让人以为译文是新的 */
   const langChanged = !!translated && !!translatedLang && translatedLang !== target
   const chars = text.replace(/\s/g, '').length
+  const wordCount = lines.reduce((n, l) => n + l.words.length, 0)
 
   return (
     <div className="ocr-root">
@@ -155,6 +179,20 @@ function Ocr() {
         {img && (
           <button className="ocr-btn ghost" onClick={() => setPreview((v) => !v)}>
             {preview ? '收起原图' : '看原图'}
+          </button>
+        )}
+        {wordCount > 0 && (
+          <button
+            className="ocr-btn ghost"
+            style={pickMode ? { color: 'var(--accent)' } : undefined}
+            title="在原图上点任意一个词，直接复制它"
+            onClick={() => {
+              setPickMode((v) => !v)
+              // 词框画在原图上，没展开就展开
+              if (!pickMode) setPreview(true)
+            }}
+          >
+            {pickMode ? '关闭点词' : '点词复制'}
           </button>
         )}
         <select
@@ -176,7 +214,39 @@ function Ocr() {
 
       {preview && img && (
         <div className="ocr-preview">
-          <img src={img} alt="" />
+          <div className="ocr-words">
+            <img
+              src={img}
+              alt=""
+              onLoad={(e) =>
+                setImgSize({
+                  w: e.currentTarget.naturalWidth,
+                  h: e.currentTarget.naturalHeight
+                })
+              }
+            />
+            {pickMode &&
+              imgSize.w > 0 &&
+              lines.map((line, li) =>
+                line.words.map((w, wi) => (
+                  <button
+                    key={`${li}-${wi}`}
+                    className="ocr-word"
+                    title={`点击复制：${w.text}`}
+                    style={{
+                      left: `${(w.x / imgSize.w) * 100}%`,
+                      top: `${(w.y / imgSize.h) * 100}%`,
+                      width: `${(w.width / imgSize.w) * 100}%`,
+                      height: `${(w.height / imgSize.h) * 100}%`
+                    }}
+                    onClick={() => void copyWord(w.text)}
+                  />
+                ))
+              )}
+          </div>
+          {copied.startsWith('word:') && (
+            <div className="ocr-word-tip">已复制：{copied.slice(5)}</div>
+          )}
         </div>
       )}
 

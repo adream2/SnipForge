@@ -426,9 +426,3 @@ pub fn emit_to_record_overlay(app: &AppHandle, event: &str, payload: impl serde:
         let _ = w.emit_to(RECORD_OVERLAY, event, payload);
     }
 }
-
-pub fn emit_to_record_bar(app: &AppHandle, event: &str, payload: impl serde::Serialize + Clone) {
-    if let Some(w) = app.get_webview_window(RECORD_BAR) {
-        let _ = w.emit_to(RECORD_BAR, event, payload);
-    }
-}

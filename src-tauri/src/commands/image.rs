@@ -3,7 +3,6 @@ use crate::state::AppState;
 use crate::types::{ImageFileView, ImageInfoView, OcrResult, SaveOutcome};
 use crate::uploader::{data_url_to_bytes, mime_to_ext, render_file_name};
 use std::sync::Arc;
-use tauri::Manager;
 
 /// 保存图片（自动生成文件名）
 #[tauri::command]
@@ -13,7 +12,22 @@ pub fn image_save(
     file_name: Option<String>,
     open_folder: Option<bool>,
 ) -> AppResult<SaveOutcome> {
-    let (bytes, mime) = data_url_to_bytes(&data_url)?;
+    let open = open_folder.unwrap_or_else(|| state.settings.read().save.after_save == "open-folder");
+    save_inner(state.inner(), &data_url, file_name.as_deref(), open)
+}
+
+/// 保存的**唯一实现**。
+///
+/// 截图收尾（`capture.after = "save"`）也走这里 ——
+/// 否则"目录取值 + 文件名消毒 + 落盘"就要抄第二份，
+/// 而其中 `safe_file_name` 是防路径穿越的，漏一处就是一个洞。
+pub fn save_inner(
+    state: &AppState,
+    data_url: &str,
+    file_name: Option<&str>,
+    open_folder: bool,
+) -> AppResult<SaveOutcome> {
+    let (bytes, mime) = data_url_to_bytes(data_url)?;
     let ext = mime_to_ext(&mime);
 
     let cfg = state.settings.read().clone();
@@ -25,13 +39,15 @@ pub fn image_save(
     std::fs::create_dir_all(&dir)?;
 
     let name = match file_name {
-        Some(n) if !n.trim().is_empty() => n,
+        Some(n) if !n.trim().is_empty() => n.to_string(),
         _ => format!("{}.{}", render_file_name(&cfg.save.name_template, ext), ext),
     };
+    // 名字可能是前端给的，只允许纯文件名（拒绝 `..\..\x` 这类越界路径）
+    let name = crate::uploader::safe_file_name(&name)?;
     let path = dir.join(&name);
     std::fs::write(&path, &bytes)?;
 
-    if open_folder.unwrap_or(cfg.save.after_save == "open-folder") {
+    if open_folder {
         let _ = crate::commands::app_open_path_inner(&path);
     }
 
@@ -79,16 +95,9 @@ pub async fn image_save_as(
 
 /// 复制到剪贴板
 #[tauri::command]
-pub fn image_copy(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, Arc<AppState>>,
-    data_url: String,
-) -> AppResult<()> {
+pub fn image_copy(data_url: String) -> AppResult<()> {
     let (bytes, _) = data_url_to_bytes(&data_url)?;
-    let service = app
-        .try_state::<Arc<crate::clipboard::ClipboardService>>()
-        .ok_or_else(|| AppError::Msg("剪贴板服务未初始化".into()))?;
-    crate::clipboard::copy_image_bytes(&service, &bytes)
+    crate::clipboard::copy_image_bytes(&bytes)
 }
 
 /// OCR 识别（按当前配置选择引擎）
@@ -248,14 +257,57 @@ pub async fn ocr_download_paddle(
 
     let engine_dir = state.paths.data.join("ocr-engines");
     let handle = app.clone();
+    // 下载源策略跟着配置走：国内直连 GitHub 常常几十 KB/s，必须能走镜像
+    let (mode, prefix) = {
+        let ocr = state.settings.read().ocr.clone();
+        (
+            crate::ocr::paddle::SourceMode::parse(&ocr.download_mode),
+            ocr.mirror_prefix.clone(),
+        )
+    };
 
     let exe = tauri::async_runtime::spawn_blocking(move || {
-        crate::ocr::paddle::download_and_install(&engine_dir, |p| {
+        crate::ocr::paddle::download_and_install(&engine_dir, mode, &prefix, |p| {
             let _ = handle.emit("ocr://download", p);
         })
     })
     .await
     .map_err(|e| AppError::Msg(format!("下载任务异常: {e}")))??;
+
+    finish_engine_install(&app, &state, exe).await
+}
+
+/// 用户已经自己下好了 7z：只解压，不联网。
+#[tauri::command]
+pub async fn ocr_install_local(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+) -> AppResult<String> {
+    use tauri::Emitter;
+
+    let engine_dir = state.paths.data.join("ocr-engines");
+    let handle = app.clone();
+    let archive = std::path::PathBuf::from(path);
+
+    let exe = tauri::async_runtime::spawn_blocking(move || {
+        crate::ocr::paddle::install_from_archive(&archive, &engine_dir, |p| {
+            let _ = handle.emit("ocr://download", p);
+        })
+    })
+    .await
+    .map_err(|e| AppError::Msg(format!("安装任务异常: {e}")))??;
+
+    finish_engine_install(&app, &state, exe).await
+}
+
+/// 装好之后统一收尾：设成当前引擎 + 落盘 + 通知界面
+async fn finish_engine_install(
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    exe: std::path::PathBuf,
+) -> AppResult<String> {
+    use tauri::Emitter;
 
     let path_text = exe.to_string_lossy().to_string();
     {
@@ -266,12 +318,15 @@ pub async fn ocr_download_paddle(
     state.persist_settings()?;
 
     // 让设置页立刻看到状态变化
-    let _ = app.emit("ocr://download", serde_json::json!({
-        "stage": "done",
-        "downloaded": 0,
-        "total": 0,
-        "message": "安装完成"
-    }));
+    let _ = app.emit(
+        "ocr://download",
+        serde_json::json!({
+            "stage": "done",
+            "downloaded": 0,
+            "total": 0,
+            "message": "安装完成"
+        }),
+    );
 
     Ok(path_text)
 }
@@ -357,19 +412,4 @@ pub async fn translate_test(
         to.as_deref(),
     )
     .await
-}
-
-/// 最小可用的 URL 编码：只保留 unreserved 字符，其余按 UTF-8 字节转 %XX。
-/// 不为这一处请求引入整个 urlencoding crate。
-fn percent_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 3);
-    for b in s.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(*b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }

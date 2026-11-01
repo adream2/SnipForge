@@ -5,6 +5,7 @@ import type { AppSettings, ClipboardStats } from './lib/types'
 import {
   IconClipboard,
   IconImage,
+  IconApp,
   IconVideo,
   IconUpload,
   IconGesture,
@@ -19,6 +20,7 @@ import GesturePage from './pages/GesturePage'
 import ClipboardPage from './pages/ClipboardPage'
 import RecordPage from './pages/RecordPage'
 import ToolsPage from './pages/ToolsPage'
+import IconPage from './pages/IconPage'
 import UploadPage from './pages/UploadPage'
 import PluginsPage from './pages/PluginsPage'
 import SettingsPage from './pages/SettingsPage'
@@ -52,6 +54,7 @@ type Page =
   | 'clipboard'
   | 'record'
   | 'tools'
+  | 'icons'
   | 'upload'
   | 'gesture'
   | 'hosts'
@@ -62,6 +65,7 @@ const NAV: Array<{ id: Page; label: string; icon: React.ReactNode }> = [
   { id: 'clipboard', label: '剪贴板', icon: <IconClipboard size={16} /> },
   { id: 'record', label: '录屏', icon: <IconVideo size={16} /> },
   { id: 'tools', label: '图片工具', icon: <IconImage size={16} /> },
+  { id: 'icons', label: '图标提取', icon: <IconApp size={16} /> },
   { id: 'upload', label: '图床', icon: <IconUpload size={16} /> },
   { id: 'gesture', label: '鼠标手势', icon: <IconGesture size={16} /> },
   { id: 'hosts', label: 'Hosts', icon: <IconHosts size={16} /> },
@@ -121,6 +125,13 @@ function Shell() {
     void events
       .on<string>('record://error', (msg) => toast.push(`录制失败：${msg}`, 'error'))
       .then((u) => unsubs.push(u))
+    // 启动时后端查到了新版本：只在主窗口里提一句，不打断任何操作。
+    // 不弹模态对话 —— 用户可能正在截图/录屏，弹窗会挡住画面。
+    void events
+      .on<{ latest: string; current: string }>('update://available', (u) => {
+        toast.push(`发现新版本 ${u.latest}（当前 ${u.current}），可在 设置 → 关于 查看`, 'info')
+      })
+      .then((u) => unsubs.push(u))
     // 手势里"画一下排除这个程序"之后，配置在后端被改了 —— 重新拉一次，
     // 页面上就能看到新加的例外（否则要等下次重启）
     void events
@@ -145,11 +156,21 @@ function Shell() {
     return () => unsubs.forEach((u) => u())
   }, [toast])
 
-  const updateSettings = useCallback(async (patch: unknown) => {
-    const r = await api.settingsPatch(patch)
-    setSettings(r.settings)
-    return r.settings
-  }, [])
+  const updateSettings = useCallback(
+    async (patch: unknown) => {
+      try {
+        const r = await api.settingsPatch(patch)
+        setSettings(r.settings)
+        return r.settings
+      } catch (e) {
+        // 后端现在会拒绝不合法的配置值（以前是静默丢弃、界面假装成功）。
+        // 拒绝必须让用户看见，否则表现还是"改了没反应"。
+        toast.push(`设置未保存：${e instanceof Error ? e.message : String(e)}`, 'error')
+        return null
+      }
+    },
+    [toast]
+  )
 
   const win = getCurrentWindow()
 
@@ -220,6 +241,7 @@ function Shell() {
               <RecordPage settings={settings} onChange={updateSettings} />
             )}
             {page === 'tools' && <ToolsPage />}
+            {page === 'icons' && <IconPage />}
             {page === 'upload' && <UploadPage settings={settings} onChange={updateSettings} />}
             {page === 'gesture' && (
               <GesturePage settings={settings} onChange={updateSettings} />

@@ -47,12 +47,6 @@ async fn run_capture(app: &AppHandle, mode: &str) -> AppResult<()> {
     std::thread::sleep(std::time::Duration::from_millis(150));
 
     match mode {
-        "fullscreen" => {
-            let payload = capture::begin(&state, mode)?;
-            let _ = payload;
-            let result = capture::commit_fullscreen(&state)?;
-            finish(app, &state, result)?;
-        }
         // 框选完不打开编辑器，直接贴图 / 直接取字（手势用）
         "pin-region" | "ocr-region" => {
             let payload = capture::begin(&state, "region")?;
@@ -71,7 +65,7 @@ async fn run_capture(app: &AppHandle, mode: &str) -> AppResult<()> {
             win::open_selector_after(app, target.bounds, target.id, after)?;
         }
         _ => {
-            // region / scroll：抓帧后交给覆盖层
+            // 截图只有一条路：抓帧 → 覆盖层，全屏/窗口/滚动都在里面选
             let payload = capture::begin(&state, mode)?;
             let first = payload
                 .displays
@@ -115,10 +109,50 @@ fn finish(app: &AppHandle, state: &Arc<AppState>, result: CaptureResult) -> AppR
         }
     }
 
-    *state.pending.lock() = Some(final_result.clone());
+    // 截图缓冲区几百 MB（几块 4K 屏），先放掉再干别的
     state.release_capture();
-    win::open_editor(app, final_result)?;
+
+    let after = state.settings.read().capture.after.clone();
+    match after.as_str() {
+        // 最快的一条路：截完直接进剪贴板，不开任何窗口。
+        // 「截图 → 粘到聊天框」是这个工具最高频的用法，进编辑器再点复制要三步。
+        "copy" => {
+            let (bytes, _) = crate::uploader::data_url_to_bytes(&final_result.data_url)?;
+            crate::clipboard::copy_image_bytes(&bytes)?;
+            log::info!("截图已直接复制到剪贴板（{}×{}）", final_result.width, final_result.height);
+            toast(app, "已复制到剪贴板", "success");
+        }
+        "save" => {
+            let out = crate::commands::image::save_inner(state, &final_result.data_url, None, false)?;
+            log::info!("截图已直接保存：{}", out.path);
+            toast(app, &format!("已保存：{}", out.path), "success");
+        }
+        // 钉图不需要 pending：它直接吃 data URL
+        "pin" => {
+            let opacity = state.settings.read().editor.pin_opacity as f64;
+            win::open_pin(
+                app,
+                final_result.data_url.clone(),
+                final_result.width,
+                final_result.height,
+                opacity,
+            )?;
+        }
+        // editor 以及任何不认识的取值：都进编辑器，别把人卡在一个什么都不发生的状态里
+        _ => {
+            *state.pending.lock() = Some(final_result.clone());
+            win::open_editor(app, final_result)?;
+        }
+    }
     Ok(())
+}
+
+/// 一次性提示。不依赖窗口是否在前台 —— 剪贴板模式下主窗口是隐藏的。
+fn toast(app: &AppHandle, message: &str, kind: &str) {
+    let _ = app.emit(
+        "app://toast",
+        serde_json::json!({ "type": kind, "message": message }),
+    );
 }
 
 /* ------------------------- 命令 ------------------------- */
@@ -137,8 +171,18 @@ pub fn capture_start(
         match capture::begin(&inner, &mode) {
             Ok(_) => {
                 if let Some(payload) = capture::payload_of(&inner) {
-                    if let Some(first) = payload.displays.first() {
-                        let _ = win::open_selector(&handle, first.bounds, first.id, None);
+                    // 和热键/手势路径保持一致：在**光标所在那块屏**开选区。
+                    // 以前固定用 displays.first()，多显示器用户在界面上点"截图"
+                    // 会跑到另一块屏上去，像是点错了东西。
+                    let cursor = handle.cursor_position().unwrap_or_default();
+                    let (cx, cy) = (cursor.x as i32, cursor.y as i32);
+                    let target = payload
+                        .displays
+                        .iter()
+                        .find(|d| win::rect_contains(&d.bounds, cx, cy))
+                        .or_else(|| payload.displays.first());
+                    if let Some(target) = target {
+                        let _ = win::open_selector(&handle, target.bounds, target.id, None);
                     }
                 }
             }
@@ -268,10 +312,14 @@ pub fn capture_cancel(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) {
     state.release_capture();
 }
 
-/// 编辑器取走当前待编辑截图
+/// 编辑器取走当前待编辑截图。
+///
+/// 必须 `take()` 而不是 `clone()`：这里的 `dataUrl` 是整张图的 base64，
+/// 4K 截图就是二三十 MB。以前只读不清，编辑器关掉之后这份字符串
+/// 会一直挂在内存里，直到下一次截图才被覆盖。
 #[tauri::command]
 pub fn capture_pending(state: tauri::State<'_, Arc<AppState>>) -> Option<CaptureResult> {
-    state.pending.lock().clone()
+    state.pending.lock().take()
 }
 
 /// 长截图：selector 框好后调用
@@ -292,7 +340,7 @@ pub async fn capture_scroll(
     // spawn_blocking 的闭包是 move 的，先把 Arc 再克隆一份给任务，
     // 否则外面的 state 会被移走，后面的 release_capture 就用不了
     let task_state = state.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || -> AppResult<CaptureResult> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || -> AppResult<CaptureResult> {
         let display = {
             let guard = task_state.capture.lock();
             let session = guard
@@ -349,10 +397,12 @@ pub async fn capture_scroll(
         scroll::run(rect, options, capture_once, progress, &aborted)
     })
     .await
-    .map_err(|e| AppError::Msg(format!("长截图任务失败: {e}")))??;
+    .map_err(|e| AppError::Msg(format!("长截图任务失败: {e}")))?;
 
-    // 长截图结束后会话里的首帧已经没用了
+    // 不管成功失败都要放掉整屏位图：多屏 4K 时是上百 MB。
+    // 以前失败路径直接 `?` 返回，这份内存就一直挂着。
     state.release_capture();
+    let result = outcome?;
 
     *state.pending.lock() = Some(result.clone());
     win::open_editor(&app, result.clone())?;

@@ -461,6 +461,11 @@ textarea {
   word-break: break-all;
 }
 
+/* 成功提示复用同一条，只换颜色：绿色 = 事情成了，红色 = 出错了 */
+.editor-error.ok {
+  background: rgba(28, 158, 96, 0.95);
+}
+
 /* 悬停提示：告诉用户滚轮会改什么，位置在缩放条上方 */
 .shape-hint {
   position: absolute;

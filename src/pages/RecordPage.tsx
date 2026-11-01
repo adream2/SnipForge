@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
-import type { AppSettings, RecordFile } from '../lib/types'
+import type { AppSettings, CameraDevice, RecordFile } from '../lib/types'
 import { useToast } from '../components/Toast'
 import { IconLoader } from '../components/Icons'
 
@@ -25,6 +25,20 @@ function Row({
 }
 
 const FPS = [15, 24, 30, 60]
+
+/** 画中画宽度占画面的比例 */
+const CAM_SIZES = [
+  { v: 15, label: '小' },
+  { v: 20, label: '中' },
+  { v: 28, label: '大' }
+]
+
+const CAM_CORNERS = [
+  { v: 'tl', label: '左上' },
+  { v: 'tr', label: '右上' },
+  { v: 'bl', label: '左下' },
+  { v: 'br', label: '右下' }
+]
 const BITRATES = [
   { v: 4_000_000, label: '小' },
   { v: 8_000_000, label: '标准' },
@@ -111,7 +125,7 @@ export default function RecordPage({
   onChange
 }: {
   settings: AppSettings
-  onChange: (patch: unknown) => Promise<AppSettings>
+  onChange: (patch: unknown) => Promise<AppSettings | null>
 }) {
   const toast = useToast()
   const [tab, setTab] = useState<Tab>('record')
@@ -119,6 +133,8 @@ export default function RecordPage({
   const [recent, setRecent] = useState<RecordFile[]>([])
   const [loadingRecent, setLoadingRecent] = useState(false)
   const rec = settings.record
+  // null = 还没检测完（界面上显示"正在检测"）
+  const [cams, setCams] = useState<CameraDevice[] | null>(null)
 
   const bitrateLabel = BITRATES.find((b) => b.v === rec.videoBitsPerSecond)?.label ?? '标准'
   const gifWidthLabel = GIF_WIDTHS.find((w) => w.v === rec.gifWidth)?.label ?? '900'
@@ -138,6 +154,19 @@ export default function RecordPage({
   useEffect(() => {
     if (tab === 'record') void loadRecent()
   }, [tab, loadRecent])
+
+  // 只在用户想看摄像头时才枚举：枚举本身很快，但没必要每次进页面都问一遍系统
+  useEffect(() => {
+    if (tab !== 'settings' || !rec.camera) return
+    let alive = true
+    void api
+      .recordCameraList()
+      .then((list) => alive && setCams(list))
+      .catch(() => alive && setCams([]))
+    return () => {
+      alive = false
+    }
+  }, [tab, rec.camera])
 
   /** 唯一的录制入口：格式由按钮决定，不再先去设置里选 */
   const start = async (format: 'mp4' | 'gif', region: boolean) => {
@@ -329,6 +358,95 @@ export default function RecordPage({
                   ))}
                 </div>
               </Row>
+              <Row
+                title="录制系统声音"
+                desc="抓默认播放设备的输出（WASAPI loopback），不用装虚拟声卡"
+              >
+                <button
+                  className={`switch ${rec.audio ? 'on' : ''}`}
+                  onClick={() => void onChange({ record: { audio: !rec.audio } })}
+                />
+              </Row>
+              <Row
+                title="录制麦克风"
+                desc="和系统声音自动混音，两路都有声时不会互相吞掉"
+              >
+                <button
+                  className={`switch ${rec.mic ? 'on' : ''}`}
+                  onClick={() => void onChange({ record: { mic: !rec.mic } })}
+                />
+              </Row>
+              <Row
+                title="摄像头画中画"
+                desc={
+                  cams === null
+                    ? '正在检测摄像头…'
+                    : cams.length === 0
+                      ? '这台机器没有检测到摄像头'
+                      : '把摄像头画面合成到录像的角落'
+                }
+              >
+                <button
+                  className={`switch ${rec.camera ? 'on' : ''}`}
+                  disabled={cams !== null && cams.length === 0}
+                  onClick={() => void onChange({ record: { camera: !rec.camera } })}
+                />
+              </Row>
+              {rec.camera && cams && cams.length > 0 && (
+                <>
+                  {cams.length > 1 && (
+                    <Row title="摄像头设备" desc="多台设备时选一个">
+                      <select
+                        value={rec.cameraDevice}
+                        onChange={(e) =>
+                          void onChange({ record: { cameraDevice: e.target.value } })
+                        }
+                      >
+                        <option value="">第一个可用设备</option>
+                        {cams.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Row>
+                  )}
+                  <Row title="画中画大小" desc="占画面宽度的比例，换分辨率不用重调">
+                    <div className="seg">
+                      {CAM_SIZES.map((s) => (
+                        <button
+                          key={s.v}
+                          className={rec.cameraSize === s.v ? 'active' : ''}
+                          onClick={() => void onChange({ record: { cameraSize: s.v } })}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </Row>
+                  <Row title="画中画位置">
+                    <div className="seg">
+                      {CAM_CORNERS.map((c) => (
+                        <button
+                          key={c.v}
+                          className={rec.cameraCorner === c.v ? 'active' : ''}
+                          onClick={() => void onChange({ record: { cameraCorner: c.v } })}
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </Row>
+                  <Row title="水平镜像" desc="像照镜子，自拍视角更自然">
+                    <button
+                      className={`switch ${rec.cameraMirror ? 'on' : ''}`}
+                      onClick={() =>
+                        void onChange({ record: { cameraMirror: !rec.cameraMirror } })
+                      }
+                    />
+                  </Row>
+                </>
+              )}
               <Row title="录制鼠标光标" desc="把系统光标位图合进画面，和屏幕上看到的一致">
                 <button
                   className={`switch ${rec.showCursor ? 'on' : ''}`}

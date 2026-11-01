@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub struct AppSettings {
     pub version: u32,
     pub hotkeys: Hotkeys,
+    pub capture: CaptureConfig,
     pub save: SaveConfig,
     pub clipboard: ClipboardConfig,
     pub uploader: UploaderConfig,
@@ -29,6 +30,7 @@ impl Default for AppSettings {
         Self {
             version: 1,
             hotkeys: Hotkeys::default(),
+            capture: CaptureConfig::default(),
             save: SaveConfig::default(),
             clipboard: ClipboardConfig::default(),
             uploader: UploaderConfig::default(),
@@ -46,9 +48,10 @@ impl Default for AppSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Hotkeys {
+    /// 唯一的截图入口。全屏 / 窗口 / 滚动长截图都在选区里选 ——
+    /// 窗口一直是这样（没有独立入口），现在全屏（Ctrl+A）和
+    /// 滚动（S）也并进去了，省掉两个只多一个按键的"独立动作"。
     pub region_capture: String,
-    pub fullscreen_capture: String,
-    pub scroll_capture: String,
     pub clipboard_panel: String,
     pub toggle_recording: String,
     /// 录 GIF（和录视频分开，选中什么录什么）
@@ -60,8 +63,6 @@ impl Default for Hotkeys {
     fn default() -> Self {
         Self {
             region_capture: "Alt+Q".into(),
-            fullscreen_capture: "Alt+Shift+Q".into(),
-            scroll_capture: "Alt+S".into(),
             clipboard_panel: "Alt+V".into(),
             // Alt+R 在不少机器上被别的软件占着，Ctrl+Alt+R 更安全
             toggle_recording: "Ctrl+Alt+R".into(),
@@ -77,6 +78,29 @@ pub struct SaveConfig {
     pub dir: String,
     pub name_template: String,
     pub after_save: String,
+}
+
+/// 截图。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CaptureConfig {
+    /// 截完立刻干什么：
+    ///   - `editor` 进编辑器（标注 / 打码 / OCR / 上传的入口都在这儿）
+    ///   - `copy`   直接进剪贴板，不再开窗口 —— "截图→粘到聊天框"是最快的路
+    ///   - `save`   直接按 `save` 规则落盘
+    ///   - `pin`    直接钉在屏幕上
+    ///
+    /// 这是**提交之后**的行为，和 `save.afterSave`（保存之后）不是一回事。
+    pub after: String,
+}
+
+impl Default for CaptureConfig {
+    fn default() -> Self {
+        // 默认进编辑器：截错了还能改，而且多数人截完是要标注/发出去的
+        Self {
+            after: "editor".into(),
+        }
+    }
 }
 
 impl Default for SaveConfig {
@@ -128,7 +152,6 @@ impl Default for ClipboardConfig {
 pub struct UploaderConfig {
     pub enabled: bool,
     pub active_provider: String,
-    pub auto_upload_on_capture: bool,
     pub copy_as_markdown: bool,
     /// 上传前压缩（在渲染进程用 canvas 做，能出**有损 WebP**；
     /// 后端 image crate 只支持无损 WebP，效果差一截）
@@ -148,7 +171,6 @@ impl Default for UploaderConfig {
         Self {
             enabled: true,
             active_provider: "github".into(),
-            auto_upload_on_capture: false,
             copy_as_markdown: false,
             // 默认压缩：图床场景绝大多数是"发给别人看"，不是存档原图。
             // WebP q90 对截图几乎无损，体积常常只剩 PNG 的三分之一。
@@ -237,6 +259,10 @@ pub struct OcrConfig {
     pub paddle_path: String,
     /// 外部引擎超时（秒）
     pub timeout_secs: u64,
+    /// 下载源策略：auto（镜像优先）| direct（只走 GitHub）| custom（自定义前缀优先）
+    pub download_mode: String,
+    /// 自定义加速前缀，如 `https://ghfast.top/`（"前缀 + 原 GitHub 地址"形式）
+    pub mirror_prefix: String,
 }
 
 impl Default for OcrConfig {
@@ -245,6 +271,8 @@ impl Default for OcrConfig {
             engine: "windows".into(),
             paddle_path: String::new(),
             timeout_secs: 60,
+            download_mode: "auto".into(),
+            mirror_prefix: String::new(),
         }
     }
 }
@@ -252,7 +280,20 @@ impl Default for OcrConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RecordConfig {
+    /// 录系统声音（WASAPI loopback，抓的是默认播放设备的输出）
     pub audio: bool,
+    /// 录麦克风。和系统声音同时开时两路混音。
+    pub mic: bool,
+    /// 摄像头画中画
+    pub camera: bool,
+    /// 摄像头设备名（空 = 用第一个可用设备）
+    pub camera_device: String,
+    /// 画中画宽度占录制画面宽度的百分比
+    pub camera_size: u32,
+    /// 画中画位置：br / bl / tr / tl
+    pub camera_corner: String,
+    /// 画中画是否水平镜像
+    pub camera_mirror: bool,
     pub fps: u32,
     pub video_bits_per_second: u32,
     pub countdown: u32,
@@ -272,7 +313,17 @@ pub struct RecordConfig {
 impl Default for RecordConfig {
     fn default() -> Self {
         Self {
+            // 默认录声音：录屏十次有九次是为了讲清楚一件事，
+            // 无声视频等于白录，用户还得回头再录一遍
             audio: true,
+            // 麦克风默认关：很多人录屏并不想把自己的声音录进去，
+            // 而且会议室里默认开麦是件很尴尬的事
+            mic: false,
+            camera: false,
+            camera_device: String::new(),
+            camera_size: 20,
+            camera_corner: "br".into(),
+            camera_mirror: true,
             fps: 30,
             video_bits_per_second: 8_000_000,
             countdown: 3,
@@ -524,29 +575,33 @@ impl Default for GestureConfig {
     }
 }
 
+/// 通用设置。
+///
+/// 只放**真的被代码读过**的字段。以前这里有 `language` / `theme` /
+/// `minimize_to_tray` / `show_notifications` 四个字段：没有任何实现，
+/// 连界面都没有，却每次写进 settings.json —— 看配置文件的人会以为
+/// 这些功能存在。要加就等真做的时候一起加。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GeneralConfig {
-    pub language: String,
     pub launch_at_login: bool,
-    pub theme: String,
-    pub minimize_to_tray: bool,
-    pub show_notifications: bool,
     pub enable_plugins: bool,
     /// 关闭主窗口时是否真的退出
     pub close_to_tray: bool,
+    /// 启动后静默检查一次新版本。
+    ///
+    /// 默认开：这是个长期装在托盘里的工具，用户不会主动来看"有没有更新"。
+    /// 不想联网的人可以关掉 —— 关了就连那一次 API 请求都不发。
+    pub check_updates: bool,
 }
 
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
-            language: "zh-CN".into(),
             launch_at_login: false,
-            theme: "system".into(),
-            minimize_to_tray: true,
-            show_notifications: true,
             enable_plugins: true,
             close_to_tray: true,
+            check_updates: true,
         }
     }
 }
@@ -566,12 +621,17 @@ pub fn migrate(cfg: &mut AppSettings) {
 impl AppSettings {
     /// 局部更新：把 JSON patch 合并进当前配置。
     /// 手写深度合并而不是换整份，这样前端可以只提交改动的字段。
-    pub fn apply_patch(&mut self, patch: &serde_json::Value) {
-        let mut base = serde_json::to_value(&*self).unwrap_or(serde_json::Value::Null);
+    ///
+    /// 合并后必须能反序列化回完整配置 —— 失败就**原样回滚并报错**。
+    /// 以前这里是 `if let Ok(next) = ...`，类型不对时安静地什么都不做，
+    /// 前端拿到旧配置却以为保存成功（"改了没反应"最难查的一种）。
+    pub fn apply_patch(&mut self, patch: &serde_json::Value) -> Result<(), String> {
+        let mut base = serde_json::to_value(&*self).map_err(|e| format!("配置序列化失败: {e}"))?;
         deep_merge(&mut base, patch);
-        if let Ok(next) = serde_json::from_value::<AppSettings>(base) {
-            *self = next;
-        }
+        let next: AppSettings = serde_json::from_value(base)
+            .map_err(|e| format!("配置值不合法：{e}"))?;
+        *self = next;
+        Ok(())
     }
 }
 
@@ -590,5 +650,47 @@ fn deep_merge(base: &mut serde_json::Value, patch: &serde_json::Value) {
         (slot, v) => {
             *slot = v.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn patch_merges_only_given_fields() {
+        let mut cfg = AppSettings::default();
+        let before_items = cfg.clipboard.max_items;
+
+        cfg.apply_patch(&serde_json::json!({ "clipboard": { "captureImages": false } }))
+            .expect("合法 patch 应当成功");
+
+        assert!(!cfg.clipboard.capture_images);
+        assert_eq!(cfg.clipboard.max_items, before_items, "没提交的字段不该被动");
+    }
+
+    /// 类型不对时必须**报错并且不留半截状态**。
+    ///
+    /// 以前这里是 `if let Ok(next) = ...`，失败就静默丢弃 ——
+    /// 前端拿到旧配置却以为保存成功，用户看到的是"改了没反应"。
+    #[test]
+    fn patch_rejects_bad_type_without_side_effect() {
+        let mut cfg = AppSettings::default();
+        let before = cfg.clipboard.max_items;
+
+        let err = cfg.apply_patch(&serde_json::json!({
+            "clipboard": { "maxItems": "这不是数字" }
+        }));
+        assert!(err.is_err(), "类型不对必须报错");
+        assert_eq!(cfg.clipboard.max_items, before, "失败后配置必须保持原样");
+    }
+
+    /// 未知字段不报错（老版本配置里有、新版本删掉的字段要能容忍）
+    #[test]
+    fn patch_tolerates_unknown_fields() {
+        let mut cfg = AppSettings::default();
+        assert!(cfg
+            .apply_patch(&serde_json::json!({ "general": { "theme": "dark" } }))
+            .is_ok());
     }
 }

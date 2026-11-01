@@ -36,7 +36,9 @@ fn wide(path: &Path) -> Vec<u16> {
         .collect()
 }
 
-fn startup() -> AppResult<()> {
+/// Media Foundation 每进程只能启动一次，这里用 OnceLock 兜住。
+/// 摄像头和 MP4 写入器共用同一个初始化点。
+pub fn ensure_startup() -> AppResult<()> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     let result = INIT.get_or_init(|| unsafe {
         MFStartup(MF_VERSION, MFSTARTUP_FULL).map_err(|e| format!("MFStartup 失败: {e}"))
@@ -47,9 +49,18 @@ fn startup() -> AppResult<()> {
     }
 }
 
+/// 音频输出参数（16bit 交错 PCM → AAC）
+#[derive(Debug, Clone, Copy)]
+pub struct AudioOut {
+    pub sample_rate: u32,
+    pub channels: u16,
+    /// AAC 码率
+    pub bitrate: u32,
+}
+
 /// 把 RGBA 帧写进 MP4。
 ///
-/// 只支持逐帧顺序写入（录制就是这形态），不支持随机访问和音轨。
+/// 逐帧顺序写入（录制就是这形态），可选带一条 AAC 音轨。
 pub struct Mp4Writer {
     writer: IMFSinkWriter,
     stream: u32,
@@ -58,6 +69,13 @@ pub struct Mp4Writer {
     /// 每帧时长，单位 100ns（MF 的时间基准）
     frame_dur: i64,
     index: i64,
+    /// 音轨（没开就是 None）
+    audio_stream: Option<u32>,
+    audio_rate: u32,
+    audio_channels: u16,
+    /// 已写入的音频帧数（按采样计），用来算时间戳 —— 采样级精确，
+    /// 不会因为"这一包大了点"累积漂移
+    audio_index: i64,
     finished: bool,
 }
 
@@ -68,8 +86,9 @@ impl Mp4Writer {
         height: u32,
         fps: u32,
         bitrate: u32,
+        audio: Option<AudioOut>,
     ) -> AppResult<Self> {
-        startup()?;
+        ensure_startup()?;
         let w = even(width);
         let h = even(height);
         let fps = fps.clamp(5, 120);
@@ -116,6 +135,48 @@ impl Mp4Writer {
 
             writer.SetInputMediaType(stream, &input, None::<&IMFAttributes>)
                 .map_err(|e| AppError::Msg(format!("设置输入格式失败（H.264 编码器不可用？）: {e}")))?;
+
+            // ---- 音轨（可选）：PCM 输入 → AAC 输出 ----
+            //
+            // 整块包在闭包里：加音轨失败（比如机器上没有 AAC 编码器）
+            // **不能让整场录制失败** —— 静音视频也比没有视频强。
+            let mut audio_stream = None;
+            if let Some(a) = audio {
+                let setup = (|| -> windows::core::Result<u32> {
+                    let rate = a.sample_rate.max(8000);
+                    let ch = a.channels.max(1);
+
+                    let aout = MFCreateMediaType()?;
+                    aout.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
+                    aout.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_AAC)?;
+                    aout.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
+                    aout.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, rate)?;
+                    aout.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, ch as u32)?;
+                    aout.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, a.bitrate / 8)?;
+                    // 0 = 裸 AAC（不裹 ADTS 头），MP4 里要的就是这个
+                    aout.SetUINT32(&MF_MT_AAC_PAYLOAD_TYPE, 0)?;
+
+                    let asidx = writer.AddStream(&aout)?;
+
+                    let ain = MFCreateMediaType()?;
+                    ain.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
+                    ain.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM)?;
+                    ain.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
+                    ain.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, rate)?;
+                    ain.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, ch as u32)?;
+                    ain.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, (ch as u32) * 2)?;
+                    ain.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, rate * ch as u32 * 2)?;
+
+                    writer.SetInputMediaType(asidx, &ain, None::<&IMFAttributes>)?;
+                    Ok(asidx)
+                })();
+
+                match setup {
+                    Ok(idx) => audio_stream = Some(idx),
+                    Err(e) => log::warn!("添加音轨失败，本次只录画面: {e}"),
+                }
+            }
+
             writer.BeginWriting()?;
 
             Ok(Self {
@@ -125,13 +186,13 @@ impl Mp4Writer {
                 height: h,
                 frame_dur: 10_000_000 / fps as i64,
                 index: 0,
+                audio_stream,
+                audio_rate: audio.map(|a| a.sample_rate.max(8000)).unwrap_or(48000),
+                audio_channels: audio.map(|a| a.channels.max(1)).unwrap_or(2),
+                audio_index: 0,
                 finished: false,
             })
         }
-    }
-
-    pub fn size(&self) -> (u32, u32) {
-        (self.width, self.height)
     }
 
     /// 写入一帧。`rgba` 必须是 `width * height * 4` 字节、自上而下。
@@ -180,6 +241,54 @@ impl Mp4Writer {
 
     pub fn frames_written(&self) -> i64 {
         self.index
+    }
+
+    /// 写入一段 PCM（16bit 交错，单声道也会被当成 1 声道处理）。
+    ///
+    /// 时间戳按**累计采样数**算，而不是按调用次数 —— 这样即使某次读到的包
+    /// 特别大/特别小，音轨总长度依然是精确的，不会越走越歪。
+    pub fn write_pcm(&mut self, pcm: &[i16]) -> AppResult<()> {
+        let Some(stream) = self.audio_stream else {
+            return Ok(());
+        };
+        let ch = self.audio_channels.max(1) as usize;
+        let frames = pcm.len() / ch;
+        if frames == 0 {
+            return Ok(());
+        }
+        let bytes = frames * ch * 2;
+
+        unsafe {
+            let buffer = MFCreateMemoryBuffer(bytes as u32)?;
+            let mut ptr = std::ptr::null_mut();
+            buffer.Lock(&mut ptr, None, None)?;
+            std::ptr::copy_nonoverlapping(pcm.as_ptr() as *const u8, ptr, bytes);
+            buffer.Unlock()?;
+            buffer.SetCurrentLength(bytes as u32)?;
+
+            let sample = MFCreateSample()?;
+            sample.AddBuffer(&buffer)?;
+            let time = self.audio_index * 10_000_000 / self.audio_rate as i64;
+            let dur = frames as i64 * 10_000_000 / self.audio_rate as i64;
+            sample.SetSampleTime(time)?;
+            sample.SetSampleDuration(dur)?;
+            self.writer.WriteSample(stream, &sample)?;
+            self.audio_index += frames as i64;
+        }
+        Ok(())
+    }
+
+    /// 是否真的挂上了音轨（AAC 编码器可用时才是 true）
+    pub fn has_audio(&self) -> bool {
+        self.audio_stream.is_some()
+    }
+
+    /// 已写入的音频时长（毫秒），用来和视频时间轴对账
+    pub fn audio_ms(&self) -> u64 {
+        if self.audio_stream.is_none() || self.audio_rate == 0 {
+            return 0;
+        }
+        (self.audio_index as u64) * 1000 / self.audio_rate as u64
     }
 
     /// 收尾：不调用的话 MP4 的索引（moov）写不进去，文件打不开。
@@ -250,7 +359,7 @@ pub fn probe_duration_ms(path: &Path) -> AppResult<u64> {
 /// 用途有两个：验证编码结果没画反/颜色没串（RGB32 是 DIB 约定，最容易踩），
 /// 以及给录制结果做封面图。
 pub fn extract_frame(path: &Path, out: &Path, skip: u32) -> AppResult<(u32, u32)> {
-    startup()?;
+    ensure_startup()?;
     unsafe {
         let url = wide(path);
         // 必须开"高级视频处理"：解码器原生只吐 NV12，要 RGB32 得让 SourceReader

@@ -62,6 +62,25 @@ fn main() {
         std::process::exit(snipforge_lib::record_smoke());
     }
 
+    if std::env::args().any(|a| a == "--update-check") {
+        std::process::exit(snipforge_lib::update_check_test());
+    }
+
+    if let Some(i) = std::env::args().position(|a| a == "--pip-test") {
+        let out = std::env::args().nth(i + 1);
+        std::process::exit(snipforge_lib::pip_test(out.as_deref()));
+    }
+
+    if let Some(i) = std::env::args().position(|a| a == "--icon-test") {
+        let file = std::env::args().nth(i + 1).unwrap_or_default();
+        if file.is_empty() {
+            eprintln!("用法: snipforge.exe --icon-test <文件> [输出目录]");
+            std::process::exit(2);
+        }
+        let out = std::env::args().nth(i + 2);
+        std::process::exit(snipforge_lib::icon_test(&file, out.as_deref()));
+    }
+
     if let Some(i) = std::env::args().position(|a| a == "--gif-test") {
         let mut it = std::env::args().skip(i + 1);
         let secs = it.next().and_then(|s| s.parse().ok()).unwrap_or(3);
@@ -84,6 +103,11 @@ fn main() {
 
     if std::env::args().any(|a| a == "--smoke") {
         std::process::exit(snipforge_lib::smoke_test());
+    }
+
+    // 主密码保险箱：不依赖 GUI，能在没有界面的机器上验证加解密链路
+    if std::env::args().any(|a| a == "--vault-selftest") {
+        std::process::exit(snipforge_lib::vault_selftest());
     }
 
     snipforge_lib::run()

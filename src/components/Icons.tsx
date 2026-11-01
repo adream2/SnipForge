@@ -84,21 +84,6 @@ export const IconCopy = ({ size = 13, className, strokeWidth = 1.8 }: IconProps)
   </svg>
 )
 
-export const IconScissors = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
-  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
-    <circle cx="6" cy="6" r="2.4" />
-    <circle cx="6" cy="18" r="2.4" />
-    <path d="M8.2 7.6L20 18M8.2 16.4L20 6" />
-  </svg>
-)
-
-export const IconWindow = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
-  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
-    <rect x="3" y="4" width="18" height="16" rx="2" />
-    <path d="M3 9h18" />
-  </svg>
-)
-
 export const IconMonitor = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
   <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
     <rect x="2.5" y="4" width="19" height="13" rx="2" />
@@ -140,13 +125,6 @@ export const IconCheck = ({ size = 14, className, strokeWidth = 2.2 }: IconProps
 export const IconText = ({ size, className, strokeWidth = 1.8 }: IconProps) => (
   <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
     <path d="M5 6V4h14v2M12 4v16M9 20h6" />
-  </svg>
-)
-
-export const IconOcr = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
-  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
-    <path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" />
-    <path d="M8 12h8" />
   </svg>
 )
 
@@ -211,5 +189,21 @@ export const IconHosts = ({ size, className, strokeWidth = 1.7 }: IconProps) => 
     <path d="M6 3h8l4 4v14H6z" />
     <path d="M14 3v4h4" />
     <path d="M9 12h6M9 15.5h6M9 19h3.5" />
+  </svg>
+)
+
+/** 图标提取：一个应用方块 + 取图的对角箭头 */
+export const IconApp = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <rect x="3" y="3" width="12" height="12" rx="2.5" />
+    <path d="M15 15h4a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-4" />
+    <path d="M13 13l5-5" opacity="0.55" />
+  </svg>
+)
+
+/** 选择工具：鼠标指针 */
+export const IconPointer = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <path d="M5.5 3.2 18 11.4l-5.3 1.2-1.6 5.2z" />
   </svg>
 )

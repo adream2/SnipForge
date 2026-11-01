@@ -21,6 +21,7 @@ import {
   normalizeBox,
   shapeBounds,
   shapeParam,
+  translateShape,
   withParam,
   type BeautifyOptions,
   type Shape,
@@ -28,18 +29,21 @@ import {
   type WatermarkOptions
 } from './editor/model'
 import {
-  applyMosaic,
+  clearMosaicCache,
   composeFinal,
   drawHoverOutline,
+  drawSelectOutline,
   drawShapes,
   frameMetrics,
-  frameOuterSize
+  frameOuterSize,
+  mosaicTile
 } from './editor/render'
 import {
   IconCheck,
   IconCopy,
   IconLoader,
   IconLayers,
+  IconPointer,
   IconSave,
   IconText,
   IconUpload,
@@ -51,6 +55,8 @@ import './styles/editor.css'
 const COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#0A84FF', '#6C5CE7', '#FFFFFF', '#1C1C1E']
 
 const TOOLS: Array<{ id: ToolId; label: string; icon: React.ReactNode; key: string }> = [
+  // 选择放在最前：画错了要先能选中才能改，这是编辑器最基本的动作
+  { id: 'select', label: '选择', icon: <IconPointer size={16} />, key: 'V' },
   { id: 'rect', label: '矩形', icon: <BoxIcon />, key: 'R' },
   { id: 'ellipse', label: '椭圆', icon: <CircleIcon />, key: 'O' },
   { id: 'arrow', label: '箭头', icon: <ArrowIcon />, key: 'A' },
@@ -71,6 +77,8 @@ export default function Editor() {
   const [arrowStyle, setArrowStyle] = useState<ArrowStyle>('solid')
   /** 鼠标悬停的图形：滚轮会改它的参数 */
   const [hoverId, setHoverId] = useState<string | null>(null)
+  /** 选中的标注。和 hover 分开：hover 只是"滚轮会改这个"，选中才代表可拖动/可删除 */
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [hoverMeta, setHoverMeta] = useState('')
   const [drawing, setDrawing] = useState<Shape | null>(null)
   const [beautify, setBeautify] = useState<BeautifyOptions>(defaultBeautify())
@@ -78,7 +86,11 @@ export default function Editor() {
   const [frame, setFrame] = useState<FrameOptions>(defaultFrame())
   const [busy, setBusy] = useState<string | null>(null)
   /** 导出失败的提示，直接显示在界面上 */
-  const [error, setError] = useState('')
+  // 顶部提示条：错误和成功共用一条，靠 kind 区分颜色。
+  // 以前成功也走 setError，"上传成功"是红底 —— 用户第一反应是"又失败了？"
+  const [flash, setFlash] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null)
+  /** Esc 双按保护：第一次只提示，2 秒内再按才真关闭 */
+  const escArmed = useRef(false)
   const [textInput, setTextInput] = useState<{ x: number; y: number; value: string } | null>(null)
   const [numberSeq, setNumberSeq] = useState(1)
   /** 相对"适配窗口"的缩放倍率。1 = 刚好完整显示 */
@@ -91,8 +103,16 @@ export default function Editor() {
   const undoStack = useRef<Shape[][]>([])
   const redoStack = useRef<Shape[][]>([])
   const dragStart = useRef<{ x: number; y: number } | null>(null)
+  /** 正在拖动标注：记下起点和拖动前的形状，松手才算一步撤销 */
+  const moveRef = useRef<{ id: string; sx: number; sy: number; before: Shape; moved: boolean } | null>(null)
   /** 滚轮缩放时，光标下的那个点在画板里的相对位置（0-1），缩放后要把它钉回原处 */
   const zoomAnchor = useRef<{ fx: number; fy: number; cx: number; cy: number } | null>(null)
+  /** 只含原图的离屏画布（马赛克取样源） */
+  const baseRef = useRef<HTMLCanvasElement | null>(null)
+  /** 底图版本号：换了图就让马赛克缓存失效 */
+  const baseVersion = useRef(0)
+  /** 重绘合帧用 */
+  const rafRef = useRef(0)
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
   const [spaceDown, setSpaceDown] = useState(false)
   /** 原生 wheel 监听闭包拿不到最新的 state，用 ref 同步一份 */
@@ -321,6 +341,10 @@ export default function Editor() {
         img.src = cap.dataUrl
       })
       imageRef.current = img
+      // 换了图：底图和马赛克缓存全部作废，否则新图上会盖着旧图的马赛克
+      baseRef.current = null
+      baseVersion.current += 1
+      clearMosaicCache()
       setCapture(cap)
       setShapes([])
       setZoom(1)
@@ -350,13 +374,55 @@ export default function Editor() {
     const canvas = canvasRef.current
     const img = imageRef.current
     if (!canvas || !img) return
-    const ctx = canvas.getContext('2d')!
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    // 离屏底图：只画原图，画一次。
+    // 马赛克从它取样，而不是从"正在画的画布"取样 —— 否则两个马赛克相邻时
+    // 第二个会把第一个的结果再像素化一遍，颜色越叠越糊。
+    let base = baseRef.current
+    if (!base || base.width !== canvas.width || base.height !== canvas.height) {
+      base = document.createElement('canvas')
+      base.width = canvas.width
+      base.height = canvas.height
+      const bg = base.getContext('2d')
+      if (!bg) return
+      bg.drawImage(img, 0, 0)
+      baseRef.current = base
+      baseVersion.current += 1
+    }
+
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.drawImage(img, 0, 0)
+    ctx.drawImage(base, 0, 0)
 
     for (const shape of shapes) {
       if (shape.type === 'mosaic') {
-        applyMosaic(ctx, canvas, shape.x, shape.y, shape.width, shape.height, shape.blockSize ?? 12)
+        const tile = mosaicTile(
+          base,
+          shape.x,
+          shape.y,
+          shape.width,
+          shape.height,
+          shape.blockSize ?? 12,
+          baseVersion.current
+        )
+        if (tile) {
+          ctx.save()
+          // 放大时必须关掉插值，否则马赛克的方格子会被抹成糊的
+          ctx.imageSmoothingEnabled = false
+          ctx.drawImage(
+            tile.canvas,
+            0,
+            0,
+            tile.canvas.width,
+            tile.canvas.height,
+            tile.sx,
+            tile.sy,
+            tile.sw,
+            tile.sh
+          )
+          ctx.restore()
+        }
       } else {
         drawShapes(ctx, [shape])
       }
@@ -370,10 +436,22 @@ export default function Editor() {
     if (hovered) {
       drawHoverOutline(ctx, shapeBounds(hovered), 1.6 / Math.max(0.2, scaleRef.current))
     }
-  }, [shapes, drawing, hoverId])
 
+    // 选中框画在最后：它是实线 + 四角方块，和悬停虚线一眼能区分开
+    const picked = selectedId ? shapes.find((s) => s.id === selectedId) : null
+    if (picked) {
+      drawSelectOutline(ctx, shapeBounds(picked), 1.6 / Math.max(0.2, scaleRef.current))
+    }
+  }, [shapes, drawing, hoverId, selectedId])
+
+  // 合帧：同一轮里多个 setState（拖标注 + 更新参数）只重绘一次。
+  // 不合帧的话，一次 mousemove 可能连触发三遍完整重绘（含马赛克取样）。
   useEffect(() => {
-    redraw()
+    if (rafRef.current) return
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0
+      redraw()
+    })
   }, [redraw])
 
   /* ---------------- 撤销/重做 ---------------- */
@@ -418,6 +496,19 @@ export default function Editor() {
     // 开始画新图形时清掉悬停态，否则旧图形的高亮会一直挂在那儿
     if (hoverRef.current) syncHover(null)
     const p = toCanvas(e)
+
+    // 选择工具：点中就是选中，按住就能拖；点空白等于取消选中。
+    // 这里**不能**顺手开始画 —— 那正是"画错了改不了"的老问题。
+    if (tool === 'select') {
+      const hit = shapeAt(p.x, p.y)
+      setSelectedId(hit?.id ?? null)
+      if (hit) {
+        moveRef.current = { id: hit.id, sx: p.x, sy: p.y, before: hit, moved: false }
+        e.preventDefault()
+      }
+      return
+    }
+
     dragStart.current = p
 
     if (tool === 'text') {
@@ -499,6 +590,24 @@ export default function Editor() {
       return
     }
 
+    // 正在拖动选中的标注：实时跟手
+    //
+    // 基准一律用 `mv.before`（按下那一刻的形状），不是当前形状 ——
+    // 拿当前形状累加的话，每一次 mousemove 的误差都会攒下来，拖久了会飘。
+    const mv = moveRef.current
+    if (mv) {
+      const p = toCanvas(e)
+      const dx = p.x - mv.sx
+      const dy = p.y - mv.sy
+      if (dx !== 0 || dy !== 0) mv.moved = true
+      const next = shapesRef.current.map((s) =>
+        s.id === mv.id ? translateShape(mv.before, dx, dy) : s
+      )
+      shapesRef.current = next
+      setShapes(next)
+      return
+    }
+
     // 没在画：更新悬停目标（滚轮要改它）
     if (!capture || panRef.current) return
     const p = toCanvas(e)
@@ -515,6 +624,20 @@ export default function Editor() {
         (drawing as { width: number; height: number }).height < 3
       if (!tooSmall) commitShapes([...shapes, drawing])
       setDrawing(null)
+    }
+
+    // 拖动结束：只有真的移动过才记一步撤销。
+    // 点了但没拖（想选中看一眼）不该污染撤销栈 —— 否则连点几下再按撤销会"没反应"。
+    const mv = moveRef.current
+    if (mv) {
+      moveRef.current = null
+      if (mv.moved) {
+        undoStack.current.push(
+          shapesRef.current.map((s) => (s.id === mv.id ? mv.before : s))
+        )
+        if (undoStack.current.length > 60) undoStack.current.shift()
+        redoStack.current = []
+      }
     }
     dragStart.current = null
   }
@@ -580,16 +703,46 @@ export default function Editor() {
       }
       if (e.key === 'Escape') {
         e.preventDefault()
+        // 先退出"选中"这一层：用户按 Esc 十有八九是想放开当前选中的东西，
+        // 直接关窗口会把整场标注都丢了
+        if (selectedId) {
+          setSelectedId(null)
+          return
+        }
+        // Esc 是截图工具里最高频的"取消当前操作"键，直接销毁编辑器会让人白标一通。
+        // 有标注时第一次只提示，2 秒内再按一次才真关。
+        if (shapes.length > 0 && !escArmed.current) {
+          escArmed.current = true
+          setFlash({ kind: 'error', text: '再按一次 Esc 关闭编辑器（当前标注不会保存）' })
+          window.setTimeout(() => {
+            escArmed.current = false
+            setFlash(null)
+          }, 2000)
+          return
+        }
         void api.closeEditor()
         return
       }
+      // 选了东西就能删。输入文字时不抢 Backspace
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId && !textInput) {
+        e.preventDefault()
+        commitShapes(shapes.filter((s) => s.id !== selectedId))
+        setSelectedId(null)
+        return
+      }
+
       const t = TOOLS.find((x) => x.key.toLowerCase() === e.key.toLowerCase())
-      if (t) setTool(t.id)
+      if (t) {
+        setTool(t.id)
+        // 换回绘图工具就放掉选中，否则画新图形时旧选中框还挂着，
+        // 看着像"我画的框没生效"
+        if (t.id !== 'select') setSelectedId(null)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shapes, textInput, beautify, watermark, frame, capture])
+  }, [shapes, textInput, beautify, watermark, frame, capture, selectedId])
 
   /* ---------------- 导出 ---------------- */
 
@@ -602,9 +755,15 @@ export default function Editor() {
    */
   const fail = (where: string, e: unknown) => {
     const msg = e instanceof Error ? e.message : String(e)
-    setError(`${where}：${msg}`)
+    setFlash({ kind: 'error', text: `${where}：${msg}` })
     void api.log('error', `${where}: ${msg}`)
-    window.setTimeout(() => setError(''), 8000)
+    window.setTimeout(() => setFlash(null), 8000)
+  }
+
+  /** 成功提示：同样走提示条，但是绿色的、更短命 */
+  const ok = (text: string) => {
+    setFlash({ kind: 'ok', text })
+    window.setTimeout(() => setFlash(null), 4000)
   }
 
   const buildFinal = useCallback((): string | null => {
@@ -660,8 +819,7 @@ export default function Editor() {
       const p = await prepareWithSettings(dataUrl)
       const out = await api.uploadImage(p.dataUrl, undefined, `image.${extOf(p.format)}`)
       await api.clipboardCopyText(out.result.url)
-      setError(`上传成功，链接已复制：${out.result.url}`)
-      window.setTimeout(() => setError(''), 8000)
+      ok(`已上传，链接已复制：${out.result.url}`)
     } catch (e) {
       fail('上传失败', e)
     } finally {
@@ -722,9 +880,13 @@ export default function Editor() {
         </button>
       </div>
 
-      {error && (
-        <div className="editor-error" onClick={() => setError('')} title="点击关闭">
-          {error}
+      {flash && (
+        <div
+          className={`editor-error ${flash.kind === 'ok' ? 'ok' : ''}`}
+          onClick={() => setFlash(null)}
+          title="点击关闭"
+        >
+          {flash.text}
         </div>
       )}
 
@@ -913,10 +1075,14 @@ export default function Editor() {
                       height: '100%',
                       display: 'block',
                       cursor: hoverId
-                        ? 'ns-resize'
+                        ? tool === 'select'
+                          ? 'move'
+                          : 'ns-resize'
                         : tool === 'text'
                           ? 'text'
-                          : 'crosshair'
+                          : tool === 'select'
+                            ? 'default'
+                            : 'crosshair'
                     }}
                   />
 

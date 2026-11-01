@@ -407,6 +407,20 @@ pub fn foreground_exe() -> String {
     foreground_window().map(|w| w.exe).unwrap_or_default()
 }
 
+/// 进程名比较：忽略首尾空白、大小写和 `.exe` 后缀。
+///
+/// 用户在配置里可能写 `chrome`、`Chrome.EXE`、` chrome `，都该认成同一个程序。
+/// 手势的排除列表和剪贴板的"不记录这些程序"共用这一份实现 ——
+/// 以前两处各写一遍，先剥后缀再转小写，`Chrome.EXE` 就剥不掉。
+pub fn exe_name_eq(a: &str, b: &str) -> bool {
+    fn stem(s: &str) -> String {
+        let t = s.trim().to_ascii_lowercase();
+        t.strip_suffix(".exe").unwrap_or(&t).to_string()
+    }
+    let a = stem(a);
+    !a.is_empty() && a == stem(b)
+}
+
 /// 指定窗口的进程名。剪贴板面板用它提示「粘贴到 xxx」。
 pub fn exe_of_hwnd(hwnd: isize) -> String {
     if hwnd == 0 {
@@ -458,19 +472,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostMessageW, SetWindowPos, ShowWindow, HWND_NOTOPMOST, HWND_TOPMOST, SW_MAXIMIZE, SW_MINIMIZE,
     SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_CLOSE,
 };
-
-/// 对当前前台窗口做一件事：close / minimize / maximize / restore / topmost
-///
-/// 用手势操作窗口时，前台窗口就是用户看着的那个 —— 不需要再问他"哪个窗口"。
-pub fn act_on_foreground(op: &str) -> Result<(), String> {
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.0.is_null() {
-            return Err("当前没有前台窗口".into());
-        }
-        act_on(hwnd.0 as isize, op)
-    }
-}
 
 /// 对指定窗口做一件事。
 ///

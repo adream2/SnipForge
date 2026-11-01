@@ -158,6 +158,28 @@ export default function Selector() {
         void commit()
       }
       if (e.key === 's' && !e.ctrlKey && !e.metaKey) setMode('scroll')
+
+      // Ctrl+A = 选中整块屏。
+      //
+      // 这是"全屏截图"并入选区之后的替代入口：以前它是个独立的全局快捷键，
+      // 但它打开的是**同一个选区界面**，只是不用拖 —— 收进来的成本只有一次按键，
+      // 换来的是少维护一条截图路径、少一个全局热键冲突点。
+      //
+      // 录屏同样支持：托盘里的「录制全屏」是"一步直接开录"的快路径，
+      // 这里是"我先进来框一下，再决定整屏"的另一条。两条最终都走
+      // `record_start_region`，覆盖层的隐藏时机完全一致，不存在第二套时序。
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault()
+        if (display) {
+          setSelection({
+            x: 0,
+            y: 0,
+            width: display.bounds.width / scale,
+            height: display.bounds.height / scale
+          })
+          setAnchor(null)
+        }
+      }
       // 录屏模式：G = 录 GIF，V = 录视频。不用退出去重来
       if (IS_RECORD && !e.ctrlKey && !e.metaKey && !e.altKey) {
         if (e.key === 'g') setFmt('gif')
@@ -166,8 +188,10 @@ export default function Selector() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection])
+    // 必须带上 display / scale：这个 effect 里读它们来算"整屏"。
+    // 只依赖 selection 的话，闭包会一直捕获首次渲染时那个 null 的 display ——
+    // 表现就是「Ctrl+A 完全没反应」，而且看不出任何报错。
+  }, [selection, display, scale])
 
   const normalize = (a: { x: number; y: number }, b: { x: number; y: number }): Rect => ({
     x: Math.min(a.x, b.x),
@@ -444,7 +468,7 @@ export default function Selector() {
       >
         <button
           className={mode === 'region' ? 'active' : ''}
-          title="区域截图"
+          title="框选区域（Ctrl+A 选整屏）"
           onClick={() => setMode('region')}
         >
           <IconMonitor size={15} />
@@ -502,8 +526,8 @@ export default function Selector() {
           style={{ pointerEvents: 'none', bottom: IS_RECORD ? 112 : undefined }}
         >
           {IS_RECORD
-            ? `${fmt === 'gif' ? 'GIF' : '视频'}录制 · 移到窗口上单击选中 · 拖拽框选任意区域 · G/V 切格式 · 回车开始`
-            : '移到窗口/控件上单击选中 · 拖拽框选 · Ctrl 选整个窗口 · 回车确认 · Esc 取消 · S 长截图'}
+            ? `${fmt === 'gif' ? 'GIF' : '视频'}录制 · 单击选窗口 · 拖拽框选 · Ctrl+A 全屏 · G/V 切格式 · 回车开始`
+            : '拖拽框选 · 单击选窗口 · Ctrl 整窗 · Ctrl+A 全屏 · S 长截图 · 回车确认 · Esc 取消'}
         </div>
       )}
     </div>

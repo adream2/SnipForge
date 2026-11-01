@@ -17,6 +17,8 @@
 //!   - **区域录制也抓整屏再裁**。DXGI 是按显示器复制的，没有"只复制一块区域"
 //!     的接口；抓整屏再裁是唯一的做法，成本也多不了多少。
 
+pub mod audio;
+pub mod camera;
 pub mod cursor;
 pub mod dxgi;
 pub mod gif;
@@ -104,6 +106,27 @@ pub struct RecordOptions {
     pub bitrate: u32,
     /// 是否把鼠标光标画进画面
     pub draw_cursor: bool,
+    /// 是否录系统声音（WASAPI loopback）。只出 GIF 时会被忽略。
+    #[serde(default = "default_true")]
+    pub audio: bool,
+    /// 是否录麦克风。和系统声音同时开时两路混音。
+    #[serde(default)]
+    pub mic: bool,
+    /// 是否把摄像头画面贴进画面
+    #[serde(default)]
+    pub camera: bool,
+    /// 摄像头设备名（空 = 用第一个可用设备）
+    #[serde(default)]
+    pub camera_device: String,
+    /// 画中画宽度占录制画面宽度的百分比
+    #[serde(default = "default_cam_size")]
+    pub camera_size: u32,
+    /// 画中画位置：br / bl / tr / tl
+    #[serde(default = "default_cam_corner")]
+    pub camera_corner: String,
+    /// 画中画是否水平镜像（自拍视角更自然）
+    #[serde(default = "default_true")]
+    pub camera_mirror: bool,
     /// 是否写 MP4。只出 GIF 时关掉 —— 能省一半编码开销，
     /// 也免得用户选了"只要 GIF"却多出一个几 MB 的 mp4。
     #[serde(default = "default_true")]
@@ -112,6 +135,14 @@ pub struct RecordOptions {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_cam_size() -> u32 {
+    20
+}
+
+fn default_cam_corner() -> String {
+    "br".into()
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -133,6 +164,8 @@ pub struct RecordStatus {
     pub gif: bool,
     /// 是否在写 MP4
     pub mp4: bool,
+    /// 画中画是否真的在合成（摄像头掉线后会变 false）
+    pub camera: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -152,6 +185,12 @@ pub struct RecordResult {
     /// GIF 输出尺寸
     pub gif_width: u32,
     pub gif_height: u32,
+    /// 音轨时长（毫秒）。0 = 本次没有音轨
+    pub audio_ms: u64,
+    /// 本次是否真的录到了人像（摄像头打不开时是 false，画面里没有人）
+    pub camera: bool,
+    /// 本次是否真的录到了麦克风
+    pub mic: bool,
 }
 
 /// 录制线程与外部共享的开关
@@ -164,6 +203,8 @@ pub struct Live {
     started: AtomicBool,
     /// 放大镜是否开着（控制条上可以随时切）
     lens: AtomicBool,
+    /// 画中画当前是否真的在合成（摄像头掉线后变 false）
+    camera: AtomicBool,
     frames: AtomicU64,
     elapsed_ms: AtomicU64,
 }
@@ -175,6 +216,7 @@ impl Live {
             paused: AtomicBool::new(false),
             started: AtomicBool::new(false),
             lens: AtomicBool::new(false),
+            camera: AtomicBool::new(false),
             frames: AtomicU64::new(0),
             elapsed_ms: AtomicU64::new(0),
         }
@@ -248,6 +290,7 @@ impl ActiveRecording {
             height: self.height,
             gif: self.gif_path.is_some(),
             mp4: self.opts.write_mp4,
+            camera: self.live.camera.load(Ordering::SeqCst),
         }
     }
 
@@ -378,6 +421,60 @@ fn run(
         )));
     }
 
+    // ---- 声音（可选）：系统声音 + 麦克风 ----
+    //
+    // 只在写 MP4 时开：GIF 没有音轨，白占 CPU 和一条音频流。
+    // 任一路启动失败都降级为"只录能录的那路"—— 用户要的是录屏，
+    // 不是"因为没声卡就什么都不录"。
+    let want_audio = opts.write_mp4;
+    let mut sys_cap = if want_audio && opts.audio {
+        match audio::Capture::open(audio::Kind::Loopback) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                log::warn!("系统声音启动失败: {e}");
+                if let Some(app) = &app {
+                    let _ = app.emit("record://error", format!("系统声音不可用：{e}"));
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut mic_cap = if want_audio && opts.mic {
+        match audio::Capture::open(audio::Kind::Mic) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                log::warn!("麦克风启动失败: {e}");
+                if let Some(app) = &app {
+                    let _ = app.emit("record://error", format!("麦克风不可用：{e}"));
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // 输出采样率优先跟系统声走（loopback 拿到的是设备混音率，通常是 48k），
+    // 只有麦克风时用麦克风的。麦克风与之不同则重采样。
+    let out_rate = sys_cap
+        .as_ref()
+        .map(|c| c.sample_rate)
+        .or_else(|| mic_cap.as_ref().map(|c| c.sample_rate))
+        .unwrap_or(48_000);
+
+    let audio_out = if sys_cap.is_some() || mic_cap.is_some() {
+        Some(mf::AudioOut {
+            sample_rate: out_rate,
+            channels: audio::OUT_CHANNELS,
+            bitrate: 128_000,
+        })
+    } else {
+        None
+    };
+
     let mut writer = if opts.write_mp4 {
         Some(mf::Mp4Writer::new(
             &path,
@@ -385,10 +482,28 @@ fn run(
             height,
             opts.fps,
             opts.bitrate.max(500_000),
+            audio_out,
         )?)
     } else {
         None
     };
+    // 音轨加不上时采集还在跑，喂进去也是空操作，这里直接关掉省 CPU
+    if !writer.as_ref().map(|w| w.has_audio()).unwrap_or(false) {
+        if sys_cap.is_some() || mic_cap.is_some() {
+            log::warn!("MP4 没有音轨，关闭声音采集");
+        }
+        sys_cap = None;
+        mic_cap = None;
+    }
+    let mut audio_buf: Vec<i16> = Vec::with_capacity(8192);
+    let mut mic_buf: Vec<i16> = Vec::with_capacity(8192);
+    let mut mic_mixed: Vec<i16> = Vec::with_capacity(8192);
+    let mut mic_rs = audio::Resampler::new(
+        mic_cap.as_ref().map(|c| c.sample_rate).unwrap_or(out_rate),
+        out_rate,
+    );
+    let mut mic_ok = mic_cap.is_some();
+    let mut mic_frames_written: u64 = 0;
 
     // GIF 那一路独立开：编码器自己管降采样和调色板，主循环只管喂帧。
     // 开不出来不算致命（MP4 还能录），但要留日志 —— 用户找不到 gif 时能查。
@@ -405,6 +520,41 @@ fn run(
         },
         None => None,
     };
+
+    // ---- 摄像头画中画（可选）----
+    //
+    // 只在写 MP4 时开。只出 GIF 时不录人像：GIF 是给文档用的短动图，
+    // 塞个人像进去只会让体积翻倍，而 GIF 本来也没有音轨。
+    // 打不开就降级为不录人像 —— 摄像头被别的会议软件占用是常态。
+    let mut cam = if opts.camera && opts.write_mp4 {
+        let pip_w = ((width as f32 * opts.camera_size.clamp(8, 45) as f32 / 100.0) as u32).max(64);
+        match camera::CameraCapture::start(&opts.camera_device, pip_w, 0) {
+            Ok(c) => {
+                log::info!(
+                    "画中画已启用：{}（{}×{}，{}，镜像={}）",
+                    c.device,
+                    c.width,
+                    c.height,
+                    opts.camera_corner,
+                    opts.camera_mirror
+                );
+                Some(c)
+            }
+            Err(e) => {
+                log::warn!("摄像头启动失败，本次不录人像: {e}");
+                if let Some(app) = &app {
+                    let _ = app.emit("record://error", format!("摄像头不可用，本次无人像：{e}"));
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
+    // 遮罩（圆角 + 描边）尺寸固定，只算一次
+    let mut cam_mask: Option<camera::Mask> = None;
+    let mut cam_seq: u64 = 0;
+    let mut cam_frame: Option<Arc<camera::Frame>> = None;
 
     let frame_dur = Duration::from_nanos(1_000_000_000u64 / opts.fps.max(1) as u64);
     let mut next_tick = Instant::now();
@@ -426,7 +576,11 @@ fn run(
         dup.height
     );
 
-    loop {
+    // 中途出错**不能直接 return**：MP4 没写 moov box 就是废文件，
+    // 而用户往往已经录了很久。记下错误、跳出循环，统一走收尾流程。
+    let mut failure: Option<AppError> = None;
+
+    'rec: loop {
         if live.stop.load(Ordering::SeqCst) {
             break;
         }
@@ -436,6 +590,13 @@ fn run(
             // 重新对齐节拍，避免恢复瞬间补写一大串旧帧
             std::thread::sleep(Duration::from_millis(20));
             next_tick = Instant::now();
+            // 声音也要丢掉：不丢的话恢复瞬间会喷出暂停前那几秒的旧声音
+            if let Some(cap) = sys_cap.as_mut() {
+                cap.drain();
+            }
+            if let Some(cap) = mic_cap.as_mut() {
+                cap.drain();
+            }
             continue;
         }
 
@@ -449,8 +610,9 @@ fn run(
                 Ok(true) => {}
                 Ok(false) => break,
                 Err(e) => {
-                    // 切分辨率 / 会话失效：这里直接报错结束，控制条会给出提示
-                    return Err(e);
+                    // 切分辨率 / 会话失效：按"到此刻为止"收尾，不是把文件丢下不管
+                    failure = Some(e);
+                    break 'rec;
                 }
             }
         }
@@ -492,6 +654,64 @@ fn run(
                 );
             }
 
+            // ---- 画中画合成 ----
+            //
+            // 放在光标之后、编码之前：光标画的是"屏幕上真实的光标"，
+            // 而人像是"加进去的内容"，后者盖住前者才是对的（人像区域里
+            // 本来也不该有光标跑出来）。
+            let mut cam_dead = false;
+            if let Some(c) = cam.as_ref() {
+                if let Some(f) = c.take_latest(&mut cam_seq) {
+                    cam_frame = Some(f);
+                }
+                cam_dead = !c.is_alive();
+            }
+            if cam_dead {
+                log::warn!("摄像头已断开，后续画面不再合成人像");
+                cam = None;
+                cam_frame = None;
+                live.camera.store(false, Ordering::SeqCst);
+                if let Some(app) = &app {
+                    let _ = app.emit("record://error", "摄像头已断开，后续画面不再有人像".to_string());
+                }
+            }
+
+            if let Some(frame) = cam_frame.as_ref() {
+                // 用 place 而不是 layout_for：这里帧尺寸已经确定，
+                // 布局必须严格等于帧尺寸（composite 是 1:1 贴图）
+                let layout = camera::place(
+                    width,
+                    height,
+                    frame.width,
+                    frame.height,
+                    2,
+                    &opts.camera_corner,
+                );
+                if cam_mask.as_ref().map(|m| !m.matches(frame.width, frame.height)).unwrap_or(true) {
+                    cam_mask = Some(camera::Mask::rounded(
+                        frame.width,
+                        frame.height,
+                        12,
+                        (frame.width as f32 / 42.0).max(2.0),
+                    ));
+                }
+                if let Some(mask) = cam_mask.as_ref() {
+                    camera::composite(
+                        &mut cropped,
+                        width,
+                        height,
+                        &frame.rgba,
+                        frame.width,
+                        frame.height,
+                        layout,
+                        opts.camera_mirror,
+                        mask,
+                        [255, 255, 255, 255],
+                    );
+                    live.camera.store(true, Ordering::SeqCst);
+                }
+            }
+
             // 点击波纹：低位边沿，短促点击也漏不掉
             let (l, r) = cursor::poll_clicks();
             if let (Some(app), Some((x, y))) = (&app, rel) {
@@ -511,7 +731,8 @@ fn run(
                 }
                 if let Some(w) = writer.as_mut() {
                     if let Err(e) = w.write_rgba(&cropped) {
-                        return Err(e);
+                        failure = Some(e);
+                        break 'rec;
                     }
                 }
                 live.advance(opts.fps);
@@ -547,6 +768,111 @@ fn run(
             }
         }
 
+        // 音频和画面**解耦**：DXGI 在画面静止时压根不出帧，但声音不能断。
+        // 所以这一步放在 `has_frame` 外面，每个节拍都跑。
+        let mut sys_dead = false;
+        let mut mic_dead = false;
+
+        if !live.is_started() {
+            // 还在倒计时：丢掉，别把开始前的环境声录进去
+            if let Some(c) = sys_cap.as_mut() {
+                c.drain();
+            }
+            if let Some(c) = mic_cap.as_mut() {
+                c.drain();
+            }
+        } else if sys_cap.is_some() || mic_cap.is_some() {
+            audio_buf.clear();
+            if let Some(c) = sys_cap.as_mut() {
+                if let Err(e) = c.read(&mut audio_buf) {
+                    log::warn!("读系统声音失败: {e}");
+                    sys_dead = true;
+                }
+            }
+
+            // 麦克风：先重采样到输出采样率再混。两路采样率不同时
+            // 直接相加会周期性地咔哒响（相位每包重置一次）。
+            mic_buf.clear();
+            if let Some(c) = mic_cap.as_mut() {
+                if let Err(e) = c.read(&mut mic_buf) {
+                    log::warn!("读麦克风失败: {e}");
+                    mic_dead = true;
+                }
+            }
+            if !mic_buf.is_empty() {
+                mic_mixed.clear();
+                mic_rs.push(&mic_buf, &mut mic_mixed);
+                mic_frames_written += (mic_mixed.len() / audio::OUT_CHANNELS as usize) as u64;
+                if sys_cap.is_some() {
+                    audio::mix_into(&mut audio_buf, &mic_mixed);
+                } else {
+                    audio_buf.extend_from_slice(&mic_mixed);
+                }
+            }
+
+            if let Some(w) = writer.as_mut() {
+                let rate = out_rate.max(8000) as u64;
+                let ch = audio::OUT_CHANNELS as u64;
+                let want_ms = live.frames.load(Ordering::SeqCst) * 1000 / opts.fps.max(1) as u64;
+
+                // **音频以视频时间轴为准**。
+                //
+                // 音频是按墙钟累积的（WASAPI 一直在出包），而视频是按帧数累积的。
+                // 机器跟不上编码时视频会掉帧、时间轴变短，此时音频必然超前 ——
+                // 不裁的话播放器里声音比画面晚结束，而且越录偏得越多。
+                // 只在"音频超前"时截断；落后的情况交给下面的补静音。
+                if !audio_buf.is_empty() && want_ms > 0 {
+                    let have_ms = w.audio_ms();
+                    if have_ms >= want_ms {
+                        audio_buf.clear();
+                    } else {
+                        let room_ms = want_ms - have_ms;
+                        let max_samples = (room_ms * rate / 1000) as usize * ch as usize;
+                        if audio_buf.len() > max_samples {
+                            audio_buf.truncate(max_samples);
+                        }
+                    }
+                }
+
+                if !audio_buf.is_empty() {
+                    if let Err(e) = w.write_pcm(&audio_buf) {
+                        log::warn!("写音轨失败，后续静音: {e}");
+                        sys_dead = true;
+                        mic_dead = true;
+                    }
+                }
+
+                // **补静音**：WASAPI loopback 在"没有声音在播"时
+                // 根本不出包，不补的话音轨是空的 —— 播放器会显示
+                // 音轨存在但时长 0，音视频也对不上。
+                // 以**视频时间轴**为准补齐（不是墙上时间）：画面掉帧时
+                // 两者才不会越走越远。
+                if !(sys_dead && mic_dead) {
+                    let have_ms = w.audio_ms() as i64;
+                    let want_ms = want_ms as i64;
+                    if want_ms > have_ms + 25 {
+                        // 一次最多补 200ms，避免长时间静音后突然灌一大段
+                        let fill_ms = (want_ms - have_ms).min(200) as u64;
+                        let count = (fill_ms * rate / 1000) as usize * ch as usize;
+                        audio_buf.clear();
+                        audio_buf.resize(count, 0);
+                        if let Err(e) = w.write_pcm(&audio_buf) {
+                            log::warn!("补静音失败: {e}");
+                            sys_dead = true;
+                            mic_dead = true;
+                        }
+                    }
+                }
+            }
+        }
+        if sys_dead {
+            sys_cap = None;
+        }
+        if mic_dead {
+            mic_cap = None;
+            mic_ok = false;
+        }
+
         next_tick += frame_dur;
         let now = Instant::now();
         if next_tick < now {
@@ -556,8 +882,27 @@ fn run(
     }
 
     let frames = live.frames.load(Ordering::SeqCst);
+
+    // 音轨时长要在 finalize 之前读（之后 writer 就没了）
+    let audio_ms = writer.as_ref().map(|w| w.audio_ms()).unwrap_or(0);
+
+    // 收尾一定要做：没有 moov box 的 mp4 任何播放器都打不开。
+    // 收尾本身失败就删掉文件 —— 留着只会让用户以为"录到了"。
+    let mut finish_failed = None;
     if let Some(mut w) = writer.take() {
-        w.finish()?;
+        if let Err(e) = w.finish() {
+            finish_failed = Some(e);
+        }
+    }
+    if let Some(e) = finish_failed {
+        let _ = std::fs::remove_file(&path);
+        return Err(AppError::Msg(format!("录像收尾失败，文件已删除：{e}")));
+    }
+    if let Some(e) = failure.as_ref() {
+        log::warn!("录制中途出错，已按到此刻为止的内容收尾: {e}");
+        if let Some(app) = &app {
+            let _ = app.emit("record://error", format!("录制提前结束：{e}"));
+        }
     }
 
     // GIF 收尾放在 MP4 之后：它要多写一帧 + 文件尾，别让它拖慢 MP4 的落盘
@@ -585,6 +930,15 @@ fn run(
             .unwrap_or_else(|| path.clone())
     };
     let bytes = std::fs::metadata(&main_path).map(|m| m.len()).unwrap_or(0);
+
+    // 一帧都没有 = 实际什么都没录到（刚开录就崩、或用户立刻按了停止）。
+    // 别报"录制已保存（0 MB）"，那是最让人困惑的一种成功提示。
+    if frames == 0 {
+        let _ = std::fs::remove_file(&main_path);
+        return Err(failure
+            .take()
+            .unwrap_or_else(|| AppError::Msg("没有采集到任何画面，录制已取消".into())));
+    }
     // 有 MP4 就以帧数折算（那才是视频时间轴的真实长度）；
     // 只出 GIF 时按墙上时间算 —— 掉帧只会让画面更新慢，时长不该缩水。
     let duration_ms = if opts.write_mp4 {
@@ -593,6 +947,43 @@ fn run(
         warmed_at.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0)
     };
     log::info!("录制结束：{frames} 帧，{duration_ms}ms，{} KB", bytes / 1024);
+    if audio_ms > 0 {
+        // 音视频不同步是录屏最难查的问题：留一行数字，出问题时一眼能看出
+        // 是"根本没音轨"还是"音轨比画面长/短了几秒"
+        let drift = audio_ms as i64 - duration_ms as i64;
+        log::info!("音轨 {audio_ms}ms（与画面相差 {drift}ms）");
+        if drift.abs() > 1500 {
+            log::warn!("音视频时长差 {drift}ms，可能是机器跟不上帧率导致漂移");
+        }
+    }
+
+    // 摄像头线程显式停掉再返回：靠 Drop 的话，文件已经报给前端了线程还活着，
+    // 用户紧接着再录一次会遇到"设备被占用"。
+    let cam_used = cam.is_some() && live.camera.load(Ordering::SeqCst);
+    if let Some(mut c) = cam.take() {
+        c.stop();
+    }
+    let mic_used = mic_ok && mic_frames_written > 0;
+    // "开着却没录到"必须在**结束时就喊出来**：用户不会去回放确认，
+    // 等他自己发现时已经过去半天了，只能重录。
+    if opts.camera && !cam_used {
+        log::warn!("本次没有录到人像（摄像头不可用或提前断开）");
+        if let Some(app) = &app {
+            let _ = app.emit(
+                "record://error",
+                "摄像头没有录上（设备不可用或被其他程序占用），画面里没有人像".to_string(),
+            );
+        }
+    }
+    if opts.mic && !mic_used {
+        log::warn!("本次没有录到麦克风");
+        if let Some(app) = &app {
+            let _ = app.emit(
+                "record://error",
+                "麦克风没有录上（设备不可用或被静音），成片里没有你的声音".to_string(),
+            );
+        }
+    }
 
     Ok(RecordResult {
         path: main_path.to_string_lossy().to_string(),
@@ -606,6 +997,9 @@ fn run(
         gif_frames: gif_out.as_ref().map(|(_, _, n, _, _)| *n).unwrap_or(0),
         gif_width: gif_out.as_ref().map(|(_, _, _, w, _)| *w).unwrap_or(0),
         gif_height: gif_out.as_ref().map(|(_, _, _, _, h)| *h).unwrap_or(0),
+        audio_ms,
+        camera: cam_used,
+        mic: mic_used,
     })
 }
 
@@ -629,7 +1023,7 @@ pub fn cursor_smoke(path: &std::path::Path) -> AppResult<(i32, i32)> {
 pub fn encoder_smoke(path: &std::path::Path, fps: u32, seconds: u32) -> AppResult<(u64, i64)> {
     const W: u32 = 640;
     const H: u32 = 360;
-    let mut writer = mf::Mp4Writer::new(path, W, H, fps, 2_000_000)?;
+    let mut writer = mf::Mp4Writer::new(path, W, H, fps, 2_000_000, None)?;
 
     let total = fps * seconds;
     let mut frame = vec![0u8; (W * H * 4) as usize];

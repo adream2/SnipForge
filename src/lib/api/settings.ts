@@ -31,6 +31,9 @@ export const settingsApi = {
     invoke<number | null>('gesture_match', { points, pattern, profile: profile ?? null }),
   appInfo: () => invoke<AppInfo>('app_info'),
   showMain: (route?: string) => invoke<void>('app_show_main', { route: route ?? null }),
+  /** 系统文件选择框。extensions 传 ['7z'] 这类扩展名（不带点） */
+  pickFile: (title?: string, extensions?: string[]) =>
+    invoke<string | null>('pick_file', { title: title ?? null, extensions: extensions ?? null }),
   openDir: (path: string) => invoke<void>('app_open_dir', { path }),
   openPath: (path: string) => invoke<void>('app_open_path', { path }),
 }

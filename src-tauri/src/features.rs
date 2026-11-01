@@ -26,21 +26,9 @@ pub struct Feature {
 pub const FEATURES: &[Feature] = &[
     Feature {
         id: "region",
-        label: "区域截图",
+        label: "截图",
         grabs_screen: true,
         run: |a| crate::commands::capture::trigger(a, "region"),
-    },
-    Feature {
-        id: "fullscreen",
-        label: "全屏截图",
-        grabs_screen: true,
-        run: |a| crate::commands::capture::trigger(a, "fullscreen"),
-    },
-    Feature {
-        id: "scroll",
-        label: "滚动长截图",
-        grabs_screen: true,
-        run: |a| crate::commands::capture::trigger(a, "scroll"),
     },
     Feature {
         id: "panel",
@@ -51,7 +39,8 @@ pub const FEATURES: &[Feature] = &[
     Feature {
         id: "pin",
         label: "剪贴板贴图",
-        grabs_screen: true,
+        // 贴的是剪贴板里的图，不抓屏 —— 标成 true 会白白多等 150ms 轨迹淡出
+        grabs_screen: false,
         run: |a| {
             let h = a.clone();
             tauri::async_runtime::spawn(async move {
@@ -95,6 +84,12 @@ pub const FEATURES: &[Feature] = &[
 ];
 
 pub fn find(id: &str) -> Option<&'static Feature> {
+    // 老配置兼容：fullscreen / scroll 曾经是独立动作，现在都并进了选区
+    // （全屏 Ctrl+A、滚动 S）。直接让它们消失会变成"手势还在、但按了没反应" ——
+    // 那种哑键比多按一个键难受得多，所以仍然映射到截图。
+    if matches!(id, "fullscreen" | "scroll" | "window") {
+        return FEATURES.iter().find(|f| f.id == "region");
+    }
     FEATURES.iter().find(|f| f.id == id)
 }
 

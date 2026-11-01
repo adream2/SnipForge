@@ -127,9 +127,8 @@ pub fn clipboard_clear(app: tauri::AppHandle, keep_pinned: bool) -> AppResult<()
 }
 
 #[tauri::command]
-pub fn clipboard_copy_text(app: tauri::AppHandle, text: String) -> AppResult<()> {
-    let svc = service(&app)?;
-    crate::clipboard::copy_text(&svc, &text)
+pub fn clipboard_copy_text(text: String) -> AppResult<()> {
+    crate::clipboard::copy_text(&text)
 }
 
 #[tauri::command]

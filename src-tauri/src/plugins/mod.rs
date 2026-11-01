@@ -17,9 +17,13 @@ use tauri::{AppHandle, Manager};
 
 /// 启动时装配：声明式图床 + 全局快捷键 + 托盘菜单 + 剪贴板监听
 pub fn init_runtime(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
-    // 1. 声明式图床
-    let loaded = declarative::load_all(app, state);
-    log::info!("加载声明式图床 {loaded} 个");
+    // 1. 声明式图床（"启用插件"关掉时整体跳过，这是那个开关唯一该有的含义）
+    if state.settings.read().general.enable_plugins {
+        let loaded = declarative::load_all(app, state);
+        log::info!("加载声明式图床 {loaded} 个");
+    } else {
+        log::info!("插件总开关已关闭，跳过声明式图床");
+    }
 
     // 2. 快捷键
     super::shortcuts::register_all(app, state)?;
@@ -27,17 +31,9 @@ pub fn init_runtime(app: &AppHandle, state: &Arc<AppState>) -> AppResult<()> {
     // 3. 托盘菜单
     super::tray::setup(app, state)?;
 
-    // 4. 剪贴板监听
-    let cfg = state.settings.read().clipboard.clone();
-    if cfg.enabled {
-        super::clipboard::start_monitor(
-            app.clone(),
-            state.clone(),
-            cfg.poll_interval_ms,
-            cfg.capture_images,
-            cfg.skip_sensitive,
-        );
-    }
+    // 4. 剪贴板监听。
+    // 线程常驻、每轮现读配置：开关/间隔/是否存图都在设置页改完立即生效。
+    super::clipboard::start_monitor(app.clone(), state.clone());
 
     Ok(())
 }
@@ -140,6 +136,8 @@ pub fn reload(app: &AppHandle, state: &Arc<AppState>) -> PluginState {
     if let Some(registry) = app.try_state::<Arc<crate::uploader::UploaderRegistry>>() {
         declarative::unload_all(&registry, state);
     }
-    declarative::load_all(app, state);
+    if state.settings.read().general.enable_plugins {
+        declarative::load_all(app, state);
+    }
     state_of(state)
 }

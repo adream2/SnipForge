@@ -103,6 +103,12 @@ export function drawShape(ctx: CanvasRenderingContext2D, shape: Shape): void {
     case 'mosaic':
       // 马赛克需要源像素，单独处理（见 applyMosaic）
       break
+    default: {
+      // 编译期完整性检查：新增 Shape 类型却忘了在这里画，这行会直接报类型错误
+      const unhandled: never = shape
+      void unhandled
+      break
+    }
   }
   ctx.restore()
 }
@@ -229,6 +235,43 @@ function drawTaperedArrow(
 }
 
 /** 悬停高亮：虚线包住整个图形，告诉用户滚轮会改哪个 */
+/**
+ * 选中框：实线 + 四角方块。
+ *
+ * 和悬停框（虚线）刻意做得不一样 —— 悬停只是"滚轮会改这个"的提示，
+ * 选中才意味着"点 Delete 会删掉、拖动会移动"，两者混在一起用户会误删。
+ */
+export function drawSelectOutline(
+  ctx: CanvasRenderingContext2D,
+  bounds: { x: number; y: number; width: number; height: number },
+  lineWidth: number
+): void {
+  const pad = lineWidth * 2.5
+  const x = bounds.x - pad
+  const y = bounds.y - pad
+  const w = Math.max(bounds.width + pad * 2, lineWidth * 4)
+  const h = Math.max(bounds.height + pad * 2, lineWidth * 4)
+
+  ctx.save()
+  ctx.strokeStyle = 'rgba(108, 92, 231, 1)'
+  ctx.lineWidth = lineWidth
+  ctx.setLineDash([])
+  ctx.strokeRect(x, y, w, h)
+
+  const s = lineWidth * 4
+  ctx.fillStyle = '#ffffff'
+  for (const [hx, hy] of [
+    [x, y],
+    [x + w, y],
+    [x, y + h],
+    [x + w, y + h]
+  ]) {
+    ctx.fillRect(hx - s / 2, hy - s / 2, s, s)
+    ctx.strokeRect(hx - s / 2, hy - s / 2, s, s)
+  }
+  ctx.restore()
+}
+
 export function drawHoverOutline(
   ctx: CanvasRenderingContext2D,
   bounds: { x: number; y: number; width: number; height: number },
@@ -279,6 +322,67 @@ export function applyMosaic(
   ctx.imageSmoothingEnabled = false
   ctx.drawImage(small, 0, 0, small.width, small.height, sx, sy, sw, sh)
   ctx.restore()
+}
+
+/** 一块已经算好的马赛克：直接 drawImage 就能贴回去 */
+export interface MosaicTile {
+  canvas: HTMLCanvasElement
+  sx: number
+  sy: number
+  sw: number
+  sh: number
+}
+
+/**
+ * 马赛克小块的缓存。
+ *
+ * 以前每帧每个马赛克都要 `createElement('canvas')` + 缩小 + 放大，
+ * 画上三四个再拖动就开始掉帧 —— 而马赛克的输入（底图某块 + 颗粒大小）
+ * 在参数没变时**完全一样**，算一次就该存下来。
+ *
+ * 取样源是**只含原图的离屏底图**，不是正在画的那块画布：
+ * 这样两个马赛克挨在一起时不会互相二次像素化，后画的标注也不会被它吃掉。
+ */
+const mosaicCache = new Map<string, HTMLCanvasElement>()
+/** 缓存上限。超了直接清空 —— 比维护 LRU 简单，而且马赛克通常就几个 */
+const MOSAIC_CACHE_MAX = 24
+
+export function mosaicTile(
+  base: HTMLCanvasElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  blockSize: number,
+  version: number
+): MosaicTile | null {
+  const sx = Math.max(0, Math.floor(x))
+  const sy = Math.max(0, Math.floor(y))
+  const sw = Math.min(Math.floor(w), base.width - sx)
+  const sh = Math.min(Math.floor(h), base.height - sy)
+  if (sw <= 0 || sh <= 0) return null
+
+  const block = Math.max(2, Math.round(blockSize))
+  const key = `${version}:${sx},${sy},${sw},${sh},${block}`
+  const hit = mosaicCache.get(key)
+  if (hit) return { canvas: hit, sx, sy, sw, sh }
+
+  const small = document.createElement('canvas')
+  small.width = Math.max(1, Math.floor(sw / block))
+  small.height = Math.max(1, Math.floor(sh / block))
+  const g = small.getContext('2d')
+  if (!g) return null
+  g.imageSmoothingEnabled = true
+  g.drawImage(base, sx, sy, sw, sh, 0, 0, small.width, small.height)
+
+  if (mosaicCache.size >= MOSAIC_CACHE_MAX) mosaicCache.clear()
+  mosaicCache.set(key, small)
+  return { canvas: small, sx, sy, sw, sh }
+}
+
+/** 换了一张截图，旧缓存全部作废 */
+export function clearMosaicCache(): void {
+  mosaicCache.clear()
 }
 
 /** 判断某个图形是否需要马赛克后处理 */

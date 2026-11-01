@@ -453,10 +453,6 @@ pub fn paste_item(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<Strin
 
 /// 粘贴一条收藏。收藏不在剪贴板历史里，所以先写进剪贴板，再走同一套送达逻辑。
 pub fn paste_secret(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<()> {
-    let svc = app
-        .try_state::<std::sync::Arc<crate::clipboard::ClipboardService>>()
-        .map(|s| s.inner().clone())
-        .ok_or_else(|| AppError::Msg("剪贴板服务未初始化".into()))?;
     let state = app
         .try_state::<std::sync::Arc<crate::state::AppState>>()
         .map(|s| s.inner().clone())
@@ -475,7 +471,7 @@ pub fn paste_secret(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<()>
         "粘贴收藏: id={id} 名称={:?} 目标={target:#x}",
         secret.name
     );
-    crate::clipboard::copy_text(&svc, &secret.value)?;
+    crate::clipboard::copy_text(&secret.value)?;
     let _ = state.secrets.lock().touch(id);
 
     if copy_only || target == 0 {

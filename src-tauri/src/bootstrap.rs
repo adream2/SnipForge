@@ -13,6 +13,7 @@ use crate::panel;
 use crate::paths::Paths;
 use crate::plugins;
 use crate::state::AppState;
+use crate::update;
 use crate::uploader;
 use crate::win32;
 use std::sync::Arc;
@@ -109,7 +110,16 @@ fn load_settings(paths: &Paths) -> AppSettings {
                     chrono::Utc::now().timestamp()
                 ));
                 let _ = std::fs::copy(&file, backup);
-                AppSettings::default()
+                // 备份完必须把默认值写回去。以前只备份不重写，于是：
+                // 每次启动都解析失败、每次都多一个 .corrupt 文件，
+                // 配置永远停在坏状态，用户只能自己去删。
+                let fresh = AppSettings::default();
+                if let Ok(text) = serde_json::to_string_pretty(&fresh) {
+                    if let Err(e) = std::fs::write(&file, text) {
+                        log::error!("重写默认配置失败: {e}");
+                    }
+                }
+                fresh
             }
         },
         Err(e) => {
@@ -205,6 +215,10 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             panel::prewarm(&h);
         });
     }
+
+    // 检查更新：延后 6 秒再联网（启动瞬间抢带宽会让首帧更慢），
+    // 失败只写 debug 日志 —— 公司网络出不去是常态，不该弹窗。
+    update::spawn_startup_check(app.handle().clone(), state.clone());
 
     // 首次启动展示主窗口，之后只在托盘里待命
     if let Some(win) = app.get_webview_window("main") {

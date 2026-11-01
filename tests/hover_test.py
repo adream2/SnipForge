@@ -15,7 +15,8 @@ import sys
 import time
 import zlib
 
-PY = "C:/Users/adrea/.workbuddy/binaries/python/versions/3.13.12/python.exe"
+# 用当前解释器：脚本本来就得用 python 跑，别再猜一个绝对路径
+PY = sys.executable
 u32 = ctypes.WinDLL("user32", use_last_error=True)
 
 ENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)

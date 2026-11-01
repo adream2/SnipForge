@@ -8,7 +8,7 @@
 //!   逐屏处理换来的是每块屏都像素级精确，代价只是暂不支持跨屏框选
 //!   （截图工具的跨屏框选本来就是伪需求）。
 
-use crate::error::{msg, AppError, AppResult};
+use crate::error::{AppError, AppResult};
 use crate::types::{CaptureResult, DisplayPreview, FramePayload, Rect};
 use base64::Engine;
 use image::{codecs::jpeg::JpegEncoder, imageops, RgbaImage};
@@ -27,7 +27,6 @@ pub struct CapturedDisplay {
 
 pub struct CaptureFrame {
     pub displays: Vec<CapturedDisplay>,
-    pub captured_at: i64,
 }
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
@@ -72,7 +71,6 @@ pub fn capture_frame() -> AppResult<CaptureFrame> {
 
     Ok(CaptureFrame {
         displays,
-        captured_at: chrono::Utc::now().timestamp_millis(),
     })
 }
 
@@ -177,15 +175,3 @@ pub fn crop_display(display: &CapturedDisplay, rect: Rect) -> AppResult<CaptureR
     })
 }
 
-/// 快照当前所有窗口（供 selector 做悬停高亮）
-pub fn list_windows(self_pid: u32) -> Vec<crate::types::NativeWindowInfo> {
-    crate::win32::window::list_top_level_windows(self_pid)
-}
-
-pub fn png_bytes_of_data_url(data_url: &str) -> AppResult<Vec<u8>> {
-    let payload = data_url
-        .split_once(',')
-        .map(|(_, d)| d)
-        .ok_or_else(|| msg("无效的图片数据"))?;
-    Ok(B64.decode(payload)?)
-}

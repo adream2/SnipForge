@@ -17,40 +17,16 @@ use crate::config::TranslateConfig;
 use crate::error::{AppError, AppResult};
 use std::time::Duration;
 
-/// 目标语言（规范码 → 界面上显示的名字）。
-pub const LANGS: &[(&str, &str)] = &[
-    ("zh-CN", "简体中文"),
-    ("zh-TW", "繁體中文"),
-    ("en", "English"),
-    ("ja", "日本語"),
-    ("ko", "한국어"),
-    ("fr", "Français"),
-    ("de", "Deutsch"),
-    ("es", "Español"),
-    ("ru", "Русский"),
-    ("pt", "Português"),
-    ("it", "Italiano"),
-    ("ar", "العربية"),
-    ("th", "ไทย"),
-    ("vi", "Tiếng Việt"),
-];
-
-/// 供应商显示名（设置页和取字窗口都用它）
-pub fn provider_label(id: &str) -> &'static str {
-    match id {
-        "google" => "谷歌",
-        "deepl" => "DeepL",
-        "custom" => "自定义",
-        _ => "腾讯",
-    }
-}
-
 fn client() -> AppResult<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SnipForge")
-        .build()
-        .map_err(|e| AppError::Msg(format!("创建请求失败: {e}")))
+    // 走系统代理：翻译服务全在墙外，用户开着 Clash 却不生效的话，
+    // 这里永远只会返回"服务不可达"
+    crate::net::with_proxy(
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(12))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SnipForge"),
+    )
+    .build()
+    .map_err(|e| AppError::Msg(format!("创建请求失败: {e}")))
 }
 
 pub async fn translate(cfg: &TranslateConfig, text: &str, to: Option<&str>) -> AppResult<String> {

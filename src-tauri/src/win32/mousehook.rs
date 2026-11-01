@@ -24,7 +24,7 @@
 //! 读锁没放掉就写锁会直接死锁，而这个线程卡死 = 整个系统鼠标卡死。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use parking_lot::RwLock;
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
@@ -59,6 +59,10 @@ type Sink = Box<dyn Fn(Event) + Send + Sync>;
 
 static SINK: OnceLock<Sink> = OnceLock::new();
 static CFG: OnceLock<RwLock<GestureConfig>> = OnceLock::new();
+/// 安装线程是否已经起过（避免重复起线程）
+static SPAWNED: AtomicBool = AtomicBool::new(false);
+/// 钩子**确实装上了**。和 SPAWNED 分开：以前只要线程起了就报"已安装"，
+/// 被安全软件拦掉时界面显示"手势已启用"，用户划半天毫无反应。
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
@@ -93,11 +97,12 @@ pub fn update_config(cfg: GestureConfig) {
             let _ = CFG.set(RwLock::new(cfg));
         }
     }
+    rebuild_hot();
 }
 
 pub fn install(sink: impl Fn(Event) + Send + Sync + 'static) {
     let _ = SINK.set(Box::new(sink));
-    if INSTALLED.swap(true, Ordering::SeqCst) {
+    if SPAWNED.swap(true, Ordering::SeqCst) {
         return;
     }
 
@@ -109,13 +114,18 @@ pub fn install(sink: impl Fn(Event) + Send + Sync + 'static) {
             Ok(h) => HINSTANCE(h.0),
             Err(e) => {
                 log::error!("获取模块句柄失败，鼠标手势不可用: {e}");
+                SPAWNED.store(false, Ordering::SeqCst);
                 return;
             }
         };
         match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), Some(hinst), 0) {
-            Ok(_) => log::info!("鼠标手势钩子已安装"),
+            Ok(_) => {
+                INSTALLED.store(true, Ordering::SeqCst);
+                log::info!("鼠标手势钩子已安装");
+            }
             Err(e) => {
                 log::error!("鼠标钩子安装失败（可能被安全软件拦截）: {e}");
+                SPAWNED.store(false, Ordering::SeqCst);
                 return;
             }
         }
@@ -125,6 +135,8 @@ pub fn install(sink: impl Fn(Event) + Send + Sync + 'static) {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&mut msg);
         }
+        // 消息循环退出 = 钩子没了，状态必须跟着说真话
+        INSTALLED.store(false, Ordering::SeqCst);
     });
 }
 
@@ -179,6 +191,29 @@ fn snapshot() -> Option<Snapshot> {
 fn emit(ev: Event) {
     if let Some(sink) = SINK.get() {
         sink(ev);
+    }
+}
+
+/// 预编译好的"热路径配置"。
+///
+/// 鼠标钩子每秒要处理上百个事件，而 `snapshot()` 每次都 `clone()` 出
+/// `excluded` 和**全部自定义手势模板**（`Vec<Vec<[f32;2]>>`）——
+/// 这是持续不断的堆分配，而低层钩子有严格超时，超时会被系统静默摘钩。
+/// 所以配置在这里编译成不可变快照，钩子只做 `Arc::clone`（引用计数 +1），
+/// 真正的深拷贝只在配置变更时发生一次。
+static HOT: OnceLock<RwLock<Option<Arc<Snapshot>>>> = OnceLock::new();
+
+fn hot() -> Option<Arc<Snapshot>> {
+    HOT.get()?.read().clone()
+}
+
+fn rebuild_hot() {
+    let snap = snapshot().map(Arc::new);
+    match HOT.get() {
+        Some(lock) => *lock.write() = snap,
+        None => {
+            let _ = HOT.set(RwLock::new(snap));
+        }
     }
 }
 
@@ -410,7 +445,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
-        let Some(cfg) = snapshot() else {
+        let Some(cfg) = hot() else {
             // 配置关掉了：清掉残留状态（读锁先放，再取写锁）
             let has = TRACK.read().is_some();
             if has {
@@ -454,7 +489,11 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-/// 钩子是否真的装上了（页面显示状态用）。
+/// 钩子是否真的装上了。
+///
+/// 目前没有界面读它，但保留：`INSTALLED` 之前被错当成"线程起来了"，
+/// 这个 getter 是那条 bug 的回归锚点（见 install 的注释）。
+#[allow(dead_code)]
 pub fn is_installed() -> bool {
     INSTALLED.load(Ordering::SeqCst)
 }

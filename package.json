@@ -2,6 +2,15 @@
   "name": "snipforge",
   "version": "0.1.0",
   "description": "SnipForge — 集截图、录屏、剪贴板、图床、图片处理于一体的 Windows 桌面工具",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adream2/SnipForge.git"
+  },
+  "homepage": "https://github.com/adream2/SnipForge",
+  "bugs": {
+    "url": "https://github.com/adream2/SnipForge/issues"
+  },
+  "license": "MIT",
   "type": "module",
   "private": true,
   "scripts": {
@@ -10,7 +19,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app:dev": "tauri dev",
-    "app:build": "tauri build",
+    "app:build": "tauri build --features custom-protocol",
     "portable": "node scripts/make-portable.mjs",
     "icons": "node scripts/make-icons.mjs"
   },

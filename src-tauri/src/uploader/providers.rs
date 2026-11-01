@@ -3,7 +3,7 @@
 //! 全部用 reqwest::blocking —— 上传是低频操作，用不着为它铺一层 async 状态机；
 //! 命令层会把它丢进 spawn_blocking，不会卡住 UI 线程。
 
-use super::{cfg_str, Cfg, Provider, UploadFile};
+use super::{cfg_str, safe_file_name, safe_join, Cfg, Provider, UploadFile};
 use crate::error::{AppError, AppResult};
 use crate::types::{
     ConfigField, DirEntry, FieldOption, ProviderMeta, RemoteImage, UploadResult, VisibleWhen,
@@ -66,11 +66,14 @@ fn options(mut field: ConfigField, opts: &[(&str, &str)]) -> ConfigField {
 }
 
 fn client(timeout_secs: u64) -> AppResult<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
-        .user_agent("SnipForge/0.1")
-        .build()
-        .map_err(|e| AppError::Msg(format!("HTTP 客户端创建失败: {e}")))
+    // 图床多半在墙外（GitHub / S3 / SM.MS），同样要跟着系统代理走
+    crate::net::with_blocking_proxy(
+        reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
+            .user_agent("SnipForge/0.1"),
+    )
+    .build()
+    .map_err(|e| AppError::Msg(format!("HTTP 客户端创建失败: {e}")))
 }
 
 fn http_err(status: u16, body: &str) -> AppError {
@@ -854,15 +857,12 @@ impl Provider for LocalFolderProvider {
         if root.is_empty() {
             return Err(AppError::Msg("请设置目标目录".into()));
         }
-        // 子目录相对根目录，别让用户填个绝对路径就跑出去了
-        let dir = match file.dir.as_deref().map(|d| d.trim_matches(&['/', '\\'][..])) {
-            Some(sub) if !sub.is_empty() => {
-                std::path::Path::new(&root).join(sub).to_string_lossy().to_string()
-            }
-            _ => root.clone(),
-        };
+        // 子目录和文件名都来自前端，必须走安全拼接：
+        // 否则 `..\..\Windows\Temp` 能把文件写到任意位置。
+        let dir = safe_join(&root, file.dir.as_deref().unwrap_or(""))?;
+        let name = safe_file_name(&file.file_name)?;
         std::fs::create_dir_all(&dir)?;
-        let target = std::path::Path::new(&dir).join(&file.file_name);
+        let target = dir.join(&name);
         std::fs::write(&target, &file.buffer)?;
 
         let base = cfg_str(cfg, "publicBaseUrl");
@@ -872,7 +872,7 @@ impl Provider for LocalFolderProvider {
             format!(
                 "{}/{}",
                 base.trim_end_matches('/'),
-                urlencoding::encode(&file.file_name)
+                urlencoding::encode(&name)
             )
         };
 
@@ -890,12 +890,9 @@ impl Provider for LocalFolderProvider {
         if root.is_empty() {
             return Err(AppError::Msg("请先设置目标目录".into()));
         }
-        let sub = path.trim_matches(&['/', '\\'][..]);
-        let abs = if sub.is_empty() {
-            std::path::PathBuf::from(&root)
-        } else {
-            std::path::Path::new(&root).join(sub)
-        };
+        let sub_raw = path.trim().replace('\\', "/");
+        let sub = sub_raw.trim_matches('/');
+        let abs = safe_join(&root, sub)?;
         if !abs.exists() {
             // 目录还不存在 = 用户想新建，返回空列表而不是报错
             return Ok(Vec::new());
@@ -930,12 +927,9 @@ impl Provider for LocalFolderProvider {
         if root.is_empty() {
             return Err(AppError::Msg("请先设置目标目录".into()));
         }
-        let sub = dir.trim_matches(&['/', '\\'][..]);
-        let abs = if sub.is_empty() {
-            std::path::PathBuf::from(&root)
-        } else {
-            std::path::Path::new(&root).join(sub)
-        };
+        let sub_raw = dir.trim().replace('\\', "/");
+        let sub = sub_raw.trim_matches('/');
+        let abs = safe_join(&root, sub)?;
         if !abs.exists() {
             return Ok(Vec::new());
         }

@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../lib/api'
-import type { PluginState } from '../lib/types'
+import type { HookPoint, PluginState } from '../lib/types'
 import { IconPlugin, IconSearch } from '../components/Icons'
 import { useToast } from '../components/Toast'
 
 export default function PluginsPage() {
   const [state, setState] = useState<PluginState | null>(null)
+  // 钩子点清单从后端读：加一个扩展点，这里自动多一行
+  const [hooks, setHooks] = useState<HookPoint[]>([])
   const toast = useToast()
 
   const reload = useCallback(async () => {
     try {
-      setState(await api.pluginsState())
+      const [st, hk] = await Promise.all([api.pluginsState(), api.pluginsHooks()])
+      setState(st)
+      setHooks(hk)
     } catch (e) {
       toast.push(String(e), 'error')
     }
@@ -94,6 +98,39 @@ export default function PluginsPage() {
             ))}
           </div>
         )}
+
+        <div
+          style={{
+            marginTop: 22,
+            maxWidth: 680,
+            padding: 16,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            fontSize: 12,
+            color: 'var(--text-2)',
+            lineHeight: 1.8
+          }}
+        >
+          <strong style={{ fontSize: 12.5, color: 'var(--text)' }}>扩展点（钩子）</strong>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            {hooks.map((h) => (
+              <span
+                key={h.name}
+                className={`tag ${h.handlers > 0 ? 'accent' : ''}`}
+                style={{ height: 19, fontSize: 10.5, fontFamily: 'var(--mono)' }}
+              >
+                {h.name}
+                {h.handlers > 0 ? ` · ${h.handlers}` : ''}
+              </span>
+            ))}
+          </div>
+          <p style={{ marginTop: 8, color: 'var(--text-3)' }}>
+            原生插件（重新编译接入的 Rust 扩展）可以挂这些时机介入主流程；
+            声明式 JSON 插件只做图床，没有脚本能力。清单由后端注册表提供，
+            上面标数字的是当前已挂载的处理器数量。
+          </p>
+        </div>
 
         <div
           style={{

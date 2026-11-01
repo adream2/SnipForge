@@ -1,20 +1,25 @@
 //! 密钥 / 密码收藏。
 //!
-//! 和剪贴板历史分开存（`secrets.json`）：历史会被容量淘汰、会被「清空」清掉，
+//! 和剪贴板历史分开存：历史会被容量淘汰、会被「清空」清掉，
 //! 而收藏是用户主动维护的东西，不该跟着历史一起滚动消失。
 //!
-//! 明文存本地 —— 这是本机工具，加密就得让用户记一个主密码，
-//! 每次粘贴前输一遍的摩擦远大于收益；但这点必须诚实：
-//! **能读到这个数据目录的人就能拿到里面的内容**。
+//! **落盘位置取决于有没有设主密码**：
+//!   - 没设：明文写 `secrets.json`（本机工具的取舍，界面上写明了）；
+//!   - 设了：进保险箱（`vault.json`），这里是密文，明文文件会被删掉。
+//!
+//! 加解密和 KDF 都在 `vault.rs`，这个文件只管"收藏列表"这件事本身。
 
 use crate::error::AppResult;
 use crate::types::Secret;
+use crate::vault::{Vault, SLOT_SECRETS};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub struct SecretStore {
     path: PathBuf,
     /// 按 updated_at 倒序保存（最近用过的/改过的在前）
     items: Vec<Secret>,
+    vault: Arc<Vault>,
 }
 
 fn now_ms() -> i64 {
@@ -25,14 +30,29 @@ fn now_ms() -> i64 {
 }
 
 impl SecretStore {
-    pub fn load(path: PathBuf) -> Self {
-        // 文件坏了就当空的：收藏丢了大不了重录，不该拦住应用启动
-        let mut items = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<Vec<Secret>>(&t).ok())
-            .unwrap_or_default();
+    pub fn load(path: PathBuf, vault: Arc<Vault>) -> Self {
+        // 设了主密码就是锁着的：此刻磁盘上只有密文，先把列表留空，
+        // 解锁时由 AppState 从保险箱灌回来。
+        let mut items = if vault.is_enabled() {
+            Vec::new()
+        } else {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Vec<Secret>>(&t).ok())
+                .unwrap_or_default()
+        };
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        Self { path, items }
+        Self {
+            path,
+            items,
+            vault,
+        }
+    }
+
+    /// 解锁后替换整个列表
+    pub fn replace_all(&mut self, items: Vec<Secret>) {
+        self.items = items;
+        self.items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     }
 
     pub fn list(&self) -> Vec<Secret> {
@@ -145,10 +165,31 @@ impl SecretStore {
         self.save()
     }
 
+    /// 落盘。设了主密码时进保险箱，否则写明文文件。
     fn save(&self) -> AppResult<()> {
-        let text = serde_json::to_string_pretty(&self.items)?;
+        let json = serde_json::to_vec(&self.items)?;
+        if self.vault.is_enabled() {
+            if !self.vault.is_unlocked() {
+                return Err(crate::error::AppError::Msg("保险箱未解锁".into()));
+            }
+            self.vault.write_slots(&[(SLOT_SECRETS, json)])?;
+            // 从明文模式迁过来的老文件不能留着
+            if self.path.exists() {
+                let _ = std::fs::remove_file(&self.path);
+            }
+            return Ok(());
+        }
+        self.write_plaintext(&json)
+    }
+
+    /// 强制写明文（关掉主密码时用；此时保险箱可能已不可用）
+    pub fn save_plaintext(&self) -> AppResult<()> {
+        self.write_plaintext(&serde_json::to_vec_pretty(&self.items)?)
+    }
+
+    fn write_plaintext(&self, bytes: &[u8]) -> AppResult<()> {
         let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, text)?;
+        std::fs::write(&tmp, bytes)?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
     }

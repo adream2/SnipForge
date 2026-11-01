@@ -18,6 +18,7 @@ export interface TranslateConfig {
 export interface AppSettings {
   version: number
   hotkeys: Record<string, string>
+  capture: { after: string }
   save: { dir: string; nameTemplate: string; afterSave: string }
   clipboard: {
     enabled: boolean
@@ -32,7 +33,6 @@ export interface AppSettings {
   uploader: {
     enabled: boolean
     activeProvider: string
-    autoUploadOnCapture: boolean
     copyAsMarkdown: boolean
     /** 上传前压缩（canvas 做，能出有损 WebP） */
     compress: boolean
@@ -55,9 +55,26 @@ export interface AppSettings {
     engine: string
     paddlePath: string
     timeoutSecs: number
+    /** auto | direct | custom */
+    downloadMode: string
+    /** 自定义加速前缀，如 https://ghfast.top/ */
+    mirrorPrefix: string
   }
   record: {
+    /** 录系统声音（WASAPI loopback） */
     audio: boolean
+    /** 录麦克风，和系统声音混音 */
+    mic: boolean
+    /** 摄像头画中画 */
+    camera: boolean
+    /** 摄像头设备名，空 = 用第一个可用设备 */
+    cameraDevice: string
+    /** 画中画宽度占录制画面的百分比 */
+    cameraSize: number
+    /** 画中画位置：br / bl / tr / tl */
+    cameraCorner: string
+    /** 画中画水平镜像 */
+    cameraMirror: boolean
     fps: number
     videoBitsPerSecond: number
     countdown: number
@@ -70,13 +87,11 @@ export interface AppSettings {
     gifWidth: number
   }
   general: {
-    language: string
     launchAtLogin: boolean
-    theme: string
-    minimizeToTray: boolean
-    showNotifications: boolean
     enablePlugins: boolean
     closeToTray: boolean
+    /** 启动后静默检查一次新版本（关了就不发那次请求） */
+    checkUpdates: boolean
   }
   gestures: GestureConfig
   /** 翻译服务（老配置里可能没有，读取时用默认值兜底） */

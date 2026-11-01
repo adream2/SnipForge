@@ -246,19 +246,6 @@ pub fn hide_blocking(timeout_ms: u64) {
     log::warn!("轨迹层隐藏超时（{}ms），截图可能会带上轨迹", timeout_ms);
 }
 
-/// 立刻隐藏（兜底用：出了问题先让屏幕能点）
-pub fn hide_now() {
-    ACTIVE.store(false, Ordering::SeqCst);
-    if let Ok(mut p) = POINTS.lock() {
-        p.clear();
-    }
-    if let Some(h) = hwnd() {
-        unsafe {
-            let _ = ShowWindow(h, SW_HIDE);
-        }
-    }
-}
-
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_PAINT => {

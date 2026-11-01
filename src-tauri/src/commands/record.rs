@@ -132,6 +132,13 @@ fn start_impl(
         fps: cfg.record.fps.clamp(10, 60),
         bitrate: cfg.record.video_bits_per_second.max(1_000_000),
         draw_cursor: cfg.record.show_cursor,
+        audio: cfg.record.audio,
+        mic: cfg.record.mic,
+        camera: cfg.record.camera,
+        camera_device: cfg.record.camera_device.clone(),
+        camera_size: cfg.record.camera_size,
+        camera_corner: cfg.record.camera_corner.clone(),
+        camera_mirror: cfg.record.camera_mirror,
         write_mp4: want_mp4,
     };
 
@@ -238,6 +245,15 @@ pub fn record_set_interactive(app: tauri::AppHandle, interactive: bool) -> AppRe
 #[tauri::command]
 pub fn record_status() -> AppResult<Option<RecordStatus>> {
     Ok(lock()?.as_ref().map(|r| r.status()))
+}
+
+/// 列出可用摄像头。设备在录制开始时才打开 —— 这里只是枚举，
+/// 不会占用设备（否则用户开着设置页就没法用其他软件开会）。
+#[tauri::command]
+pub async fn record_camera_list() -> AppResult<Vec<crate::record::camera::CameraDevice>> {
+    tauri::async_runtime::spawn_blocking(crate::record::camera::list_devices)
+        .await
+        .map_err(|e| AppError::Msg(format!("枚举摄像头任务失败: {e}")))?
 }
 
 /// 停止并收尾，返回最终文件信息

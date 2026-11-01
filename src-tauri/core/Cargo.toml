@@ -1,0 +1,19 @@
+[package]
+name = "snipforge-core"
+version = "0.1.0"
+edition = "2021"
+description = "SnipForge 的纯逻辑：配置结构、路径消毒。不依赖 tauri，所以测试能跑。"
+
+# 这个 crate 存在的唯一理由：**能让 `cargo test` 真正执行**。
+#
+# 主 crate 链接了完整的 Tauri/WinRT，它的 test harness 在某些机器上
+# 根本加载不起来（0xc0000139），所有 `#[cfg(test)]` 断言等于零保护。
+# 把不碰 GUI 的逻辑放在这里，测试才是一张网。
+#
+# 规矩：**这里不许出现 tauri / windows / 任何平台 API**。
+# 加进来就失去意义了（测试又会因为链接问题跑不起来）。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+log = "0.4"

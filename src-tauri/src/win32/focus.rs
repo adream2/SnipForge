@@ -45,13 +45,6 @@ pub fn is_own_window(hwnd: isize) -> bool {
     pid_of(hwnd_of(hwnd)) == std::process::id()
 }
 
-pub fn is_alive(hwnd: isize) -> bool {
-    if hwnd == 0 {
-        return false;
-    }
-    unsafe { IsWindow(Some(hwnd_of(hwnd))).as_bool() }
-}
-
 /// 把焦点还给指定窗口。
 ///
 /// 难点在 Windows 的**前台锁**：不是前台进程时 `SetForegroundWindow` 会被静默拒绝。

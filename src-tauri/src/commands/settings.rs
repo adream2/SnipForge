@@ -1,6 +1,5 @@
 use crate::config::AppSettings;
 use crate::error::{AppError, AppResult};
-use crate::paths::Paths;
 use crate::state::AppState;
 use crate::types::AppSettingsView;
 
@@ -18,6 +17,49 @@ pub fn settings_get(state: tauri::State<'_, std::sync::Arc<AppState>>) -> AppRes
     })
 }
 
+/// 配置落盘后的运行时副作用，统一在这一个函数里做。
+///
+/// 以前 `settings_patch` 和 `settings_reset` 各写一份，于是 reset 漏了
+/// 手势规则、托盘勾选、开机自启注册表三样 —— 用户点完"恢复默认"，
+/// 界面变了、行为没变，要重启才对齐。副作用只有一个入口就不会再漏。
+fn apply_runtime(
+    app: &tauri::AppHandle,
+    state: &std::sync::Arc<AppState>,
+    patch: &serde_json::Value,
+) -> AppResult<()> {
+    // 快捷键是"注册到系统"的东西，光改配置不重新注册等于没改
+    if patch.get("hotkeys").is_some() {
+        if let Err(e) = crate::shortcuts::register_all(app, state) {
+            log::warn!("快捷键重新注册失败: {e}");
+        }
+        // 托盘菜单里带着快捷键文案，必须一起刷新
+        crate::tray::refresh_menu(app, state);
+    }
+
+    // 手势钩子常驻，只换规则，不用重装
+    if patch.get("gestures").is_some_and(|g| !g.is_null()) {
+        crate::gesture::update(state.settings.read().gestures.clone());
+        crate::tray::refresh_menu(app, state);
+        let _ = crate::windows::emit_to_main(app, "app://gesture-changed", serde_json::json!({}));
+        log::debug!("手势配置已更新");
+    }
+
+    // 开机自启不是"存个 bool 就行"：得真去写 HKCU 的 Run 项
+    if let Some(on) = patch
+        .pointer("/general/launchAtLogin")
+        .and_then(|v| v.as_bool())
+    {
+        crate::autostart::apply(on)?;
+    }
+
+    // 插件总开关变了要重新扫描目录，否则关了还挂着一堆 provider
+    if patch.get("pluginEnabled").is_some() || patch.pointer("/general/enablePlugins").is_some() {
+        crate::plugins::reload(app, state);
+    }
+
+    Ok(())
+}
+
 /// 局部更新配置。前端只提交改动的字段，后端做深度合并后落盘。
 #[tauri::command]
 pub fn settings_patch(
@@ -25,45 +67,25 @@ pub fn settings_patch(
     state: tauri::State<'_, std::sync::Arc<AppState>>,
     patch: serde_json::Value,
 ) -> AppResult<AppSettingsView> {
-    // 快捷键是"注册到系统"的东西，光改配置不重新注册等于没改：
-    // 以前只有启动时注册一遍，界面却写着"修改后立即生效"，
-    // 用户改完按下去毫无反应，只能重启应用 —— 这是最典型的"设置不生效"。
-    let hotkeys_changed = patch.get("hotkeys").is_some();
+    // 锁着时凭据字段会被落盘逻辑清空，直接拒绝比"保存成功但值没了"诚实
+    if state.vault.is_enabled() && !state.vault.is_unlocked() {
+        let touches_secret = patch.pointer("/translate/deeplKey").is_some()
+            || patch.pointer("/translate/customHeaders").is_some()
+            || patch.pointer("/uploader/providers").is_some();
+        if touches_secret {
+            return Err(AppError::Msg(
+                "这些配置已加密锁定，请先在「设置 → 安全」里解锁".into(),
+            ));
+        }
+    }
     {
         let mut guard = state.settings.write();
-        guard.apply_patch(&patch);
+        // 合并失败必须原样报错：以前是 if let Ok 静默丢弃，
+        // 前端拿到旧配置却以为保存成功（"改了没反应"最难查的一种）
+        guard.apply_patch(&patch).map_err(AppError::Msg)?;
     }
     state.persist_settings()?;
-
-    if hotkeys_changed {
-        if let Err(e) = crate::shortcuts::register_all(&app, state.inner()) {
-            log::warn!("快捷键重新注册失败: {e}");
-        }
-    }
-
-    // 手势配置改了要立刻生效（钩子常驻，只换规则，不用重装）
-    if let Some(g) = patch.get("gestures") {
-        if !g.is_null() {
-            let cfg = state.settings.read().gestures.clone();
-            crate::gesture::update(cfg);
-            // 托盘的"鼠标手势"勾选状态跟着走，不然页面里暂停了、托盘还打着勾
-            crate::tray::refresh_menu(&app, state.inner());
-            log::debug!("手势配置已更新（{} 条绑定）", {
-                let c = state.settings.read().gestures.clone();
-                c.bindings.len()
-            });
-        }
-    }
-
-    // 开机自启不是"存个 bool 就行"：得真去写 HKCU 的 Run 项。
-    // 以前只改了配置，开关是纯装饰的，重启电脑什么都不会发生。
-    if let Some(on) = patch
-        .get("general")
-        .and_then(|g| g.get("launchAtLogin"))
-        .and_then(|v| v.as_bool())
-    {
-        crate::autostart::apply(on)?;
-    }
+    apply_runtime(&app, state.inner(), &patch)?;
 
     Ok(AppSettingsView {
         settings: state.settings_snapshot(),
@@ -106,10 +128,16 @@ pub fn settings_reset(
         *guard = fresh;
     }
     state.persist_settings()?;
-    // 快捷键回到默认值，同样要重新注册
-    if let Err(e) = crate::shortcuts::register_all(&app, state.inner()) {
-        log::warn!("恢复默认后重新注册快捷键失败: {e}");
-    }
+    // 恢复默认也要走一遍运行时副作用，而且**不止快捷键**：
+    // 手势规则、托盘勾选、开机自启注册表、插件加载都得跟着回到默认。
+    let everything = serde_json::json!({
+        "hotkeys": {},
+        "gestures": {},
+        "general": { "launchAtLogin": false, "enablePlugins": true },
+        "pluginEnabled": {}
+    });
+    apply_runtime(&app, state.inner(), &everything)?;
+
     Ok(AppSettingsView {
         settings: state.settings_snapshot(),
     })
@@ -128,6 +156,30 @@ pub async fn settings_pick_dir(
     }
     let picked = dialog.blocking_pick_folder();
     match picked {
+        Some(path) => Ok(Some(path.to_string())),
+        None => Ok(None),
+    }
+}
+
+/// 选择文件（走系统对话框）
+#[tauri::command]
+pub async fn pick_file(
+    app: tauri::AppHandle,
+    title: Option<String>,
+    extensions: Option<Vec<String>>,
+) -> AppResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let mut dialog = app.dialog().file();
+    if let Some(t) = title.filter(|s| !s.is_empty()) {
+        dialog = dialog.set_title(t);
+    }
+    let exts: Vec<String> = extensions.unwrap_or_default();
+    if !exts.is_empty() {
+        let refs: Vec<&str> = exts.iter().map(|s| s.as_str()).collect();
+        dialog = dialog.add_filter("文件", &refs);
+    }
+    match dialog.blocking_pick_file() {
         Some(path) => Ok(Some(path.to_string())),
         None => Ok(None),
     }
@@ -161,22 +213,6 @@ pub fn app_open_path(app: tauri::AppHandle, path: String) -> AppResult<()> {
     app.opener()
         .open_path(path, None::<&str>)
         .map_err(|e| AppError::Msg(e.to_string()))
-}
-
-/// 目标保存目录的最终取值（用户没设就用图片目录/SnipForge）
-pub fn resolve_save_dir(state: &AppState) -> std::path::PathBuf {
-    let cfg = state.settings.read();
-    if cfg.save.dir.trim().is_empty() {
-        state.paths.pictures.clone()
-    } else {
-        std::path::PathBuf::from(&cfg.save.dir)
-    }
-}
-
-/// 首次启动时确保目录存在
-pub fn ensure_paths(paths: &Paths) -> AppResult<()> {
-    paths.ensure()?;
-    Ok(())
 }
 
 /// 前端把错误写到同一份日志里。

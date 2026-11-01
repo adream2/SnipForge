@@ -58,7 +58,7 @@ export default function UploadTab({
   onChange
 }: {
   settings: AppSettings | null
-  onChange: (patch: unknown) => Promise<AppSettings>
+  onChange: (patch: unknown) => Promise<AppSettings | null>
 }) {
   const toast = useToast()
   const [providers, setProviders] = useState<ProviderMeta[]>([])
@@ -197,7 +197,7 @@ export default function UploadTab({
 
   const openBrowse = () => {
     // 浏览用的 path 永远是"相对该图床根"的：
-    // 本地图床配置的是绝对磁盘路径，直接拿来当相对路径会把面包屑拆成 E:/WorkBuddy/…
+    // 本地图床配置的是绝对磁盘路径，直接拿来当相对路径，面包屑会被拆成一层层的磁盘目录
     const start =
       dirInput.trim() || (provider === 'local-folder' ? '' : cfgPath)
     setBrowse({ open: true, path: start, dirs: [], loading: true, newName: '' })

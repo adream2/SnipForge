@@ -155,15 +155,11 @@ fn lookup(pattern: &str) -> Option<GestureAction> {
 }
 
 /// 进程名比较：忽略大小写和 `.exe` 后缀（用户填 `chrome` 也得认）
+///
+/// 实现统一放在 `win32::window::exe_name_eq`，剪贴板的"排除程序"用同一份，
+/// 免得两处规则漂移。
 fn same_exe(a: &str, b: &str) -> bool {
-    // 先去空白再转小写，最后才剥后缀 —— 先剥的话 "Chrome.EXE" 剥不掉，
-    // trim_end_matches 是大小写敏感的
-    fn stem(s: &str) -> String {
-        let t = s.trim().to_ascii_lowercase();
-        t.strip_suffix(".exe").unwrap_or(&t).to_string()
-    }
-    let a = stem(a);
-    !a.is_empty() && a == stem(b)
+    crate::win32::window::exe_name_eq(a, b)
 }
 
 /// 当前前台程序命中的专用手势集（多个命中取第一个）。
@@ -456,11 +452,6 @@ fn ask_exclude(app: &AppHandle) {
         }
         ASKING_EXCLUDE.store(false, Ordering::SeqCst);
     });
-}
-
-/// 钩子是否装上了（页面显示状态用）
-pub fn is_active() -> bool {
-    mousehook::is_installed() && cfg_lock().read().enabled
 }
 
 #[cfg(test)]

@@ -23,6 +23,11 @@ pub fn upload_provider_save(
     provider_id: String,
     values: serde_json::Value,
 ) -> AppResult<()> {
+    // 锁着的时候内存里没有凭据，写进去也只会被落盘逻辑剥掉 ——
+    // 静默丢失比报错更糟：用户以为保存了，下次解锁发现 token 没了。
+    if state.vault.is_enabled() && !state.vault.is_unlocked() {
+        return Err(AppError::Msg("图床凭据已加密锁定，请先在「设置 → 安全」里解锁".into()));
+    }
     {
         let mut cfg = state.settings.write();
         let map = cfg
@@ -88,6 +93,19 @@ pub async fn upload_image(
         .map(|d| crate::uploader::render_dir(&d))
         .filter(|d| !d.is_empty());
 
+    // 插件扩展点：上传前可拦截（"这张图不该外传"这类策略）
+    let (cancelled, _) = state.hooks.run(
+        crate::hooks::names::IMAGE_BEFORE_UPLOAD,
+        serde_json::json!({
+            "providerId": target,
+            "name": &name,
+            "bytes": bytes.len(),
+        }),
+    );
+    if cancelled {
+        return Err(AppError::Msg("上传已被插件取消".into()));
+    }
+
     // 下面这些东西会被 move 进上传线程，历史记录需要留一份
     let hist_name = name.clone();
     let hist_bytes = bytes.len() as u64;
@@ -108,6 +126,15 @@ pub async fn upload_image(
     })
     .await
     .map_err(|e| AppError::Msg(format!("上传任务失败: {e}")))??;
+
+    // 插件扩展点：拿到链接之后（写历史记录、发通知之类）
+    state.hooks.run(
+        crate::hooks::names::IMAGE_AFTER_UPLOAD,
+        serde_json::json!({
+            "providerId": outcome.provider_id,
+            "url": outcome.result.url,
+        }),
+    );
 
     // 记历史。写盘失败只记日志 —— 图已经传上去了，不能因为本地落盘出错
     // 就让用户看到"上传失败"，那样他会重传一遍。
