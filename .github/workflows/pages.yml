@@ -50,3 +50,8 @@ jobs:
       - name: 部署
         id: deploy
         uses: actions/deploy-pages@v4
+
+      # 部署成功后再通知，免得爬虫抓到旧版本；失败不影响部署结果
+      - name: 通知搜索引擎（IndexNow）
+        continue-on-error: true
+        run: node scripts/indexnow.mjs
