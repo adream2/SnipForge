@@ -10,6 +10,7 @@
 
 <sub>Windows 10/11 x64 · Tauri 2 + Rust + React · 安装包 2.9 MB · 常驻内存 27 MB</sub>
 
+[产品主页](https://adream2.github.io/SnipForge/) ·
 [下载最新版](https://github.com/adream2/SnipForge/releases) ·
 [功能手册](docs/FEATURES.md) ·
 [架构说明](docs/ARCHITECTURE.md) ·
@@ -72,6 +73,7 @@ GitHub / S3 兼容 / SM.MS / 自定义 / 本地目录，写一个 JSON 就能接
 
 | | |
 |---|---|
+| 产品主页 | <https://adream2.github.io/SnipForge/>（功能、截图、常见问题都在这里） |
 | 发布页 | <https://github.com/adream2/SnipForge/releases> |
 | 安装版 | `SnipForge_<版本>_x64-setup.exe`（当前用户安装，不需要管理员） |
 | 绿色版 | `SnipForge_<版本>_x64_portable.zip`（解压双击，数据同样在 `%APPDATA%`） |

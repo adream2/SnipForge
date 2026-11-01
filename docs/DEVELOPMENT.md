@@ -127,6 +127,36 @@ debug 级别会多出这几条关键信息：
 
 ---
 
+## 产品主页（`site/`）
+
+产品介绍页是纯静态的，没有构建步骤：
+
+```bash
+npm run site:serve   # 本地预览 http://127.0.0.1:4173/
+npm run site:check   # 上线前自检（CI 也跑这个）
+```
+
+改完 `site/` 下的文件，推到 `main` 就会自动部署到
+<https://adream2.github.io/SnipForge/>（`.github/workflows/pages.yml`，只在 `site/**` 变动时触发）。
+
+仓库第一次部署需要 Pages 已启用：Settings → Pages → Source 选 **GitHub Actions**。
+workflow 里 `configure-pages` 带了 `enablement: true`，多数情况下第一次跑会自己开。
+
+站点结构：
+
+```
+site/
+├── index.html      # 全部内容：功能、截图、对比、快捷键、常见问题、下载
+├── assets/         # 截图 + 图标 + og.png（1200×630 分享图）
+├── robots.txt      # 全站放行 + 显式放行 AI 抓取器 + 指向 sitemap
+├── sitemap.xml
+├── llms.txt        # 给 AI 问答引擎的事实卡片
+└── .nojekyll       # 别让 Pages 走 Jekyll 处理
+```
+
+换域名 / 改仓库名时，有六处地址要同步改，清单见
+[ARCHITECTURE.md · 产品主页](ARCHITECTURE.md#产品主页site--github-pages)。
+
 ## 相关文档
 
 | 文档 | 内容 |

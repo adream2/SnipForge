@@ -399,6 +399,36 @@ git tag v0.1.0 && git push origin v0.1.0
 4. **产物只有两个**：安装包（`setup.exe`）和绿色包（`portable.zip`）。
    绿色包必须含 `plugins/`，否则内置图床会静默消失。
 
+### 产品主页（`site/` → GitHub Pages）
+
+产品页是**纯静态、零构建**的：`site/` 目录原样作为 Pages artifact 上传，不跑 Jekyll、不跑打包器。
+改完 HTML 直接推送就生效，本地预览用 `npm run site:serve`（127.0.0.1:4173）。
+
+`.github/workflows/pages.yml` 只在 `site/**` 变动时触发，先跑 `scripts/check-site.mjs` 自检
+（资源引用是否存在、JSON-LD 能否解析、每张图有没有 alt、有没有把 localhost 带上线），
+再部署。检查失败就不会覆盖线上版本 —— 比部署完发现 404 再回滚便宜。
+
+站点里跟 SEO / GEO 有关的文件各管一段，别互相抄：
+
+| 文件 | 管什么 |
+|---|---|
+| `index.html` 的 `<head>` | title / description / canonical / OG / Twitter Card |
+| `index.html` 的 JSON-LD | `SoftwareApplication`（软件属性、功能列表）、`FAQPage`、`WebSite`、`Organization` |
+| `sitemap.xml` | 页面与图片的地址、lastmod |
+| `robots.txt` | 全站放行，并显式列出 GPTBot / PerplexityBot / ClaudeBot 等 AI 抓取器 |
+| `llms.txt` | 给 AI 问答引擎的"事实卡片"：版本、体积、许可、数据目录、与同类工具的差异 |
+| `assets/og.png` | 1200×630 分享图（分享卡片、部分 AI 引用会带上） |
+
+**改地址是这里最容易漏的一步。** 一旦换域名或改仓库名，下面六处必须一起改，否则 canonical、
+sitemap 和实际地址对不上，收录会分裂：
+
+1. `scripts/check-site.mjs` 的 `SITE_URL`
+2. `site/index.html` 的 `canonical` 与 `og:url`
+3. `site/sitemap.xml` 的 `<loc>`
+4. `site/robots.txt` 的 `Sitemap:`
+5. `site/llms.txt` 里的链接
+6. `src-tauri/src/commands/about.rs` 的 `SITE`（应用内"打开官网"点这里）
+
 ### 检查更新（`update.rs`）
 
 `GET /repos/{repo}/releases` → 挑版本号最大的已发布项（跳过 draft）→ 和 `CARGO_PKG_VERSION` 比。

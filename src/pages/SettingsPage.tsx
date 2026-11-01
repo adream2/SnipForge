@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, events } from '../lib/api'
+import type { AboutTarget } from '../lib/api'
 import type {
   AppInfo,
   AppSettings,
@@ -120,6 +121,8 @@ export default function SettingsPage({
   /** 版本检查结果：启动时后端已经查过一次，这里先读缓存 */
   const [upd, setUpd] = useState<UpdateInfo | null>(null)
   const [checking, setChecking] = useState(false)
+  /** 「关于」里的外链地址：后端维护唯一一份，这里读出来只用于显示 */
+  const [links, setLinks] = useState<Partial<Record<AboutTarget, string>>>({})
 
   // 启动时那次自动检查的结果，读一次就够（不联网）
   useEffect(() => {
@@ -132,6 +135,22 @@ export default function SettingsPage({
       alive = false
     }
   }, [])
+
+  useEffect(() => {
+    let alive = true
+    void api
+      .aboutLinks()
+      .then((pairs) => {
+        if (alive) setLinks(Object.fromEntries(pairs) as Partial<Record<AboutTarget, string>>)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const openAbout = (target: AboutTarget) =>
+    void api.aboutOpen(target).catch((e) => toast.push(String(e), 'error'))
 
   const checkUpdate = async () => {
     setChecking(true)
@@ -599,6 +618,41 @@ export default function SettingsPage({
                 {upd.notes}
               </div>
             )}
+            <Row
+              title="产品主页"
+              desc={links.site ?? '功能说明、界面截图、快捷键、常见问题与下载入口'}
+            >
+              <button className="btn sm" onClick={() => openAbout('site')}>
+                打开官网
+              </button>
+            </Row>
+            <Row title="源码与反馈" desc="MIT 许可，仓库公开。问题、建议、功能请求都收">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn sm" onClick={() => openAbout('repo')}>
+                  GitHub
+                </button>
+                <button className="btn sm" onClick={() => openAbout('issues')}>
+                  提 issue
+                </button>
+              </div>
+            </Row>
+            <Row title="更新日志" desc="每个版本改了什么，发布前都记在这里">
+              <button className="btn sm" onClick={() => openAbout('changelog')}>
+                查看
+              </button>
+            </Row>
+            <div
+              style={{
+                padding: '4px 16px 14px',
+                fontSize: 11.5,
+                color: 'var(--text-3)',
+                lineHeight: 1.7
+              }}
+            >
+              SnipForge {info?.version ?? '—'} · MIT 许可 · Rust + Tauri 2 + React
+              <br />
+              截图、OCR、剪贴板、录屏都在本机完成；只有你主动上传图片、或允许检查更新时才会联网。
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: 8, paddingBottom: 20 }}>

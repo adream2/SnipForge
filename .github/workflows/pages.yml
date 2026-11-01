@@ -1,0 +1,52 @@
+name: Pages
+
+# 产品介绍页：site/ 目录直接发到 GitHub Pages
+# 只在站点文件变动时触发，改 Rust 代码不会重复部署
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'scripts/check-site.mjs'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 站点自检
+        run: node scripts/check-site.mjs
+
+      - name: 准备 Pages
+        uses: actions/configure-pages@v5
+        with:
+          # 仓库第一次跑时自动打开 Pages（需要 pages: write 权限）
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: 部署
+        id: deploy
+        uses: actions/deploy-pages@v4

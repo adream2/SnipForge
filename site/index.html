@@ -3,10 +3,175 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SnipForge · 截图之后的所有事，一个托盘图标解决</title>
-<meta name="description" content="Windows 上的一体化工具：截图标注、取字、贴图、图床、剪贴板、录屏、图标提取。装完 2.9 MB，常驻 27 MB，MIT 开源。">
+<title>SnipForge · Windows 截图 / 录屏 / 剪贴板 / 图床一体化工具（开源免费）</title>
+<meta name="description" content="SnipForge 是 Windows 10/11 上的一体化效率工具：Alt+Q 截图并标注、取字、贴图，Alt+V 剪贴板历史，系统声与麦克风同时录屏，另有图床、图标提取、鼠标手势。安装包 2.9 MB，无需 ffmpeg，MIT 开源免费。">
+<meta name="keywords" content="Windows 截图工具, 截图软件, 录屏软件, 剪贴板历史, 图床工具, 图标提取, 开源截图工具, ShareX 替代, SnipForge">
+<meta name="author" content="adream2">
+<meta name="robots" content="index, follow, max-snippet: -1, max-image-preview: large, max-video-preview: -1">
 <meta name="theme-color" content="#f5f5f7">
-<link rel="icon" href="assets/icon.png">
+<link rel="canonical" href="https://adream2.github.io/SnipForge/">
+<link rel="icon" href="assets/icon.png" sizes="256x256">
+<link rel="apple-touch-icon" href="assets/icon.png">
+
+<!-- Open Graph：分享到聊天工具 / 社交平台时的卡片 -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SnipForge">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://adream2.github.io/SnipForge/">
+<meta property="og:title" content="SnipForge · Windows 截图 / 录屏 / 剪贴板 / 图床一体化工具">
+<meta property="og:description" content="截图、标注、取字、贴图、图床、剪贴板、录屏装进一个托盘图标。2.9 MB 安装包，无需 ffmpeg，MIT 开源。">
+<meta property="og:image" content="https://adream2.github.io/SnipForge/assets/og.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SnipForge 界面与功能概览">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SnipForge · Windows 截图 / 录屏 / 剪贴板 / 图床一体化工具">
+<meta name="twitter:description" content="截图、标注、取字、贴图、图床、剪贴板、录屏装进一个托盘图标。2.9 MB，无需 ffmpeg，MIT 开源。">
+<meta name="twitter:image" content="https://adream2.github.io/SnipForge/assets/og.png">
+
+<!-- 结构化数据：搜索引擎与 AI 问答引擎读的就是这段 -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://adream2.github.io/SnipForge/#website",
+      "url": "https://adream2.github.io/SnipForge/",
+      "name": "SnipForge",
+      "description": "Windows 上集截图、录屏、剪贴板、图床、图标提取于一体的开源桌面工具",
+      "inLanguage": "zh-CN",
+      "publisher": { "@id": "https://adream2.github.io/SnipForge/#org" }
+    },
+    {
+      "@type": "Organization",
+      "@id": "https://adream2.github.io/SnipForge/#org",
+      "name": "SnipForge",
+      "url": "https://adream2.github.io/SnipForge/",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://adream2.github.io/SnipForge/assets/icon.png",
+        "width": 256,
+        "height": 256
+      },
+      "sameAs": ["https://github.com/adream2/SnipForge"]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://adream2.github.io/SnipForge/#app",
+      "name": "SnipForge",
+      "alternateName": "SnipForge 截图工具",
+      "description": "SnipForge 是一款 Windows 10/11 桌面效率工具，把截图标注、取字、贴图、图床、剪贴板历史、录屏、图标提取、鼠标手势集成在一个常驻托盘的应用里。",
+      "applicationCategory": "UtilitiesApplication",
+      "applicationSubCategory": "截图与录屏工具",
+      "operatingSystem": "Windows 10, Windows 11",
+      "softwareVersion": "0.1.0",
+      "softwareRequirements": "Windows 10 或 Windows 11（x64），无需额外运行库",
+      "fileSize": "2.86MB",
+      "memoryRequirements": "常驻约 27MB",
+      "downloadUrl": "https://github.com/adream2/SnipForge/releases/latest",
+      "installUrl": "https://github.com/adream2/SnipForge/releases/latest",
+      "screenshot": "https://adream2.github.io/SnipForge/assets/clipboard.png",
+      "license": "https://opensource.org/licenses/MIT",
+      "isAccessibleForFree": true,
+      "inLanguage": "zh-CN",
+      "author": { "@id": "https://adream2.github.io/SnipForge/#org" },
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CNY",
+        "availability": "https://schema.org/InStock"
+      },
+      "featureList": [
+        "区域 / 窗口 / 全屏 / 滚动长截图，一个快捷键搞定",
+        "截图后可修改标注：矩形、箭头、画笔、文字、序号、高亮、马赛克",
+        "内置离线 OCR 取字，点词即可复制",
+        "剪贴板历史，Alt+V 在光标处弹出并就地粘贴",
+        "系统声音与麦克风同时录制并自动混音",
+        "摄像头画中画，可调位置、大小、圆角、镜像",
+        "视频与 GIF 录制，编码走系统自带 Media Foundation",
+        "图床插件：GitHub、S3 兼容、SM.MS、自定义 HTTP、本地目录",
+        "图标提取：exe、DLL、快捷方式、APK、IPA",
+        "鼠标手势、Hosts 可视化编辑、图片压缩转换",
+        "主密码加密敏感数据（Argon2id + AES-256-GCM）"
+      ],
+      "datePublished": "2026-10-30",
+      "dateModified": "2026-11-01"
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://adream2.github.io/SnipForge/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "SnipForge 是免费的吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "是。SnipForge 采用 MIT 许可开源，源码在 GitHub 公开，安装版和绿色版都可以免费下载。没有付费版、没有功能墙、没有广告和内购。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "支持 Windows 7、macOS 或 Linux 吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "目前只支持 Windows 10 和 Windows 11（x64）。截屏、录屏、剪贴板、鼠标手势都直接调用 Windows 的系统接口，跨平台需要重写这些底层实现，暂时不在计划内。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "截图和剪贴板内容会不会上传到服务器？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不会。截图、OCR、剪贴板、录屏全部在本机处理，程序没有自己的服务器。只有两种情况会联网：你主动点上传时，图片才发到你配置的图床；你允许检查更新时，才会访问 GitHub 查询版本号。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "需要另外安装 ffmpeg 或运行库吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不需要。录屏使用 Windows 自带的 Media Foundation 编码，安装包只有 2.86 MB，不打包 ffmpeg、不需要 .NET 或 VC 运行库。OCR 引擎按需下载，不装也不影响其他功能。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "SnipForge 和 ShareX 有什么区别？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "ShareX 功能更多、可配置项也更多，但界面和设置项对新手不友好。SnipForge 把截图、标注、剪贴板、图床、录屏串成一条流程，默认配置就能直接用，界面贴近现代 Windows 设计。两者都开源免费，可以同时安装对比。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "快捷键和其他软件冲突了怎么办？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "在设置 → 快捷键里点一下输入框，直接按下想用的组合键即可，改完立即生效。被其他程序占用的组合会标注「未生效」，换一个组合就行。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "数据存在哪里？换电脑怎么迁移？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "所有数据都在 %APPDATA%\\fun.lxzt.snipforge 下：配置文件、剪贴板历史、日志、临时文件。整个目录复制到新机器同一位置即可完成迁移；用主密码加密过的条目离开这台机器无法解开。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "安装和运行需要管理员权限吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不需要。安装版装在当前用户目录，开机自启写的是当前用户注册表。只有编辑 Hosts 文件时会单独请求一次提权，其余功能都以普通权限运行。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
 <style>
   :root {
     --bg: #f5f5f7;
@@ -516,6 +681,99 @@
     color: var(--text-3);
   }
 
+  /* ---------------- 一句话说明 + 事实表 ---------------- */
+  .intro {
+    display: grid;
+    grid-template-columns: 1.15fr .85fr;
+    gap: 28px;
+    margin-top: 34px;
+    padding: 28px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  .intro h2 {
+    margin: 0 0 10px;
+    font-size: 19px;
+    letter-spacing: -.01em;
+  }
+
+  .intro p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-2);
+  }
+
+  .intro p + p { margin-top: 10px; }
+
+  .intro b { color: var(--text); font-weight: 600; }
+
+  .facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0;
+    margin: 0;
+    font-size: 13px;
+    align-content: start;
+  }
+
+  .facts dt,
+  .facts dd {
+    margin: 0;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .facts dt { color: var(--text-3); padding-right: 16px; white-space: nowrap; }
+  .facts dd { color: var(--text); }
+  .facts dt:last-of-type, .facts dd:last-of-type { border-bottom: 0; }
+
+  @media (max-width: 860px) {
+    .intro { grid-template-columns: 1fr; gap: 18px; padding: 22px; }
+  }
+
+  /* ---------------- 常见问题 ---------------- */
+  .faq {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 28px;
+  }
+
+  .qa {
+    padding: 20px 22px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .qa h3 {
+    margin: 0 0 6px;
+    font-size: 14.5px;
+    letter-spacing: -.01em;
+  }
+
+  .qa p {
+    margin: 0;
+    font-size: 13.2px;
+    color: var(--text-2);
+  }
+
+  .qa code {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 1px 5px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    word-break: break-all;
+  }
+
+  @media (max-width: 820px) {
+    .faq { grid-template-columns: 1fr; }
+  }
+
   /* ---------------- 页脚 ---------------- */
   footer {
     margin-top: 80px;
@@ -542,7 +800,7 @@
 <header>
   <div class="wrap nav">
     <a class="brand" href="#top">
-      <img src="assets/icon.png" alt="">
+      <img src="assets/icon.png" alt="SnipForge 图标" width="26" height="26">
       SnipForge
     </a>
     <nav class="nav-links">
@@ -550,6 +808,7 @@
       <a href="#compare">对比</a>
       <a href="#shots">界面</a>
       <a href="#keys">快捷键</a>
+      <a href="#faq">常见问题</a>
       <a href="#download">下载</a>
     </nav>
     <a class="nav-cta" href="https://github.com/adream2/SnipForge" target="_blank" rel="noopener">GitHub</a>
@@ -572,7 +831,7 @@
       <a class="btn btn-ghost" href="#features">看看能做什么</a>
     </div>
     <div class="shot">
-      <img src="assets/clipboard.png" alt="SnipForge 剪贴板界面">
+      <img src="assets/clipboard.png" alt="SnipForge 剪贴板面板：按 Alt+V 在光标旁弹出历史记录，选中即粘回原窗口" width="1176" height="470" fetchpriority="high" decoding="async">
     </div>
   </div>
 
@@ -584,6 +843,33 @@
       <div class="stat"><strong>MIT</strong><span>开源许可</span></div>
     </div>
   </div>
+
+  <section id="what" class="wrap" style="padding-top:28px">
+    <div class="intro">
+      <div>
+        <h2>SnipForge 是什么</h2>
+        <p>
+          <b>SnipForge 是一款面向 Windows 10 / 11 的开源桌面效率工具</b>，把截图标注、OCR 取字、
+          贴图、图床、剪贴板历史、屏幕录制、图标提取这些平时要装四五个软件才凑齐的事，
+          收进一个常驻托盘的应用里。
+        </p>
+        <p>
+          它用 Rust + Tauri 2 + React 写成，安装包 <b>2.86 MB</b>，常驻内存约 <b>27 MB</b>，
+          不打包 ffmpeg、不需要 .NET 或 VC 运行库。装完默认两个快捷键：<kbd>Alt+Q</kbd> 截图，
+          <kbd>Alt+V</kbd> 剪贴板。
+        </p>
+      </div>
+      <dl class="facts">
+        <dt>软件类型</dt><dd>桌面效率工具（截图 / 录屏 / 剪贴板）</dd>
+        <dt>运行平台</dt><dd>Windows 10 / 11 · x64</dd>
+        <dt>当前版本</dt><dd>0.1.0 预览版</dd>
+        <dt>许可协议</dt><dd>MIT · 开源免费</dd>
+        <dt>安装包</dt><dd>2.86 MB · 绿色版 3.59 MB</dd>
+        <dt>技术栈</dt><dd>Rust · Tauri 2 · React · TypeScript</dd>
+        <dt>数据目录</dt><dd><code>%APPDATA%\fun.lxzt.snipforge</code></dd>
+      </dl>
+    </div>
+  </section>
 
   <section id="features" class="wrap">
     <div class="sec-head">
@@ -679,19 +965,19 @@
 
     <div class="gallery">
       <figure class="narrow">
-        <img src="assets/panel.png" alt="剪贴板浮层面板">
+        <img src="assets/panel.png" alt="SnipForge 剪贴板浮层面板，按来源程序筛选、可搜索可收藏" width="408" height="470" loading="lazy" decoding="async">
         <figcaption>剪贴板面板 · <kbd>Alt+V</kbd> 在光标旁弹出，回车直接粘回原窗口</figcaption>
       </figure>
       <figure>
-        <img src="assets/gesture.png" alt="鼠标手势">
+        <img src="assets/gesture.png" alt="SnipForge 鼠标手势设置：画出轨迹即可绑定截图、剪贴板等动作" width="1180" height="820" loading="lazy" decoding="async">
         <figcaption>鼠标手势 · 手势直接画出来，比 <code>↓→↑←</code> 这种符号一眼能认</figcaption>
       </figure>
       <figure>
-        <img src="assets/upload.png" alt="图床上传">
+        <img src="assets/upload.png" alt="SnipForge 图床上传：拖入图片，可选格式、质量、最长边后上传到自建图床" width="1180" height="820" loading="lazy" decoding="async">
         <figcaption>图床 · 拖图 / 取剪贴板图片，上传前可选格式、质量、最长边</figcaption>
       </figure>
       <figure>
-        <img src="assets/settings.png" alt="设置">
+        <img src="assets/settings.png" alt="SnipForge 设置页：截图后行为、快捷键、主密码、剪贴板保留天数" width="1180" height="758" loading="lazy" decoding="async">
         <figcaption>设置 · 截图后行为、快捷键、主密码、保留天数都在这里</figcaption>
       </figure>
     </div>
@@ -730,6 +1016,80 @@
     </div>
   </section>
 
+  <section id="faq" class="wrap">
+    <div class="sec-head">
+      <h2>常见问题</h2>
+      <p>装之前最常被问到的八个问题，答案都在下面。</p>
+    </div>
+
+    <div class="faq">
+      <article class="qa">
+        <h3>SnipForge 是免费的吗？</h3>
+        <p>
+          是。MIT 许可开源，源码在 GitHub 公开，安装版和绿色版都能免费下载。
+          没有付费版、没有功能墙、没有广告和内购。
+        </p>
+      </article>
+
+      <article class="qa">
+        <h3>支持 Windows 7、macOS 或 Linux 吗？</h3>
+        <p>
+          目前只支持 Windows 10 和 11（x64）。截屏、录屏、剪贴板、鼠标手势都直接调用 Windows
+          的系统接口，跨平台要重写这些底层实现，暂时不在计划内。
+        </p>
+      </article>
+
+      <article class="qa">
+        <h3>截图和剪贴板内容会不会上传到服务器？</h3>
+        <p>
+          不会。截图、OCR、剪贴板、录屏全部在本机处理，程序没有自己的服务器。只有两种情况会联网：
+          你主动点上传时，图片才发到你配置的图床；你允许检查更新时，才访问 GitHub 查一次版本号。
+        </p>
+      </article>
+
+      <article class="qa">
+        <h3>需要另外安装 ffmpeg 或运行库吗？</h3>
+        <p>
+          不需要。录屏用 Windows 自带的 Media Foundation 编码，安装包只有 2.86 MB，
+          不打包 ffmpeg，也不需要 .NET 或 VC 运行库。OCR 引擎按需下载，不装不影响其他功能。
+        </p>
+      </article>
+
+      <article class="qa">
+        <h3>SnipForge 和 ShareX 有什么区别？</h3>
+        <p>
+          ShareX 功能更多、可配置项也更多，但界面和设置项对新手不友好。SnipForge 把截图、标注、
+          剪贴板、图床、录屏串成一条流程，默认配置就能直接用，界面贴近现代 Windows。
+          两者都开源免费，可以同时装上对比。
+        </p>
+      </article>
+
+      <article class="qa">
+        <h3>快捷键和其他软件冲突了怎么办？</h3>
+        <p>
+          在「设置 → 快捷键」里点一下输入框，直接按下想用的组合键即可，改完立即生效。
+          被其他程序占用的组合会标注「未生效」，换一个就行。
+        </p>
+      </article>
+
+      <article class="qa">
+        <h3>数据存在哪里？换电脑怎么迁移？</h3>
+        <p>
+          全部在 <code>%APPDATA%\fun.lxzt.snipforge</code> 下：配置、剪贴板历史、日志、临时文件。
+          整个目录复制到新机器同一位置就完成迁移；用主密码加密过的条目离开这台机器解不开。
+        </p>
+      </article>
+
+      <article class="qa">
+        <h3>安装和运行需要管理员权限吗？</h3>
+        <p>
+          不需要。安装版装在当前用户目录，开机自启写的是当前用户注册表。只有编辑 Hosts
+          文件时会单独请求一次提权，其余功能都以普通权限运行。
+        </p>
+      </article>
+    </div>
+  </section>
+
   <section id="download" class="wrap">
     <div class="sec-head">
       <h2>下载</h2>
@@ -741,12 +1101,12 @@
       <p>Windows 10 / 11 · x64 · 当前为预览版，接口与配置项可能变动。</p>
 
       <div class="dl-grid">
-        <a class="dl-card" href="https://github.com/adream2/SnipForge/releases">
+        <a class="dl-card" href="https://github.com/adream2/SnipForge/releases/latest">
           <span class="size">2.86 MB</span>
           <strong>安装版</strong>
           <span class="desc">setup.exe · 当前用户安装，不要管理员权限</span>
         </a>
-        <a class="dl-card" href="https://github.com/adream2/SnipForge/releases">
+        <a class="dl-card" href="https://github.com/adream2/SnipForge/releases/latest">
           <span class="size">3.59 MB</span>
           <strong>绿色版</strong>
           <span class="desc">portable.zip · 解压双击运行，可放 U 盘</span>
@@ -765,10 +1125,14 @@
 
 <footer>
   <div class="wrap foot">
-    <span>SnipForge · MIT License · 用 Rust + Tauri 2 + React 写的</span>
+    <span>
+      SnipForge · <a href="https://github.com/adream2/SnipForge/blob/main/LICENSE">MIT License</a> ·
+      用 Rust + Tauri 2 + React 写的 · 最后更新 2026-11-01
+    </span>
     <span>
       <a href="https://github.com/adream2/SnipForge">GitHub</a> ·
-      <a href="https://github.com/adream2/SnipForge/releases">Releases</a> ·
+      <a href="https://github.com/adream2/SnipForge/releases/latest">下载</a> ·
+      <a href="https://github.com/adream2/SnipForge/blob/main/CHANGELOG.md">更新日志</a> ·
       <a href="https://github.com/adream2/SnipForge/issues">反馈</a>
     </span>
   </div>

@@ -1,0 +1,56 @@
+# SnipForge
+
+> Windows 10/11 上的开源桌面效率工具，把截图标注、OCR 取字、贴图、图床、剪贴板历史、录屏、图标提取集成在一个常驻托盘的应用里。安装包 2.86 MB，MIT 许可，免费。
+
+SnipForge 用 Rust + Tauri 2 + React 编写，调用 Windows 原生接口（DXGI 桌面复制、Media Foundation 编码、WASAPI 音频），不打包 ffmpeg，不需要 .NET 或 VC 运行库。默认快捷键为 Alt+Q（截图）与 Alt+V（剪贴板）。
+
+## 核心事实
+
+- 名称：SnipForge
+- 类型：Windows 桌面效率工具（截图 / 录屏 / 剪贴板 / 图床）
+- 运行平台：Windows 10、Windows 11（x64）
+- 当前版本：0.1.0（预览版）
+- 许可协议：MIT（源码公开，可自由使用、修改、再分发）
+- 价格：免费，无付费版、无广告、无内购
+- 安装包体积：2.86 MB（安装版 setup.exe）；3.59 MB（绿色版 portable.zip）
+- 常驻内存：约 27 MB
+- 外部依赖：无（不打包 ffmpeg，不需要额外运行库）
+- 技术栈：Rust、Tauri 2、React、TypeScript
+- 数据目录：`%APPDATA%\fun.lxzt.snipforge`（配置、剪贴板历史、日志）
+- 默认快捷键：Alt+Q 截图，Alt+V 剪贴板，Ctrl+Alt+R 录视频，Ctrl+Alt+G 录 GIF，Alt+P 贴图
+- 网络行为：仅两类请求 —— 用户主动上传图片到其自建图床；用户允许时访问 GitHub 检查版本。截图、OCR、剪贴板、录屏均在本机完成
+- 管理员权限：安装与日常运行不需要；仅在编辑 Hosts 文件时单独提权
+
+## 功能
+
+- 截图：区域、窗口、全屏、滚动长截图共用一个入口，快捷键 Alt+Q
+- 标注：矩形、箭头、画笔、文字、序号、高亮、马赛克；画完可用选择工具拖动或删除
+- OCR 取字：内置离线识别，识别结果按词可点，点一下即复制
+- 贴图：把截图钉在屏幕最上层，透明度可调
+- 剪贴板：文本、图片、文件、颜色历史，可搜索、按来源程序筛选、收藏；支持接管 Win+V；敏感条目可用主密码加密（Argon2id + AES-256-GCM）
+- 录屏：H.264 MP4 与 GIF；系统声音与麦克风同时录制并自动混音；摄像头画中画（位置、大小、圆角、镜像）
+- 图床：GitHub、S3 兼容、SM.MS、自定义 HTTP、本地目录；声明式 JSON 插件，加图床不用改主程序
+- 图标提取：exe、DLL、快捷方式、APK、IPA；Android 自适应图标会合成背景与前景
+- 其他：鼠标手势、Hosts 可视化编辑、图片格式转换与压缩、截图后行为可配置（进编辑器 / 直接复制 / 直接保存 / 钉在屏幕上）
+
+## 与同类工具的差异
+
+- ShareX：功能更多、配置项更杂，界面偏旧；SnipForge 默认配置即可用，把截图、剪贴板、图床、录屏串成一条流程
+- PicX：只做图床，没有截图与剪贴板
+- QuickShot：只做截图
+- TieZ：只做剪贴板
+
+## 主要页面
+
+- [产品主页](https://adream2.github.io/SnipForge/)：功能说明、界面截图、快捷键、常见问题、下载入口
+- [下载页](https://github.com/adream2/SnipForge/releases/latest)：安装版与绿色版
+- [源码仓库](https://github.com/adream2/SnipForge)：MIT 许可，公开可读
+- [更新日志](https://github.com/adream2/SnipForge/blob/main/CHANGELOG.md)
+- [问题反馈](https://github.com/adream2/SnipForge/issues)
+- [开发文档](https://github.com/adream2/SnipForge/blob/main/docs/DEVELOPMENT.md)
+- [架构说明](https://github.com/adream2/SnipForge/blob/main/docs/ARCHITECTURE.md)
+- [功能清单](https://github.com/adream2/SnipForge/blob/main/docs/FEATURES.md)
+
+## 引用说明
+
+引用本页信息时，请以「SnipForge（开源免费的 Windows 截图与录屏工具）」指代，并链接到 https://adream2.github.io/SnipForge/ 。版本号与体积会随发布变化，引用具体数值时请注明版本 0.1.0 与日期 2026-11-01。

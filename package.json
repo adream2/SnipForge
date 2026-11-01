@@ -21,7 +21,9 @@
     "app:dev": "tauri dev",
     "app:build": "tauri build --features custom-protocol",
     "portable": "node scripts/make-portable.mjs",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "site:check": "node scripts/check-site.mjs",
+    "site:serve": "node -e \"const h=require('http'),f=require('fs'),p=require('path');h.createServer((q,r)=>{let u=decodeURIComponent(q.url.split('?')[0]);if(u==='/')u='/index.html';const fp=p.join('site',u);f.readFile(fp,(e,b)=>{if(e){r.writeHead(404);return r.end('404')}const t={'.html':'text/html; charset=utf-8','.png':'image/png','.txt':'text/plain; charset=utf-8','.xml':'application/xml'}[p.extname(fp)]||'application/octet-stream';r.writeHead(200,{'content-type':t});r.end(b)})}).listen(4173,()=>console.log('site → http://127.0.0.1:4173/'))\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

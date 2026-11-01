@@ -82,6 +82,9 @@ pub fn run() {
             commands::update::update_check,
             commands::update::update_cached,
             commands::update::update_open,
+            // 关于页外链
+            commands::about::about_open,
+            commands::about::about_links,
             commands::pick_file,
             commands::app_info,
             commands::app_open_dir,

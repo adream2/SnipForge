@@ -7,6 +7,24 @@
 
 ---
 
+## [未发布]
+
+### 应用
+
+- 设置 → 关于：新增「产品主页」「源码与反馈」「更新日志」三个入口。外链地址由后端
+  `commands/about.rs` 统一维护，界面只传名字，不再散落硬编码 URL
+- 关于页补一行说明：截图、OCR、剪贴板、录屏均在本机完成，只有主动上传或允许检查更新时才联网
+
+### 产品主页
+
+- 上线 GitHub Pages 产品页：<https://adream2.github.io/SnipForge/>
+- SEO / GEO：canonical、Open Graph、Twitter Card、JSON-LD（SoftwareApplication / FAQPage /
+  WebSite / Organization）、`sitemap.xml`、`robots.txt`（显式放行主流 AI 抓取器）、`llms.txt`
+- 页面新增「SnipForge 是什么」事实表与「常见问题」八问，便于搜索引擎与 AI 问答引擎直接引用
+- 新增 `npm run site:check`：上线前检查资源引用、结构化数据、图片 alt、调试地址残留
+
+---
+
 ## [0.1.0] - 2026-11-01
 
 第一个预览版。Windows 10/11 x64。

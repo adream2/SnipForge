@@ -12,6 +12,7 @@ import { pluginApi } from './plugin'
 import { vaultApi } from './vault'
 import { iconApi } from './icon'
 import { updateApi } from './update'
+import { aboutApi } from './about'
 
 export const api = {
   ...settingsApi,
@@ -25,6 +26,8 @@ export const api = {
   ...vaultApi,
   ...iconApi,
   ...updateApi,
+  ...aboutApi,
 }
 
 export { events } from './events'
+export type { AboutTarget } from './about'
