@@ -22,6 +22,7 @@
   WebSite / Organization）、`sitemap.xml`、`robots.txt`（显式放行主流 AI 抓取器）、`llms.txt`
 - 页面新增「SnipForge 是什么」事实表与「常见问题」八问，便于搜索引擎与 AI 问答引擎直接引用
 - 新增 `npm run site:check`：上线前检查资源引用、结构化数据、图片 alt、调试地址残留
+- 新增 IndexNow 密钥与 `npm run site:ping`：部署后主动通知 Bing / Yandex 重新抓取
 
 ---
 

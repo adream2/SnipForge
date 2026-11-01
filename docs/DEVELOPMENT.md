@@ -134,6 +134,7 @@ debug 级别会多出这几条关键信息：
 ```bash
 npm run site:serve   # 本地预览 http://127.0.0.1:4173/
 npm run site:check   # 上线前自检（CI 也跑这个）
+npm run site:ping    # 部署完成后主动通知 Bing / Yandex 来抓（IndexNow）
 ```
 
 改完 `site/` 下的文件，推到 `main` 就会自动部署到
@@ -151,6 +152,7 @@ site/
 ├── robots.txt      # 全站放行 + 显式放行 AI 抓取器 + 指向 sitemap
 ├── sitemap.xml
 ├── llms.txt        # 给 AI 问答引擎的事实卡片
+├── <32位十六进制>.txt  # IndexNow 密钥（文件名=内容，公开是正常的）
 └── .nojekyll       # 别让 Pages 走 Jekyll 处理
 ```
 

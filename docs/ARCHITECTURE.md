@@ -418,6 +418,7 @@ git tag v0.1.0 && git push origin v0.1.0
 | `robots.txt` | 全站放行，并显式列出 GPTBot / PerplexityBot / ClaudeBot 等 AI 抓取器 |
 | `llms.txt` | 给 AI 问答引擎的"事实卡片"：版本、体积、许可、数据目录、与同类工具的差异 |
 | `assets/og.png` | 1200×630 分享图（分享卡片、部分 AI 引用会带上） |
+| `site/<key>.txt` | IndexNow 密钥文件，`npm run site:ping` 用它通知 Bing / Yandex 重抓 |
 
 **改地址是这里最容易漏的一步。** 一旦换域名或改仓库名，下面六处必须一起改，否则 canonical、
 sitemap 和实际地址对不上，收录会分裂：
