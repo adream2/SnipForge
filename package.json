@@ -1,6 +1,6 @@
 {
   "name": "snipforge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SnipForge — 集截图、录屏、剪贴板、图床、图片处理于一体的 Windows 桌面工具",
   "repository": {
     "type": "git",

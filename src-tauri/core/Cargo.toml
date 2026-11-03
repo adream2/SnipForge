@@ -1,6 +1,6 @@
 [package]
 name = "snipforge-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "SnipForge 的纯逻辑：配置结构、路径消毒。不依赖 tauri，所以测试能跑。"
 
