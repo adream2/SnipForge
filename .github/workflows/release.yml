@@ -22,6 +22,9 @@ on:
 
 permissions:
   contents: write
+  # 站点同步后要显式触发 pages.yml：GITHUB_TOKEN 推的 commit 不会触发其它
+  # workflow（GitHub 的防递归限制），只能自己调度一次
+  actions: write
 
 jobs:
   windows:
@@ -91,3 +94,37 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             dist-portable/*.zip
           fail_on_unmatched_files: true
+
+      # 站点是纯静态页，版本号/包大小/日期都是写死的 —— 不同步的话，
+      # 发布完产品页还挂着上一个版本，用户点下载以为没更新。
+      - name: 同步站点版本号
+        run: node scripts/sync-site-version.mjs
+
+      - name: 提交站点更新
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/index.html
+          if git diff --staged --quiet; then
+            echo "站点已是最新，无需提交"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "chore(site): 同步版本号到 $(node -p "require('./package.json').version")"
+          # tag 检出是 detached HEAD，要显式推到 main
+          if git push origin HEAD:main; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::站点改动推送失败（main 可能已有新提交），请手动跑 scripts/sync-site-version.mjs"
+          fi
+        id: site
+
+      # 上面那步用的是 GITHUB_TOKEN 推送，GitHub 出于防递归不会让它触发
+      # pages.yml —— 必须自己调度一次，否则站点改了但没重新部署。
+      - name: 重新部署站点
+        if: steps.site.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --ref main
+        continue-on-error: true
