@@ -14,8 +14,10 @@ pub mod input;
 pub mod keyhook;
 #[cfg(windows)]
 pub mod mousehook;
-#[cfg(windows)]
-pub mod shape;
+// 形状识别是纯数学（只依赖 std），住在 core 里才能真的跑测试 ——
+// 主 crate 的 test harness 在部分机器上加载不起来（0xc0000139）。
+// 这里 re-export，`crate::win32::shape::xxx` 的老路径继续可用。
+pub use snipforge_core::shape;
 #[cfg(windows)]
 pub mod trail;
 #[cfg(windows)]

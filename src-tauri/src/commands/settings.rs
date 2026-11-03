@@ -244,7 +244,9 @@ pub fn autostart_status() -> bool {
 #[tauri::command]
 pub fn gesture_recognize(points: Vec<[i32; 2]>) -> Option<String> {
     let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
-    crate::win32::shape::recognize(&pts).map(|c| c.to_string())
+    // 带 `@` 前缀返回：前端会把结果原样存进配置，和默认绑定（`@S`）保持同一种写法。
+    // 不带前缀也能匹配（`normalize` 会补），但配置里两种写法混着不好排查。
+    crate::win32::shape::recognize(&pts).map(|c| format!("@{c}"))
 }
 
 /// 形状识别的诊断行：每个内置形状的"距离比"（1.0 = 正好卡在阈值上）。

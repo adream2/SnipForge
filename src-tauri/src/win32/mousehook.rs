@@ -45,10 +45,13 @@ pub enum Event {
     Move { x: i32, y: i32 },
     /// 方向串变了（用来实时更新屏幕上的动作名）
     Turn { pattern: String },
-    /// 抬手。`pattern` 形如 "DR"；`stroke` 是这一笔的原始轨迹，
-    /// 给"自定义手势"按形状匹配用（方向串表达不了 M、W、Z 这些）。
+    /// 抬手。`pattern` 形如 "DR"（方向串）或 "@W"（形状）；
+    /// `dir` 是**纯方向串**，形状没绑定动作时用它回落（见 gesture::find_in）。
+    /// `stroke` 是这一笔的原始轨迹，给"自定义手势"按形状匹配用
+    /// （方向串表达不了 M、W、Z 这些）。
     End {
         pattern: String,
+        dir: String,
         stroke: Vec<(i32, i32)>,
     },
     /// 手势被放弃（动了但没划出方向、或者中途按了左键）
@@ -78,7 +81,12 @@ struct Track {
     origin: (i32, i32),
     anchor: (i32, i32),
     last_dir: Option<char>,
+    /// 最终标识：方向串（"DR"）或形状（"@W"）
     pattern: String,
+    /// 纯方向串。形状认出来之后 `pattern` 会变成 "@W"，但方向串要留着 ——
+    /// 用户没给 "@W" 绑动作时得回落到它，否则"划一个 W 形状"会把
+    /// 本来能用的 `DUD` 绑定吞掉。
+    dir: String,
     /// 这一笔的原始轨迹（形状识别用）
     pts: Vec<(i32, i32)>,
     /// 已认出的形状。认出来就锁定，不再走方向判定
@@ -245,6 +253,7 @@ fn on_down(x: i32, y: i32, swallow: bool) -> bool {
         anchor: (x, y),
         last_dir: None,
         pattern: String::new(),
+        dir: String::new(),
         pts: vec![(x, y)],
         shape: None,
         custom: None,
@@ -324,20 +333,22 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32, custom: &[(usize, Vec<[f32
         if changed.is_none() && t.shape.is_none() && t.custom.is_none() && t.pts.len() >= 12 && t.pts.len() % 4 == 0 {
             if let Some(c) = crate::win32::shape::recognize(&t.pts) {
                 t.shape = Some(c);
-                // 曲线糊出来的方向串（DLD 之类）作废，直接以形状为准
-                t.pattern.clear();
-                t.pattern.push(c);
+                // 形状用 `@` 前缀，和方向串分处两个命名空间：
+                // `D` 是"向下划"，`@D` 才是"画一个 D"。同一个字符不能既当
+                // 方向又当字母，前缀是最省事的隔离方式。
+                //
+                // 曲线糊出来的方向串（DLD 之类）不再往 pattern 里塞，
+                // 但 `t.dir` 继续累积 —— 形状没绑动作时要靠它回落。
+                t.pattern = format!("@{c}");
                 changed = Some(t.pattern.clone());
             }
         }
 
         let (dx, dy) = (x - t.anchor.0, y - t.anchor.1);
-        // 已经认出形状就不再记方向，否则浮标会在 "S 截图" 和 "未绑定" 之间乱跳
-        if changed.is_none()
-            && t.shape.is_none()
-            && t.custom.is_none()
-            && (dx.abs() >= step || dy.abs() >= step)
-        {
+        // 方向串**永远**累积，不受"已认出形状"影响：
+        // 画 W 时形状在 12 个点就锁定了，但方向串要一直记到抬手 ——
+        // 否则 `@W` 没绑动作时回落到的方向串只有开头一两个字符，等于错的。
+        if t.custom.is_none() && (dx.abs() >= step || dy.abs() >= step) {
             let d = if dx.abs() > dy.abs() {
                 if dx > 0 {
                     'R'
@@ -351,8 +362,12 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32, custom: &[(usize, Vec<[f32
             };
             if Some(d) != t.last_dir {
                 t.last_dir = Some(d);
-                t.pattern.push(d);
-                changed = Some(t.pattern.clone());
+                t.dir.push(d);
+                // pattern 只在还没认出形状时跟着方向走
+                if t.shape.is_none() {
+                    t.pattern.push(d);
+                    changed = Some(t.pattern.clone());
+                }
             }
             // 锚点跟着走：同一方向连续移动只记一次
             t.anchor = (x, y);
@@ -381,6 +396,7 @@ fn on_up() -> bool {
         if t.gesture && !t.pattern.is_empty() {
             emit(Event::End {
                 pattern: t.pattern,
+                dir: t.dir,
                 stroke: t.pts,
             });
         }
@@ -403,6 +419,7 @@ fn on_up() -> bool {
         );
         emit(Event::End {
             pattern: t.pattern,
+            dir: t.dir,
             stroke: t.pts,
         });
         return true;

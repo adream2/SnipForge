@@ -74,10 +74,14 @@ function hStroke(): Pt[] {
 }
 
 export function patternToStroke(pattern: string): Pt[] {
-  const p = (pattern || '').toUpperCase()
+  let p = (pattern || '').toUpperCase()
+  // 形状带 `@` 前缀（@W / @S），缩略图只关心笔画本身
+  if (p.startsWith('@')) p = p.slice(1)
   if (!p) return []
   if (p === 'S') return fit(sStroke())
   if (p === 'H') return hStroke()
+  // 其它字母没有内置缩略图：返回空数组，由调用方显示文字
+  if (p.length === 1 && !DIRS[p]) return []
 
   let x = 0
   let y = 0

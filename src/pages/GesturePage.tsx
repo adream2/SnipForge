@@ -29,14 +29,20 @@ import { featureLabel, normalizeFeatureId, useFeatures } from '../lib/features'
  */
 
 const ARROW: Record<string, string> = { U: '↑', D: '↓', L: '←', R: '→' }
-/** 形状手势（画出来的），后端 `shape` 模块认，目前 S / H */
-const SHAPE: Record<string, string> = { S: 'S', H: 'H' }
 
+/**
+ * 手势标识 → 人看的符号。
+ *
+ * 形状带 `@` 前缀（`@W` / `@S`），和方向串分开命名空间 —— 后端 `normalize`
+ * 就是按这个规则判的（字母 D/L/R/U 和方向同名，不隔离就分不开）。
+ * 显示时把前缀去掉，用户看到的是自己画的字母，不是内部编码。
+ */
 function arrows(pattern: string): string {
-  return pattern
-    .toUpperCase()
+  const p = (pattern || '').toUpperCase()
+  if (p.startsWith('@')) return p.slice(1)
+  return p
     .split('')
-    .map((c) => ARROW[c] ?? SHAPE[c] ?? c)
+    .map((c) => ARROW[c] ?? c)
     .join(' ')
 }
 

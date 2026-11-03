@@ -8,4 +8,5 @@
 pub mod atom;
 pub mod config;
 pub mod safe;
+pub mod shape;
 pub mod version;

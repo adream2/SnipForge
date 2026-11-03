@@ -60,10 +60,12 @@ pub fn update(cfg: GestureConfig) {
 }
 
 /// 方向串 → 箭头。屏幕浮标和页面里用同一套符号。
-/// 形状手势（`S`）不是方向，原样显示。
+///
+/// 形状（`@W`）去掉 `@` 原样显示 —— 用户看到的是他画的字母，不是内部编码。
 fn arrows(pattern: &str) -> String {
     pattern
         .chars()
+        .filter(|c| *c != '@')
         .map(|c| match c {
             'U' => '↑',
             'D' => '↓',
@@ -83,6 +85,7 @@ fn find_in(
     bindings: &[crate::config::GestureBinding],
     stroke: &[(i32, i32)],
     pattern: &str,
+    dir: &str,
 ) -> Option<usize> {
     let path = crate::win32::shape::canonical_stroke(stroke);
     if path.len() >= 8 {
@@ -105,34 +108,51 @@ fn find_in(
     if pattern.starts_with('#') {
         return None;
     }
-    bindings
+    // 先按最终标识精确匹配（形状 `@W` 或方向串 `DR`）
+    if let Some(i) = bindings
         .iter()
         .position(|b| b.enabled && normalize(&b.pattern) == pattern)
+    {
+        return Some(i);
+    }
+    // 形状没绑动作 → 回落到方向串。
+    //
+    // 这一条是"字母和方向能共存"的关键：用户画 Z 时形状会认成 `@Z`，
+    // 但他没给 `@Z` 绑过动作，于是落回方向串 `RLR` —— "画 Z 排除当前程序"
+    // 照常工作，不需要用户为每个字母都补一条绑定。
+    if pattern != dir && !dir.is_empty() {
+        return bindings
+            .iter()
+            .position(|b| b.enabled && normalize(&b.pattern) == dir);
+    }
+    None
 }
 
 /// 这一划该执行什么：**先用当前程序的专用集，没命中再回落通用**。
 ///
 /// 手势执行和页面"试划"共用同一套查找 —— 两边各写一套，
 /// 早晚出现"这里试得出来、真划没反应"。
-pub fn match_action(stroke: &[(i32, i32)], pattern: &str) -> Option<GestureAction> {
+pub fn match_action(stroke: &[(i32, i32)], pattern: &str, dir: &str) -> Option<GestureAction> {
     if let Some(p) = active_profile() {
-        if let Some(i) = find_in(&p.bindings, stroke, pattern) {
+        if let Some(i) = find_in(&p.bindings, stroke, pattern, dir) {
             return Some(p.bindings[i].action.clone());
         }
     }
     let g = cfg_lock().read();
-    find_in(&g.bindings, stroke, pattern).map(|i| g.bindings[i].action.clone())
+    find_in(&g.bindings, stroke, pattern, dir).map(|i| g.bindings[i].action.clone())
 }
 
 /// 页面查重用：在指定范围（某个专用集 / 通用）里找命中的下标。
+///
+/// 没有 `dir`：页面里"试划"是直接给一笔轨迹，不存在"形状认出后回落"的场景。
 pub fn match_scoped(scope: Option<&str>, stroke: &[(i32, i32)], pattern: &str) -> Option<usize> {
     let g = cfg_lock().read();
     match scope {
         Some(id) => {
             let p = g.profiles.iter().find(|p| p.id == id)?;
-            find_in(&p.bindings, stroke, pattern)
+            find_in(&p.bindings, stroke, pattern, "")
         }
-        None => find_in(&g.bindings, stroke, pattern),
+        None => find_in(&g.bindings, stroke, pattern, ""),
     }
 }
 
@@ -211,20 +231,22 @@ fn handle_event(app: &AppHandle, ev: Event) {
         Event::Cancel => {
             crate::win32::trail::end();
         }
-        Event::End { pattern, stroke } => {
+        Event::End { pattern, dir, stroke } => {
             crate::win32::trail::end();
-            log::debug!("手势 {pattern}");
+            log::debug!("手势 {pattern}（方向串 {dir}）");
 
             // 以落笔的笔画为准重新匹配一次：钩子里那个 #下标 只用于浮标提示，
             // 配置若在手势中途改过可能已经错位。
-            if let Some(a) = match_action(&stroke, &pattern) {
+            if let Some(a) = match_action(&stroke, &pattern, &dir) {
                 run(app, a);
                 return;
             }
 
-            // 没绑动作：看看是不是"画一下排除当前程序"
+            // 没绑动作：看看是不是"画一下排除当前程序"。
+            // 形状和方向串都算 —— 画 Z 会被认成 `@Z`，而排除手势是 `RLR`。
             let exclude_pattern = normalize(&cfg_lock().read().exclude_pattern);
-            if !exclude_pattern.is_empty() && pattern == exclude_pattern {
+            if !exclude_pattern.is_empty() && (pattern == exclude_pattern || dir == exclude_pattern)
+            {
                 ask_exclude(app);
             }
         }
@@ -235,16 +257,32 @@ fn handle_event(app: &AppHandle, ev: Event) {
 ///
 /// 形状字符（目前只有 `S`）不是方向，但必须留下 —— 否则用户写的 `"S"`
 /// 会被过滤成空串，整条绑定凭空失效。
+/// 配置里手写的方向串 / 形状统一成规范形式。
+///
+/// 规则：
+///   - 方向串保持原样（`DR`、`DUD`），大小写无所谓；
+///   - 形状加 `@` 前缀（`@W`、`@S`）—— 字母 D/L/R/U 和方向同名，
+///     不加前缀就没法区分"向下划"和"画一个 D"；
+///   - 单个非方向字母自动补 `@`：手写 `W` 和 `@W` 是同一个意思。
+///
+/// 以前这里只放行 UDLR + S/H，加一个字母就得改这一行；现在所有字母都通，
+/// 新形状只要在 `shape::LETTERS` 里登记就能用。
 fn normalize(pattern: &str) -> String {
-    pattern
+    let s: String = pattern
         .chars()
-        .filter_map(|c| match c.to_ascii_uppercase() {
-            // UDLR = 方向；S/H = 内置形状（见 `win32::shape`）。
-            // 形状字符必须原样留下，否则用户写的绑定会被过滤成空串，等于没写。
-            'U' | 'D' | 'L' | 'R' | 'S' | 'H' => Some(c.to_ascii_uppercase()),
-            _ => None,
+        .filter_map(|c| {
+            let u = c.to_ascii_uppercase();
+            if u == '@' || u.is_ascii_uppercase() {
+                Some(u)
+            } else {
+                None
+            }
         })
-        .collect()
+        .collect();
+    if s.len() == 1 && !matches!(s.as_str(), "U" | "D" | "L" | "R") {
+        return format!("@{s}");
+    }
+    s
 }
 
 /// 日志和浮标用的一句话描述
@@ -313,7 +351,7 @@ fn short(s: &str) -> String {
 /// 要不要在动手前先把轨迹层收干净。
 ///
 /// 只有"抓屏幕"的动作才需要：截图/录屏会把屏幕内容抓走，而轨迹层的淡出是
-/// 520ms —— 不等它藏起来，用户刚画的那道 S 就会出现在截图里。
+/// 240ms —— 不等它藏起来，用户刚画的那道 S 就会出现在截图里。
 /// 哪些算"抓屏幕"写在 `features::FEATURES` 里，不在这重复一遍。
 fn needs_clean_screen(a: &GestureAction) -> bool {
     match a {
@@ -460,15 +498,21 @@ mod tests {
 
     #[test]
     fn shape_token_survives_normalize() {
-        // 这条以前会挂：过滤器只放行 UDLR，"S" 被吃成空串，
-        // 用户写的 S 绑定就等于没写。形状字符必须原样留下。
-        assert_eq!(normalize("S"), "S");
-        assert_eq!(normalize(" s "), "S");
+        // 形状统一带 `@` 前缀：字母 D/L/R/U 和方向同名，不隔离就分不开。
+        // 以前这里只放行 UDLR + S/H，加一个字母就得改这一行。
+        assert_eq!(normalize("S"), "@S");
+        assert_eq!(normalize(" s "), "@S");
+        assert_eq!(normalize("W"), "@W");
+        assert_eq!(normalize("@w"), "@W");
+        // 方向串不受影响
         assert_eq!(normalize("DLD"), "DLD");
         assert_eq!(normalize("d l d"), "DLD");
-        // 浮标和列表里的显示：方向是箭头，形状就是它自己
+        assert_eq!(normalize("D"), "D");
+        assert_eq!(normalize("DR"), "DR");
+        // 浮标和列表里的显示：方向是箭头，形状去掉内部前缀
         assert_eq!(arrows("DR"), "↓→");
-        assert_eq!(arrows("S"), "S");
+        assert_eq!(arrows("@S"), "S");
+        assert_eq!(arrows("@D"), "D");
     }
 }
 

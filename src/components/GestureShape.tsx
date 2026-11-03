@@ -29,6 +29,28 @@ export function GestureShape({
   const geom = useMemo(() => layout(stroke), [stroke])
 
   if (!geom) {
+    // 没有内置缩略图的形状（@W / @M …）：直接显示字母。
+    // 画一条凑数的折线会让人以为那就是识别模板，不如老实显示名字。
+    //
+    // 兼容两种写法：新数据是 `@W`，老配置里可能只有 `W`（v4 迁移前录的），
+    // 以及方向串里恰好只有一个字符的情况（`D` 是"向下划"，不能当字母 D）。
+    const raw = (pattern ?? '').trim().toUpperCase()
+    const letter = raw.startsWith('@')
+      ? raw.slice(1)
+      : /^[A-Z]$/.test(raw) && !'UDLR'.includes(raw)
+        ? raw
+        : ''
+    if (letter) {
+      return (
+        <span
+          className="gesture-shape-empty"
+          title={title}
+          style={{ fontSize: Math.round(size * 0.46), fontWeight: 600 }}
+        >
+          {letter}
+        </span>
+      )
+    }
     return (
       <span className="gesture-shape-empty" title={title}>
         —

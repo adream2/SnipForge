@@ -428,8 +428,9 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
         b("LD", keys("Win+D")),
         b("RD", keys("Alt+Tab")),
         b("UDR", media("mute")),
-        // 真的画一个 S（曲线），不是 DLD 那种折线
-        b("S", GestureAction::Snip {
+        // 真的画一个 S（曲线），不是 DLD 那种折线。
+        // 形状一律带 `@` 前缀：`D` 是"向下划"，`@D` 才是字母 D。
+        b("@S", GestureAction::Snip {
             id: "region".into(),
         }),
         // ↓→↑← 框一圈 = 框选区域直接贴到屏幕上
@@ -441,7 +442,7 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
             id: "ocr-region".into(),
         }),
         // 画个 H = 编辑 hosts（横平竖直，和上面的曲线手势不会互相抢）
-        b("H", GestureAction::Snip {
+        b("@H", GestureAction::Snip {
             id: "hosts".into(),
         }),
     ]
@@ -559,8 +560,11 @@ impl Default for GestureConfig {
             // 关掉的开关在手势页，一眼能看到。
             enabled: true,
             trigger: "right".into(),
-            threshold: 30,
-            step: 55,
+            // 这两个值是"手感"的全部。30/55 是上一版默认，实测太迟钝：
+            // 用户划一小段完全没反应（以为坏了），短促手势划不出方向。
+            // 16/38 对齐 MouseInc / StrokesPlus 一类成熟工具的量级。
+            threshold: 16,
+            step: 38,
             show_trail: true,
             trail_color: "#6C5CE7".into(),
             // 默认开：全屏多半是在玩游戏/看视频/演示，手势在那时候只会帮倒忙
@@ -615,6 +619,37 @@ pub fn migrate(cfg: &mut AppSettings) {
         cfg.clipboard.skip_sensitive = false;
         cfg.version = 2;
         log::info!("配置迁移到 v2：关闭剪贴板敏感内容过滤");
+    }
+    if cfg.version < 3 {
+        // 手势灵敏度旧默认（30/55）实测太迟钝：划一小段完全没反应，
+        // 短促手势划不出方向 —— 用户只会认为"这手势不灵"。
+        // 两个值都还是旧默认说明从没调过，直接升；只调过其中一个的不动，
+        // 那是他自己选的口味。
+        if cfg.gestures.threshold == 30 && cfg.gestures.step == 55 {
+            cfg.gestures.threshold = 16;
+            cfg.gestures.step = 38;
+            log::info!("配置迁移到 v3：手势灵敏度 30/55 → 16/38");
+        }
+        cfg.version = 3;
+    }
+    if cfg.version < 4 {
+        // 形状改成 `@` 前缀。原因：字母 D/L/R/U 和方向 D/L/R/U 同名，
+        // 不隔离命名空间就没法同时支持"向下划"和"画一个 D"。
+        // 老配置里的 "S" / "H" 都是形状，加前缀即可；方向串（UDLR 组合）不动。
+        fn fix(list: &mut [GestureBinding]) {
+            for b in list.iter_mut() {
+                let p = b.pattern.trim().to_ascii_uppercase();
+                if p.len() == 1 && !matches!(p.as_str(), "U" | "D" | "L" | "R") {
+                    b.pattern = format!("@{p}");
+                }
+            }
+        }
+        fix(&mut cfg.gestures.bindings);
+        for prof in &mut cfg.gestures.profiles {
+            fix(&mut prof.bindings);
+        }
+        cfg.version = 4;
+        log::info!("配置迁移到 v4：形状手势加 @ 前缀（S → @S、H → @H）");
     }
 }
 
