@@ -136,6 +136,8 @@ pub struct ClipboardQuery {
     pub keyword: Option<String>,
     pub kind: Option<String>,
     pub pinned_only: Option<bool>,
+    /// 只看某个来源程序的记录（进程名，带不带 `.exe` 都认）
+    pub source: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }

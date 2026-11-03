@@ -215,6 +215,16 @@ impl ClipboardStore {
         let kind = q.kind.as_deref().unwrap_or("all");
         let limit = q.limit.unwrap_or(100);
         let offset = q.offset.unwrap_or(0);
+        // 来源比较忽略大小写和 `.exe` 后缀：用户点的是界面上的 "chrome"，
+        // 而历史里存的是 "Chrome.EXE"，先转小写再剪后缀，否则筛不出来。
+        let source = q
+            .source
+            .as_deref()
+            .map(|s| {
+                let low = s.trim().to_ascii_lowercase();
+                low.trim_end_matches(".exe").to_string()
+            })
+            .filter(|s| !s.is_empty());
 
         let mut filtered: Vec<&ClipboardItem> = items
             .iter()
@@ -224,6 +234,14 @@ impl ClipboardStore {
                 }
                 if kind != "all" && i.kind != kind {
                     return false;
+                }
+                if let Some(src) = &source {
+                    let hit = i.source_app.as_deref().map_or(false, |s| {
+                        s.to_ascii_lowercase().trim_end_matches(".exe") == src.as_str()
+                    });
+                    if !hit {
+                        return false;
+                    }
                 }
                 if let Some(k) = &keyword {
                     let hit_text = i.text.as_ref().map(|t| t.to_lowercase().contains(k)).unwrap_or(false);

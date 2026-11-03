@@ -3,6 +3,7 @@ import { api, events } from '../lib/api'
 import type { ClipboardItem, ClipboardStats } from '../lib/types'
 import { IconCheck, IconCopy, IconPin, IconSearch, IconTrash, IconClipboard, IconLoader } from '../components/Icons'
 import { autoName } from '../lib/naming'
+import { maskSensitive } from '../lib/mask'
 import { useToast } from '../components/Toast'
 import SecretsDialog from '../components/SecretsDialog'
 
@@ -64,6 +65,8 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
   const [starred, setStarred] = useState<string | null>(null)
   const [keyword, setKeyword] = useState('')
   const [kind, setKind] = useState('all')
+  /** 按来源程序筛选：点一下卡片底部的程序名就会切进来 */
+  const [source, setSource] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const toast = useToast()
@@ -75,6 +78,7 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
       const list = await api.clipboardList({
         keyword: keyword || undefined,
         kind: kind === 'all' ? undefined : kind,
+        source: source || undefined,
         limit: 200
       })
       setItems(list)
@@ -82,7 +86,7 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
     } finally {
       setLoading(false)
     }
-  }, [keyword, kind, onStats])
+  }, [keyword, kind, source, onStats])
 
   useEffect(() => {
     const t = setTimeout(() => void refresh(), keyword ? 180 : 0)
@@ -174,6 +178,17 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
             </button>
           ))}
         </div>
+        {source && (
+          <button
+            className="btn sm"
+            title="清除来源筛选"
+            onClick={() => setSource(null)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            来自 {source}
+            <span aria-hidden>✕</span>
+          </button>
+        )}
       </div>
 
       <div className="page-body">
@@ -241,7 +256,9 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
                   title={item.color}
                 />
               ) : (
-                <div className="body">{item.text ?? (item.files ?? []).join('\n')}</div>
+                <div className="body">
+                  {maskSensitive(item.text ?? (item.files ?? []).join('\n'))}
+                </div>
               )}
 
               <div className="meta">
@@ -258,21 +275,40 @@ export default function ClipboardPage({ onStats }: { onStats: (s: ClipboardStats
                 </span>
                 <span>·</span>
                 <span>{formatSize(item.size)}</span>
+                {item.html && (
+                  <>
+                    <span>·</span>
+                    <span title="粘贴时保留格式（同时写入纯文本兜底）">富文本</span>
+                  </>
+                )}
                 {item.sourceApp && (
                   <>
                     <span>·</span>
-                    <span
-                      title={`来自 ${item.sourceApp}`}
+                    <button
+                      className="source-chip"
+                      title={`只看来自 ${item.sourceApp} 的记录`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSource((prev) => (prev === item.sourceApp ? null : item.sourceApp!))
+                      }}
                       style={{
                         maxWidth: 76,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                        color: 'var(--text-2)'
+                        background: 'none',
+                        border: 0,
+                        padding: 0,
+                        font: 'inherit',
+                        cursor: 'pointer',
+                        color:
+                          source === item.sourceApp
+                            ? 'var(--accent, #6c5ce7)'
+                            : 'var(--text-2)'
                       }}
                     >
                       {item.sourceApp}
-                    </span>
+                    </button>
                   </>
                 )}
                 <span style={{ marginLeft: 'auto' }}>{relativeTime(item.lastUsedAt)}</span>

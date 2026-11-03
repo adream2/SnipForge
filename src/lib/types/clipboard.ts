@@ -25,6 +25,8 @@ export interface ClipboardQuery {
   keyword?: string
   kind?: string
   pinnedOnly?: boolean
+  /** 只看某个来源程序（进程名，带不带 .exe 都认） */
+  source?: string
   limit?: number
   offset?: number
 }

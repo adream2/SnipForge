@@ -99,7 +99,7 @@ pub fn mark_ready(app: &AppHandle, top_id: Option<String>) {
     match top_id {
         Some(id) => {
             log::info!("补做预热期攒下的回车: id={id}");
-            if let Err(e) = paste_item(app, &id, false) {
+            if let Err(e) = paste_item(app, &id, false, false) {
                 log::warn!("补做粘贴失败: {e}");
             }
         }
@@ -423,7 +423,7 @@ fn deliver_to_target(app: &AppHandle, target: isize, self_text: Option<String>) 
     });
 }
 
-pub fn paste_item(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<String> {
+pub fn paste_item(app: &AppHandle, id: &str, copy_only: bool, plain: bool) -> AppResult<String> {
     let svc = app
         .try_state::<std::sync::Arc<crate::clipboard::ClipboardService>>()
         .map(|s| s.inner().clone())
@@ -440,7 +440,7 @@ pub fn paste_item(app: &AppHandle, id: &str, copy_only: bool) -> AppResult<Strin
             item.text.as_deref().unwrap_or("").chars().take(20).collect::<String>()
         );
     }
-    let kind = crate::clipboard::paste(&svc, id)?;
+    let kind = crate::clipboard::paste(&svc, id, plain)?;
 
     if copy_only || target == 0 {
         return Ok(kind);

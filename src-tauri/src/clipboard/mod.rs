@@ -479,6 +479,16 @@ fn scan_clipboard(service: &ClipboardService, opts: &ScanOpts) -> AppResult<Scan
             item.size = t.len() as u64;
             item.color = detect_color(&t);
             item.text = Some(t);
+            // 富文本：同一份内容能拿到 HTML 片段就一起存，粘贴时写成
+            // CF_UNICODETEXT + HTML Format 双格式，粘到 Word / 邮件里格式不丢。
+            //
+            // 去重仍然按**纯文本** hash：同一段话从浏览器复制两次，HTML 里的
+            // 样式属性可能不同（颜色、字体栈），按 HTML 算 hash 会变成两条
+            // 看起来一模一样的历史。
+            #[cfg(windows)]
+            {
+                item.html = crate::win32::clipboard::read_html();
+            }
         }
         RawClip::Files(files) => {
             item.size = files.iter().map(|f| f.len() as u64).sum();
@@ -578,7 +588,11 @@ pub fn stats(service: &ClipboardService) -> ClipboardStats {
 }
 
 /// 把条目写回系统剪贴板
-pub fn paste(service: &ClipboardService, id: &str) -> AppResult<String> {
+///
+/// `plain` = true 时**忽略 HTML**，只写纯文本 —— 也就是 Ditto / CopyQ 里
+/// 那个"粘贴为纯文本"。从网页复制一段带字体颜色的文字，粘到代码编辑器或
+/// 终端里会带一堆样式，粘完还得自己清；这个参数就是为那一下准备的。
+pub fn paste(service: &ClipboardService, id: &str, plain: bool) -> AppResult<String> {
     let item = service
         .store
         .find_by_id(id)
@@ -613,7 +627,25 @@ pub fn paste(service: &ClipboardService, id: &str) -> AppResult<String> {
         }
         _ => {
             let text = item.text.clone().unwrap_or_default();
-            cb.set_text(text).map_err(|e| AppError::Clipboard(e.to_string()))?;
+
+            // 有 HTML 就写双格式（纯文本 + 富文本）。纯文本必须一起写：
+            // 记事本、终端、搜索框只认 CF_UNICODETEXT，只写 HTML 它们会
+            // 认为剪贴板是空的。
+            //
+            // 写失败退回纯文本 —— 宁可丢格式，也不能出现"点了粘不上"。
+            #[allow(unused_mut)]
+            let mut rich = false;
+            #[cfg(windows)]
+            if !plain {
+                if let Some(html) = item.html.as_deref() {
+                    rich = crate::win32::clipboard::set_text_html(&text, html).is_ok();
+                }
+            }
+
+            if !rich {
+                cb.set_text(text)
+                    .map_err(|e| AppError::Clipboard(e.to_string()))?;
+            }
         }
     }
 

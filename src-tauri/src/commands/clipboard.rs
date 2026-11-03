@@ -60,6 +60,7 @@ pub fn clipboard_image_data(app: tauri::AppHandle, id: Option<String>) -> AppRes
                 keyword: None,
                 kind: Some("image".into()),
                 pinned_only: None,
+                source: None,
                 limit: Some(1),
                 offset: None,
             })
@@ -83,9 +84,14 @@ pub fn clipboard_stats(app: tauri::AppHandle) -> AppResult<ClipboardStats> {
 }
 
 #[tauri::command]
-pub fn clipboard_paste(app: tauri::AppHandle, id: String, auto_paste: Option<bool>) -> AppResult<String> {
+pub fn clipboard_paste(
+    app: tauri::AppHandle,
+    id: String,
+    auto_paste: Option<bool>,
+    plain: Option<bool>,
+) -> AppResult<String> {
     let svc = service(&app)?;
-    let kind = crate::clipboard::paste(&svc, &id)?;
+    let kind = crate::clipboard::paste(&svc, &id, plain.unwrap_or(false))?;
 
     // 可选：直接模拟 Ctrl+V 到前台窗口（需要在隐藏主窗口之后）
     if auto_paste.unwrap_or(false) {
@@ -293,13 +299,20 @@ pub fn clipboard_takeover_win_v_status() -> AppResult<bool> {
 /// 面板里选中一条：写进系统剪贴板 → 收起面板 → 焦点还给原窗口 → 模拟 Ctrl+V。
 ///
 /// `copy_only` 为 true 时只写剪贴板不粘贴（面板里的 Shift+Enter / 中键）。
+/// `plain` 为 true 时忽略 HTML，只写纯文本（面板里的 Alt+Enter）。
 #[tauri::command]
 pub fn clipboard_panel_paste(
     app: tauri::AppHandle,
     id: String,
     copy_only: Option<bool>,
+    plain: Option<bool>,
 ) -> AppResult<String> {
-    crate::panel::paste_item(&app, &id, copy_only.unwrap_or(false))
+    crate::panel::paste_item(
+        &app,
+        &id,
+        copy_only.unwrap_or(false),
+        plain.unwrap_or(false),
+    )
 }
 
 #[tauri::command]

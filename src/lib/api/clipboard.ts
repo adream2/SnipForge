@@ -15,8 +15,8 @@ export const clipboardApi = {
   clipboardImageData: (id?: string) =>
     invoke<string>('clipboard_image_data', { id: id ?? null }),
   clipboardStats: () => invoke<ClipboardStats>('clipboard_stats'),
-  clipboardPaste: (id: string, autoPaste = false) =>
-    invoke<string>('clipboard_paste', { id, autoPaste }),
+  clipboardPaste: (id: string, autoPaste = false, plain = false) =>
+    invoke<string>('clipboard_paste', { id, autoPaste, plain }),
   clipboardTogglePin: (id: string) => invoke<ClipboardItem | null>('clipboard_toggle_pin', { id }),
   clipboardRemove: (id: string) => invoke<boolean>('clipboard_remove', { id }),
   clipboardClear: (keepPinned: boolean) => invoke<void>('clipboard_clear', { keepPinned }),
@@ -27,8 +27,8 @@ export const clipboardApi = {
     invoke<boolean>('clipboard_set_takeover_win_v', { enabled }),
   clipboardTakeoverWinVStatus: () => invoke<boolean>('clipboard_takeover_win_v_status'),
   /** 面板里选中一条：写剪贴板 → 收起面板 → 还原焦点 → Ctrl+V */
-  clipboardPanelPaste: (id: string, copyOnly = false) =>
-    invoke<string>('clipboard_panel_paste', { id, copyOnly }),
+  clipboardPanelPaste: (id: string, copyOnly = false, plain = false) =>
+    invoke<string>('clipboard_panel_paste', { id, copyOnly, plain }),
   clipboardPanelHide: () => invoke<void>('clipboard_panel_hide'),
   /* 密钥/密码收藏 */
   secretsList: () => invoke<import('../types').Secret[]>('secrets_list'),

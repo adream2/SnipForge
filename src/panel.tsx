@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { api, events } from './lib/api'
 import type { ClipboardItem, Secret } from './lib/types'
 import { autoName } from './lib/naming'
+import { maskSensitive } from './lib/mask'
 import {
   IconCheck,
   IconClipboard,
@@ -76,7 +77,8 @@ function kindLabel(item: ClipboardItem): string {
 function previewOf(item: ClipboardItem): string {
   if (item.kind === 'files') return (item.files ?? []).join('\n')
   if (item.kind === 'color') return item.color ?? ''
-  return item.text ?? ''
+  // 遮罩只影响显示：选中后写进剪贴板的仍然是原文
+  return maskSensitive(item.text ?? '')
 }
 
 function Panel() {
@@ -201,10 +203,10 @@ function Panel() {
     })
   }
 
-  const paste = (item: ClipboardItem | undefined, copyOnly: boolean) => {
+  const paste = (item: ClipboardItem | undefined, copyOnly: boolean, plain = false) => {
     if (!item) return
     // 后端会先收起面板再还原焦点，所以这里只管发请求
-    void api.clipboardPanelPaste(item.id, copyOnly).catch(() => {
+    void api.clipboardPanelPaste(item.id, copyOnly, plain).catch(() => {
       /* 粘贴失败时后端已把内容写进剪贴板，用户仍可手动 Ctrl+V */
     })
   }
@@ -330,8 +332,9 @@ function Panel() {
     if (e.key === 'Enter') {
       e.preventDefault()
       // Shift+Enter = 只复制不粘贴，两种视图一致
+      // Alt+Enter   = 粘贴为纯文本（丢掉网页带来的字体颜色等样式）
       if (isFav) pasteSecret(secrets[index], e.shiftKey)
-      else paste(items[index], e.shiftKey)
+      else paste(items[index], e.shiftKey, e.altKey)
     }
   }
 
@@ -581,7 +584,10 @@ function Panel() {
           ))}
       </div>
 
-      <div className="p-foot" title="按住 Shift 再按 Enter（或中键点击）= 只复制不粘贴">
+      <div
+        className="p-foot"
+        title="Shift+Enter（或中键）= 只复制；Alt+Enter = 粘贴为纯文本（丢掉网页样式）"
+      >
         <span className="p-hint" title="Esc 关闭">
           <kbd>↑</kbd>
           <kbd>↓</kbd> <kbd>Enter</kbd> 粘贴 · <kbd>Ctrl</kbd>+<kbd>P</kbd> 置顶 ·{' '}
