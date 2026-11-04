@@ -86,11 +86,16 @@ const failures = []
 const warnings = []
 
 for (const [name, re, to, critical] of rules) {
-  const next = html.replace(re, to)
-  if (next === html) {
+  // 命中判断用「结构是否还在」，不能用「替换后是否变化」——
+  // 页面已经是最新版本时，替换结果自然和原文相同，那样会把
+  // 「幂等重跑」误判成「正则失效」，导致 CI 直接失败。
+  // （0.2.0 重发时就踩了这个：站点早已同步、脚本却报 4 条规则未命中。）
+  const probe = new RegExp(re.source, re.flags.replace('g', ''))
+  if (!probe.test(html)) {
     ;(critical ? failures : warnings).push(name)
+    continue
   }
-  html = next
+  html = html.replace(re, to)
 }
 
 if (html === original) {
