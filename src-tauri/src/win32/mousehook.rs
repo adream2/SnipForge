@@ -43,8 +43,10 @@ pub enum Event {
     Begin { x: i32, y: i32 },
     /// 手势过程中的每一次移动
     Move { x: i32, y: i32 },
-    /// 方向串变了（用来实时更新屏幕上的动作名）
-    Turn { pattern: String },
+    /// 识别结果变了（用来实时更新屏幕上的动作名）。
+    /// `dir` 一起带上：形状锁定后浮标要能回落到方向串，
+    /// 否则会出现"提示未绑定、松手却执行了动作"。
+    Turn { pattern: String, dir: String },
     /// 抬手。`pattern` 形如 "DR"（方向串）或 "@W"（形状）；
     /// `dir` 是**纯方向串**，形状没绑定动作时用它回落（见 gesture::find_in）。
     /// `stroke` 是这一笔的原始轨迹，给"自定义手势"按形状匹配用
@@ -366,18 +368,21 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32, custom: &[(usize, Vec<[f32
                 // pattern 只在还没认出形状时跟着方向走
                 if t.shape.is_none() {
                     t.pattern.push(d);
-                    changed = Some(t.pattern.clone());
                 }
+                // 认出形状后 pattern 不再变，但方向串还在长 —— 浮标要靠它
+                // 回落显示"真正会执行的动作"，所以这里也得刷新一次
+                changed = Some(t.pattern.clone());
             }
             // 锚点跟着走：同一方向连续移动只记一次
             t.anchor = (x, y);
         }
-        changed
+        // (新标识, 当前完整方向串)
+        changed.map(|p| (p, t.dir.clone()))
     };
 
     emit(Event::Move { x, y });
-    if let Some(pattern) = turned {
-        emit(Event::Turn { pattern });
+    if let Some((pattern, dir)) = turned {
+        emit(Event::Turn { pattern, dir });
     }
 }
 

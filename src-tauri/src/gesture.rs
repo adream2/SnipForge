@@ -215,15 +215,25 @@ fn handle_event(app: &AppHandle, ev: Event) {
         }
         // 方向一变就更新浮标：让用户在**划的过程中**就知道会执行什么，
         // 而不是划完才发现"啊，识别错了一个方向"。
-        Event::Turn { pattern } => {
+        Event::Turn { pattern, dir } => {
             if show_trail {
                 let custom = pattern.starts_with('#');
-                let text = match describe_pattern(&pattern) {
+                // 浮标必须和 `match_action` 用**同一套回落规则**：形状没绑动作时
+                // 按方向串找。否则画 ↓→ 会被认成字母 L（模板就是"竖下 + 横右"），
+                // 浮标报「未绑定」，松手却执行了 Ctrl+W —— 没人能信任这种提示。
+                let shown = if describe_pattern(&pattern).is_some() {
+                    pattern.clone()
+                } else if !dir.is_empty() && dir != pattern && describe_pattern(&dir).is_some() {
+                    dir.clone()
+                } else {
+                    pattern.clone()
+                };
+                let text = match describe_pattern(&shown) {
                     // 自定义手势没有箭头可画，用 ✍ 标明"这是你画的那个形状"
                     Some(d) if custom => format!("✍ {d}"),
-                    Some(d) => format!("{}  {d}", arrows(&pattern)),
+                    Some(d) => format!("{}  {d}", arrows(&shown)),
                     None if custom => "✍ 自定义手势".to_string(),
-                    None => format!("{}  未绑定", arrows(&pattern)),
+                    None => format!("{}  未绑定", arrows(&shown)),
                 };
                 crate::win32::trail::set_label(text);
             }
