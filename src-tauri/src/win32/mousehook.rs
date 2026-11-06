@@ -236,19 +236,27 @@ fn on_down(x: i32, y: i32, swallow: bool) -> bool {
 
 /// 位移 → 8 方向之一（屏幕坐标，y 向下）。
 ///
-/// 每 45° 一个扇区，`R` 是 0°、顺时针：R / DR / D / DL / L / UL / U / UR。
+/// **不用纯 atan2 的 45° 扇区**：那样主方向的容差只有 ±22.5°，手稍微偏一点
+/// 就判成斜向（"画一条大致向右的线，结果成了右下"）。改成主方向优先：
+/// 一个轴的投影超过另一个 1.6 倍（约 ±32°）就算主方向，只有真正接近 45°
+/// 的才判斜向。StrokeIt / StrokesPlus 一类工具也是这个思路 —— 斜向是
+/// "刻意画出来"的，不该靠一点点偏差触发。
 pub(crate) fn dir8(dx: i32, dy: i32) -> &'static str {
-    let angle = (dy as f32).atan2(dx as f32);
-    let idx = ((angle / (std::f32::consts::PI / 4.0)).round() as i32).rem_euclid(8);
-    match idx {
-        0 => "R",
-        1 => "DR",
-        2 => "D",
-        3 => "DL",
-        4 => "L",
-        5 => "UL",
-        6 => "U",
-        _ => "UR",
+    // 1.6 ≈ tan(32°)
+    const RATIO: f32 = 1.6;
+    let ax = dx.unsigned_abs() as f32;
+    let ay = dy.unsigned_abs() as f32;
+    if ax >= RATIO * ay {
+        return if dx > 0 { "R" } else { "L" };
+    }
+    if ay >= RATIO * ax {
+        return if dy > 0 { "D" } else { "U" };
+    }
+    match (dx > 0, dy > 0) {
+        (true, true) => "DR",
+        (true, false) => "UR",
+        (false, true) => "DL",
+        (false, false) => "UL",
     }
 }
 
@@ -318,10 +326,13 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
                 // 方向没变：锚点前移，继续累计
                 t.anchor = (x, y);
             } else {
-                let need = if is_reverse(t.last_dir, d) {
-                    step as f32 * 1.8
-                } else {
-                    step as f32
+                // 起手第一段只需走够 step；之后任何方向切换都要走更远 ——
+                // 尤其"主方向 ↔ 斜向"之间，手抖十来像素就会来回切，
+                // 不设门槛会把 `D,R` 抖成 `D,DR,R` 这种废串。
+                let need = match t.last_dir {
+                    None => step as f32,
+                    Some(_) if is_reverse(t.last_dir, d) => step as f32 * 1.8,
+                    Some(_) => step as f32 * 1.5,
                 };
                 if dist >= need {
                     t.last_dir = Some(d);

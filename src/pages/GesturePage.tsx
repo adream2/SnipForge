@@ -995,7 +995,7 @@ export default function GesturePage({
                   <strong>例外程序</strong>
                   <span>
                     列表里的程序完全不响应手势（右键菜单照常）。
-                    想加一个：在那个程序里按住右键画 Z 形（→←→），弹窗确认即可
+                    想加一个：在那个程序里按住右键画 Z 形（→↙→），弹窗确认即可
                   </span>
                 </div>
                 <div className="control">

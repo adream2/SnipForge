@@ -247,9 +247,16 @@ fn handle_event(app: &AppHandle, ev: Event) {
         // 而不是划完才发现"啊，识别错了一个方向"。
         Event::Turn { dir } => {
             if show_trail {
-                let text = match describe_pattern(&dir) {
-                    Some(d) => format!("{}  {d}", arrows(&dir)),
-                    None => format!("{}  未绑定", arrows(&dir)),
+                // 排除手势不是"绑定"，`describe_pattern` 查不到 —— 单独认一下，
+                // 否则画对了 Z 也显示「未绑定」，用户会以为手势画错了。
+                let exclude = normalize(&cfg_lock().read().exclude_pattern);
+                let text = if !exclude.is_empty() && dir == exclude {
+                    format!("{}  排除当前程序", arrows(&dir))
+                } else {
+                    match describe_pattern(&dir) {
+                        Some(d) => format!("{}  {d}", arrows(&dir)),
+                        None => format!("{}  未绑定", arrows(&dir)),
+                    }
                 };
                 crate::win32::trail::set_label(text);
             }

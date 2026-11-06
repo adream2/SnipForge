@@ -155,7 +155,10 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("数据目录: {}", paths.data.display());
 
     let mut settings = load_settings(&paths);
-    let needs_migrate = settings.version < 2;
+    // 用「迁移前后 version 变没变」判断要不要落盘，不要写死 `< 2`。
+    // 写死过一次，结果加了 v3/v4/v5 之后 migrate() 只在内存里改、永远不写回 —
+    // 每次启动都从老版本重跑一遍，用户看到的永远是旧配置。
+    let version_before = settings.version;
     config::migrate(&mut settings);
 
     // 剪贴板历史载入
@@ -180,7 +183,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 迁移完必须落盘，否则下次启动又按老配置走一遍
-    if needs_migrate {
+    if state.settings.read().version != version_before {
         if let Err(e) = state.persist_settings() {
             log::error!("配置迁移写盘失败: {e}");
         }
