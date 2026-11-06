@@ -22,34 +22,6 @@ use tauri::Manager;
 /// 历代内置手势表。用户的 bindings 如果跟其中任意一版**完全一致**，
 /// 说明从来没自己动过 —— 可以安全地换成当前默认。
 ///
-/// 第二版是"DLD 当 S 形截图"那版：现在改成真正画一个 S（曲线），
-/// 老用户没动过默认的话要一起升级，否则他会发现"截图手势没了"。
-const LEGACY_GESTURE_SETS: [&[&str]; 4] = [
-    &["L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "UR", "UL"],
-    &[
-        "L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "DLD", "DRUL",
-        "RDLU",
-    ],
-    // 上一版：S 已经是曲线了，但还有一对"画出来一模一样"的方框（DRUL / RDLU）
-    // 和一对镜像的竖划（UD / DU）
-    &[
-        "L", "R", "U", "D", "DR", "DL", "DU", "UD", "LU", "RU", "LD", "RD", "UDR", "S", "DRUL",
-        "RDLU",
-    ],
-    // 再上一版：去掉同形手势后（取字改开口框 DRU），还没有 H = 编辑 hosts
-    &[
-        "L", "R", "U", "D", "DR", "DL", "UD", "LU", "RU", "LD", "RD", "UDR", "S", "DRUL", "DRU",
-    ],
-];
-
-fn is_legacy_default(bindings: &[crate::config::GestureBinding]) -> bool {
-    LEGACY_GESTURE_SETS.iter().any(|set| {
-        bindings.len() == set.len()
-            && set
-                .iter()
-                .all(|p| bindings.iter().any(|b| b.pattern == *p))
-    })
-}
 
 fn load_settings(paths: &Paths) -> AppSettings {
     let file = paths.settings_file();
@@ -77,24 +49,6 @@ fn load_settings(paths: &Paths) -> AppSettings {
                 if !text.contains("\"profiles\"") {
                     dirty = true;
                     log::info!("配置补写：手势新增 profiles（程序专用集）");
-                }
-                // 手势的默认值变过（多了 S 形截图 / 框选贴图 / 框选取字）。
-                // 只在"用户完全没动过默认"时才替换，改过的绝不去碰。
-                if is_legacy_default(&cfg.gestures.bindings) {
-                    cfg.gestures.bindings = crate::config::GestureConfig::default().bindings;
-                    dirty = true;
-                    log::info!("手势默认绑定已升级（画 S 截图 / 框选贴图 / 框选取字）");
-                }
-                // 用户自己改过手势表、但里面还留着"DLD 当 S 形截图"那一条：
-                // 单条也要升级，否则他会发现截图手势彻底没了（S 是曲线，DLD 划不出来）。
-                for b in &mut cfg.gestures.bindings {
-                    if b.pattern.eq_ignore_ascii_case("DLD")
-                        && matches!(&b.action, crate::config::GestureAction::Snip { id } if id == "region")
-                    {
-                        b.pattern = "S".into();
-                        dirty = true;
-                        log::info!("手势升级：DLD（折线）→ S（曲线）截图");
-                    }
                 }
                 if dirty {
                     if let Ok(full) = serde_json::to_string_pretty(&cfg) {

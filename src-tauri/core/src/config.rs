@@ -383,9 +383,26 @@ pub struct GestureBinding {
     /// 非空就说明这是"自定义手势"，按形状匹配，不看方向串。
     #[serde(default)]
     pub points: Vec<[f32; 2]>,
-    pub action: GestureAction,
+    /// 老配置里的单个动作。只为读旧文件保留，迁移后会被搬进 `actions`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<GestureAction>,
+    /// 动作序列。单动作 = 长度 1；**复合动作**就是按顺序做好几件事
+    /// （比如「关闭窗口 → 切回上一个窗口」），中间隔 `COMPOUND_GAP`。
+    #[serde(default)]
+    pub actions: Vec<GestureAction>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+impl GestureBinding {
+    /// 这一条要执行的动作序列。老的单动作写法也能取出来。
+    pub fn steps(&self) -> Vec<GestureAction> {
+        if !self.actions.is_empty() {
+            self.actions.clone()
+        } else {
+            self.action.iter().cloned().collect()
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -396,15 +413,11 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
     let b = |pattern: &str, action: GestureAction| GestureBinding {
         pattern: pattern.into(),
         points: Vec::new(),
-        action,
+        action: None,
+        actions: vec![action],
         enabled: true,
     };
     let keys = |k: &str| GestureAction::Keys { keys: k.into() };
-    let media = |k: &str| GestureAction::Media { key: k.into() };
-    let scroll = |dir: &str| GestureAction::Scroll {
-        dir: dir.into(),
-        amount: 3,
-    };
     let win = |op: &str| GestureAction::Window { op: op.into() };
 
     // 常规手势沿用 mousetroke / 主流手势软件的习惯（后退、关标签、显示桌面……），
@@ -475,7 +488,8 @@ fn default_profiles() -> Vec<GestureProfile> {
     let b = |pattern: &str, action: GestureAction| GestureBinding {
         pattern: pattern.into(),
         points: Vec::new(),
-        action,
+        action: None,
+        actions: vec![action],
         enabled: true,
     };
     let keys = |k: &str| GestureAction::Keys { keys: k.into() };
@@ -673,6 +687,26 @@ pub fn migrate(cfg: &mut AppSettings) {
         cfg.gestures.exclude_pattern = "R,DL,R".into();
         cfg.version = 6;
         log::info!("配置迁移到 v6：默认手势换成 8 方向定稿版");
+    }
+    if cfg.version < 7 {
+        // 单动作 → 动作序列（复合动作）。老字段 `action` 搬进 `actions`，
+        // 用户已经调好的绑定一条都不丢。
+        fn fix(list: &mut [GestureBinding]) {
+            for b in list.iter_mut() {
+                if b.actions.is_empty() {
+                    if let Some(a) = b.action.take() {
+                        b.actions = vec![a];
+                    }
+                }
+                b.action = None;
+            }
+        }
+        fix(&mut cfg.gestures.bindings);
+        for prof in &mut cfg.gestures.profiles {
+            fix(&mut prof.bindings);
+        }
+        cfg.version = 7;
+        log::info!("配置迁移到 v7：手势支持复合动作（动作序列）");
     }
 }
 

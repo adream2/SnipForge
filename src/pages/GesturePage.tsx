@@ -113,7 +113,7 @@ const TRIGGERS = [
   { id: 'x1', label: '按住侧键' }
 ]
 
-/** 一条动作在列表里的摘要文字 */
+/** 一条动作的文字摘要 */
 function actionSummary(a: GestureAction): string {
   switch (a.type) {
     case 'keys':
@@ -298,6 +298,56 @@ function Recorder({
 }
 
 /* ---------------- 动作编辑器 ---------------- */
+
+/** 一条绑定的动作摘要：复合动作用 → 串起来 */
+function stepsSummary(actions: GestureAction[] | undefined): string {
+  if (!actions || actions.length === 0) return '还没设动作'
+  return actions.map(actionSummary).join(' → ')
+}
+
+/** 动作列表：单动作就是一行，复合动作可以继续加 */
+function ActionList({
+  actions,
+  onChange
+}: {
+  actions: GestureAction[]
+  onChange: (a: GestureAction[]) => void
+}) {
+  const list = actions.length ? actions : [defaultAction('keys')]
+  return (
+    <div className="ga-steps">
+      {list.map((a, i) => (
+        <div key={i} className="ga-step">
+          {list.length > 1 && <span className="ga-step-no">{i + 1}</span>}
+          <ActionEditor
+            action={a}
+            onChange={(next) => {
+              const copy = list.slice()
+              copy[i] = next
+              onChange(copy)
+            }}
+          />
+          {list.length > 1 && (
+            <button
+              className="btn sm"
+              title="删掉这一步"
+              onClick={() => onChange(list.filter((_, k) => k !== i))}
+            >
+              <IconTrash size={12} />
+            </button>
+          )}
+        </div>
+      ))}
+      <button
+        className="btn sm ga-step-add"
+        title="一个手势连做好几件事，中间隔 120ms"
+        onClick={() => onChange([...list, defaultAction('keys')])}
+      >
+        + 再加一步（复合动作）
+      </button>
+    </div>
+  )
+}
 
 function ActionEditor({
   action,
@@ -524,7 +574,7 @@ function BindingsCard({
     const insert = () => {
       const next = [
         ...bindings,
-        { pattern: upper, points: points ?? [], action: defaultAction('keys'), enabled: true }
+        { pattern: upper, points: points ?? [], actions: [defaultAction('keys')], enabled: true }
       ]
       onChange(next)
       setOpenIdx(next.length - 1)
@@ -538,7 +588,7 @@ function BindingsCard({
       .then((idx) => {
         if (idx !== null && bindings[idx]) {
           toast.push(
-            `这一划会命中第 ${idx + 1} 行（${actionSummary(bindings[idx].action)}），改那一行就行`,
+            `这一划会命中第 ${idx + 1} 行（${stepsSummary(bindings[idx].actions)}），改那一行就行`,
             'error'
           )
           setOpenIdx(idx)
@@ -586,7 +636,7 @@ function BindingsCard({
                 .then((idx) => {
                   const hit = idx === null ? undefined : bindings[idx]
                   toast.push(
-                    hit ? `这一划 → ${actionSummary(hit.action)}` : '这一划还没有绑定',
+                    hit ? `这一划 → ${stepsSummary(hit.actions)}` : '这一划还没有绑定',
                     hit ? 'success' : 'error'
                   )
                 })
@@ -618,8 +668,8 @@ function BindingsCard({
                   title={b.pattern ? arrows(b.pattern) : '自定义手势'}
                 />
               </span>
-              <span className="ga-type">{typeLabel(b.action.type)}</span>
-              <span className="ga-summary">{actionSummary(b.action)}</span>
+              <span className="ga-type">{typeLabel(b.actions?.[0]?.type ?? 'keys')}</span>
+              <span className="ga-summary">{stepsSummary(b.actions)}</span>
               {dupOf[i] >= 0 && (
                 <span
                   className="ga-dup"
@@ -654,16 +704,16 @@ function BindingsCard({
 
             {open && (
               <div className="ga-expand">
-                <ActionEditor
-                  action={b.action}
-                  onChange={(a) => {
+                <ActionList
+                  actions={b.actions}
+                  onChange={(list) => {
                     const next = bindings.slice()
-                    next[i] = { ...b, action: a }
+                    next[i] = { ...b, actions: list }
                     onChange(next)
                   }}
                 />
                 <div className="ga-expand-note">
-                  {TYPES.find((t) => t.id === b.action.type)?.hint}
+                  {TYPES.find((t) => t.id === b.actions?.[0]?.type)?.hint}
                 </div>
               </div>
             )}

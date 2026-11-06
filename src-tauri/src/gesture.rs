@@ -140,14 +140,14 @@ fn find_in(bindings: &[crate::config::GestureBinding], dir: &str) -> Option<usiz
 ///
 /// 手势执行和页面"试划"共用同一套查找 —— 两边各写一套，
 /// 早晚出现"这里试得出来、真划没反应"。
-pub fn match_action(dir: &str) -> Option<GestureAction> {
+pub fn match_action(dir: &str) -> Option<Vec<GestureAction>> {
     if let Some(p) = active_profile() {
         if let Some(i) = find_in(&p.bindings, dir) {
-            return Some(p.bindings[i].action.clone());
+            return Some(p.bindings[i].steps());
         }
     }
     let g = cfg_lock().read();
-    find_in(&g.bindings, dir).map(|i| g.bindings[i].action.clone())
+    find_in(&g.bindings, dir).map(|i| g.bindings[i].steps())
 }
 
 /// 页面查重用：在指定范围（某个专用集 / 通用）里找命中的下标。
@@ -408,7 +408,13 @@ fn describe(a: &GestureAction) -> String {
 
 /// 方向串对应的一句话描述，没绑定就是 None。
 fn describe_pattern(dir: &str) -> Option<String> {
-    match_action(dir).map(|a| describe(&a))
+    match_action(dir).map(|steps| {
+        steps
+            .iter()
+            .map(describe)
+            .collect::<Vec<_>>()
+            .join(" → ")
+    })
 }
 
 /// 浮标空间有限，长的路径只留尾巴
@@ -440,69 +446,82 @@ fn needs_clean_screen(a: &GestureAction) -> bool {
     }
 }
 
-/// 执行动作。
+/// 复合动作之间的间隔。
+///
+/// 有些动作要等前一个生效：`Ctrl+C` 之后立刻粘贴，粘到的可能是旧内容。
+/// 120ms 覆盖绝大多数串键场景，又不会让"连做三件事"明显变慢。
+const COMPOUND_GAP: u64 = 120;
+
+/// 执行一个手势的动作序列。
 ///
 /// 必须 spawn 到别的线程：钩子回调里不能做重活（超时会被系统摘钩），
 /// 而"打开程序""发一串按键"都可能阻塞几十毫秒。
-fn run(app: &AppHandle, action: GestureAction) {
+fn run(app: &AppHandle, steps: Vec<GestureAction>) {
+    if steps.is_empty() {
+        return;
+    }
     let handle = app.clone();
-    let clean_first = needs_clean_screen(&action);
     tauri::async_runtime::spawn_blocking(move || {
-        if clean_first {
-            // 同步等窗口真的隐藏 —— 这一步在阻塞线程里做，不会卡住钩子
-            crate::win32::trail::hide_blocking(150);
-        }
-        let result = match &action {
-            GestureAction::Keys { keys } => crate::win32::input::send_keys(keys),
-            GestureAction::Window { op } => {
-                // 优先用当前前台窗口（用户可能中途切了窗口，那才符合直觉）；
-                // 取不到就退回手势开始时的那个。
-                let mut hwnd = crate::win32::focus::foreground_hwnd();
-                if hwnd == 0 {
-                    hwnd = BEGIN_HWND.load(Ordering::SeqCst);
-                }
-                crate::win32::window::act_on(hwnd, op)
+        for (i, action) in steps.iter().enumerate() {
+            if i > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(COMPOUND_GAP));
             }
-            GestureAction::App { path } => crate::win32::window::shell_open(path),
-            GestureAction::Url { url } => crate::win32::window::shell_open(url),
-            GestureAction::Cmd { cmd } => crate::win32::window::run_command(cmd),
-            GestureAction::Media { key } => match key.as_str() {
-                // 媒体键本质就是发一个虚拟键
-                "vol-up" => crate::win32::input::send_keys("VolUp"),
-                "vol-down" => crate::win32::input::send_keys("VolDown"),
-                "mute" => crate::win32::input::send_keys("Mute"),
-                "play" => crate::win32::input::send_keys("Play"),
-                "next" => crate::win32::input::send_keys("Next"),
-                "prev" => crate::win32::input::send_keys("Prev"),
-                other => Err(format!("不认识的媒体键：{other}")),
-            },
-            GestureAction::Text { text } => crate::win32::input::send_text(text),
-            GestureAction::Scroll { dir, amount } => {
-                let step = crate::win32::input::WHEEL_STEP * amount.max(&1).min(&20);
-                // "上划"= 内容往上走 = 滚轮向上（正数）
-                let delta = if dir == "down" { -step } else { step };
-                crate::win32::input::wheel(delta)
+            // 抓屏幕的动作要等轨迹层收干净，否则刚画的那一笔会被截进图里
+            if needs_clean_screen(action) {
+                crate::win32::trail::hide_blocking(150);
             }
-            GestureAction::Snip { id } => {
-                // 分发也走注册表：加功能不用回来改这里
-                if !crate::features::run(&handle, id) {
-                    Err(format!("未知功能：{id}"))
-                } else {
-                    Ok(())
-                }
+            if let Err(e) = run_one(&handle, action) {
+                log::warn!("手势动作失败: {e}");
+                // 失败就停：后面的动作多半依赖前一步的结果
+                let _ = handle.emit_to(
+                    "main",
+                    "app://toast",
+                    serde_json::json!({ "type": "error", "message": format!("手势失败：{e}") }),
+                );
+                break;
             }
-        };
-
-        if let Err(e) = result {
-            log::warn!("手势动作失败: {e}");
-            // 手势失败必须让用户知道 —— 否则他只会觉得"这手势坏了"
-            let _ = handle.emit_to(
-                "main",
-                "app://toast",
-                serde_json::json!({ "type": "error", "message": format!("手势失败：{e}") }),
-            );
         }
     });
+}
+
+fn run_one(handle: &AppHandle, action: &GestureAction) -> Result<(), String> {
+    match action {
+        GestureAction::Keys { keys } => crate::win32::input::send_keys(keys),
+        GestureAction::Window { op } => {
+            // 优先用当前前台窗口（用户可能中途切了窗口，那才符合直觉）；
+            // 取不到就退回手势开始时的那个。
+            let mut hwnd = crate::win32::focus::foreground_hwnd();
+            if hwnd == 0 {
+                hwnd = BEGIN_HWND.load(Ordering::SeqCst);
+            }
+            crate::win32::window::act_on(hwnd, op)
+        }
+        GestureAction::App { path } => crate::win32::window::shell_open(path),
+        GestureAction::Url { url } => crate::win32::window::shell_open(url),
+        GestureAction::Cmd { cmd } => crate::win32::window::run_command(cmd),
+        GestureAction::Media { key } => match key.as_str() {
+            "vol-up" => crate::win32::input::send_keys("VolUp"),
+            "vol-down" => crate::win32::input::send_keys("VolDown"),
+            "mute" => crate::win32::input::send_keys("Mute"),
+            "play" => crate::win32::input::send_keys("Play"),
+            "next" => crate::win32::input::send_keys("Next"),
+            "prev" => crate::win32::input::send_keys("Prev"),
+            other => Err(format!("不认识的媒体键：{other}")),
+        },
+        GestureAction::Text { text } => crate::win32::input::send_text(text),
+        GestureAction::Scroll { dir, amount } => {
+            let step = crate::win32::input::WHEEL_STEP * amount.max(&1).min(&20);
+            let delta = if dir == "down" { -step } else { step };
+            crate::win32::input::wheel(delta)
+        }
+        GestureAction::Snip { id } => {
+            if crate::features::run(handle, id) {
+                Ok(())
+            } else {
+                Err(format!("未知功能：{id}"))
+            }
+        }
+    }
 }
 
 /// "画一下排除这个程序"的确认流程。

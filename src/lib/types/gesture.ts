@@ -29,7 +29,8 @@ export interface GestureBinding {
    * 非空就是"自定义手势"，按形状匹配，不看方向串。
    */
   points?: number[][]
-  action: GestureAction
+  /** 动作序列。单动作 = 长度 1；复合动作按顺序执行，中间隔 120ms */
+  actions: GestureAction[]
   enabled: boolean
 }
 

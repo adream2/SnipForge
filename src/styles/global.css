@@ -1987,6 +1987,32 @@ select.input {
   white-space: nowrap;
 }
 
+/* 复合动作：一步一行，序号在最左边 */
+.ga-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ga-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ga-step-no {
+  width: 14px;
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-align: right;
+}
+.ga-step .ga-editor {
+  flex: 1;
+}
+.ga-step-add {
+  align-self: flex-start;
+  margin-left: 20px;
+}
+
 .ga-expand {
   padding: 10px 16px 14px;
   background: var(--surface-2);
