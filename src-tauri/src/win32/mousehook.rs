@@ -73,9 +73,8 @@ struct Track {
     /// 中途按了左键 → 放弃手势，且不补发右键
     canceled: bool,
     origin: (i32, i32),
-    /// 当前方向的起点。方向判定、"这一段够不够长"都以它为基准
-    anchor: (i32, i32),
-    last_dir: Option<&'static str>,
+    /// 这一笔的原始轨迹。方向串由它整体算出来（折线简化 + 逐段定向）
+    pts: Vec<(i32, i32)>,
     /// 方向串。token 用逗号分隔：`"D,R"` = 先下后右，`"DR"` = 一条右下斜线。
     ///
     /// 逗号是必须的：8 方向下，`D` + `R`（下再右）和 `DR`（右下一条斜线）
@@ -227,8 +226,7 @@ fn on_down(x: i32, y: i32, swallow: bool) -> bool {
         swallowed: swallow,
         canceled: false,
         origin: (x, y),
-        anchor: (x, y),
-        last_dir: None,
+        pts: vec![(x, y)],
         dir: String::new(),
     });
     swallow
@@ -260,26 +258,7 @@ pub(crate) fn dir8(dx: i32, dy: i32) -> &'static str {
     }
 }
 
-/// 两个方向正相反（掉头）。
-///
-/// 掉头要走过一倍八的距离才认：手在转折点抖一下就会来回切方向，
-/// 不设门槛的话 `DR,UR`（画 V）会被切成 `DR,U,DR` 之类，整条串废掉。
-pub(crate) fn is_reverse(prev: Option<&str>, cur: &str) -> bool {
-    let Some(p) = prev else { return false };
-    matches!(
-        (p, cur),
-        ("U", "D")
-            | ("D", "U")
-            | ("L", "R")
-            | ("R", "L")
-            | ("UL", "DR")
-            | ("DR", "UL")
-            | ("UR", "DL")
-            | ("DL", "UR")
-    )
-}
-
-fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
+fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
     // 第一段：更新状态，顺带算出要不要发 Begin
     let began = {
         let mut guard = TRACK.write();
@@ -293,7 +272,7 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
                 return;
             }
             t.gesture = true;
-            t.anchor = (x, y);
+            t.pts.push((x, y));
             Some(t.origin)
         } else {
             None
@@ -306,47 +285,35 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
         return;
     }
 
-    // 第二段：方向判定
+    // 第二段：累积轨迹，周期性重算方向串
     let turned = {
         let mut guard = TRACK.write();
         let Some(t) = guard.as_mut() else { return };
         if !t.gesture {
             return;
         }
-
-        let (dx, dy) = (x - t.anchor.0, y - t.anchor.1);
-        let dist = ((dx * dx + dy * dy) as f32).sqrt();
-        let mut changed = None;
-
-        // 走够一格才判一次。门槛用**欧氏距离**而不是单轴：8 方向里斜线
-        // 的 x/y 投影都只有总长的 0.7，按单轴算会让斜向比直线更灵敏。
-        if dist >= step as f32 {
-            let d = dir8(dx, dy);
-            if Some(d) == t.last_dir {
-                // 方向没变：锚点前移，继续累计
-                t.anchor = (x, y);
-            } else {
-                // 起手第一段只需走够 step；之后任何方向切换都要走更远 ——
-                // 尤其"主方向 ↔ 斜向"之间，手抖十来像素就会来回切，
-                // 不设门槛会把 `D,R` 抖成 `D,DR,R` 这种废串。
-                let need = match t.last_dir {
-                    None => step as f32,
-                    Some(_) if is_reverse(t.last_dir, d) => step as f32 * 1.8,
-                    Some(_) => step as f32 * 1.5,
-                };
-                if dist >= need {
-                    t.last_dir = Some(d);
-                    if !t.dir.is_empty() {
-                        t.dir.push(',');
-                    }
-                    t.dir.push_str(d);
-                    changed = Some(t.dir.clone());
-                    t.anchor = (x, y);
-                }
-                // 距离不够（多半是转折处的抖动）：锚点不动，继续累计
-            }
+        // 2px 内不记点：高刷鼠标一秒能推上千个事件，全存下来 RDP 也要跟着变慢
+        if t
+            .pts
+            .last()
+            .map_or(true, |l| (l.0 - x).abs().max((l.1 - y).abs()) >= 2)
+            && t.pts.len() < 1500
+        {
+            t.pts.push((x, y));
         }
-        changed
+        // 每 6 个点重算一次（约 12px 一次）。RDP 很轻，但没必要每个
+        // mousemove 都跑 —— 低层钩子有超时，超时会被系统静默摘钩。
+        if t.pts.len() % 6 == 0 {
+            let dir = crate::gesture::path_to_dir(&t.pts);
+            if !dir.is_empty() && dir != t.dir {
+                t.dir = dir;
+                Some(t.dir.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     };
 
     emit(Event::Move { x, y });
@@ -361,9 +328,17 @@ fn on_up() -> bool {
         let mut guard = TRACK.write();
         guard.take()
     };
-    let Some(t) = taken else { return false };
+    let Some(mut t) = taken else { return false };
     if !t.down {
         return false;
+    }
+    // 抬手时用**完整轨迹**最后定案：过程中每 6 点重算一次，最后一次
+    // 可能停在半路（比如最后一段刚画一半），这里补一次完整的
+    if t.gesture {
+        let dir = crate::gesture::path_to_dir(&t.pts);
+        if !dir.is_empty() {
+            t.dir = dir;
+        }
     }
     // 没吞按下（swallowDown 关掉）：抬起要放行，右键菜单交给系统
     if !t.swallowed {

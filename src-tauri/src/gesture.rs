@@ -162,44 +162,86 @@ pub fn match_scoped(scope: Option<&str>, dir: &str) -> Option<usize> {
     }
 }
 
-/// 把一笔轨迹切成方向串（页面「划一个」录制框用）。
+/// 点到线段的垂距（RDP 用）
+fn perp(p: (i32, i32), a: (i32, i32), b: (i32, i32)) -> f32 {
+    let (dx, dy) = ((b.0 - a.0) as f32, (b.1 - a.1) as f32);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 1e-3 {
+        let (px, py) = ((p.0 - a.0) as f32, (p.1 - a.1) as f32);
+        return (px * px + py * py).sqrt();
+    }
+    let (px, py) = ((p.0 - a.0) as f32, (p.1 - a.1) as f32);
+    ((px * dy - py * dx) / len).abs()
+}
+
+/// Ramer–Douglas–Peucker 折线简化：只保留真正的拐点。
+fn rdp(pts: &[(i32, i32)], eps: f32) -> Vec<(i32, i32)> {
+    let n = pts.len();
+    if n < 3 {
+        return pts.to_vec();
+    }
+    let mut keep = vec![false; n];
+    keep[0] = true;
+    keep[n - 1] = true;
+    let mut stack = vec![(0usize, n - 1)];
+    while let Some((a, b)) = stack.pop() {
+        if b <= a + 1 {
+            continue;
+        }
+        let mut best = (a, 0.0f32);
+        for i in a + 1..b {
+            let d = perp(pts[i], pts[a], pts[b]);
+            if d > best.1 {
+                best = (i, d);
+            }
+        }
+        if best.1 > eps {
+            keep[best.0] = true;
+            stack.push((a, best.0));
+            stack.push((best.0, b));
+        }
+    }
+    (0..n).filter(|&i| keep[i]).map(|i| pts[i]).collect()
+}
+
+/// 轨迹 → 方向串。
 ///
-/// 和 `mousehook::on_move` 同一套规则：走够 `step` 判一次方向，掉头要 1.8 倍
-/// 距离。区别只在这里一次性处理完整轨迹，那边是流式逐点。
-pub fn trace_dir(pts: &[(i32, i32)], step: i32) -> String {
-    let step_f = step.max(8) as f32;
-    let mut dir = String::new();
-    let mut last: Option<&'static str> = None;
-    let Some(first) = pts.first().copied() else {
-        return dir;
-    };
-    let mut anchor = first;
-    for &(x, y) in pts.iter().skip(1) {
-        let (dx, dy) = (x - anchor.0, y - anchor.1);
-        let dist = ((dx * dx + dy * dy) as f32).sqrt();
-        if dist < step_f {
+/// **不用逐点判方向**：手画的折线在拐角处会来回抖，逐点判定会把一段切成一堆
+/// 废 token（用户画一个三段折线，浮标显示 `↙,↓,→,↓,↙` 五个）。
+/// 改成先做折线简化（RDP），只留真正的拐点，再对每段算方向 ——
+/// 段数就等于"用户画了几笔"。
+pub fn path_to_dir(pts: &[(i32, i32)]) -> String {
+    if pts.len() < 3 {
+        return String::new();
+    }
+    let xs: Vec<i32> = pts.iter().map(|p| p.0).collect();
+    let ys: Vec<i32> = pts.iter().map(|p| p.1).collect();
+    let span = (xs.iter().max().unwrap() - xs.iter().min().unwrap())
+        .max(ys.iter().max().unwrap() - ys.iter().min().unwrap());
+    // 容差跟着手势尺度走：画得大就容忍大一点的抖动
+    let eps = (span as f32 * 0.055).clamp(6.0, 22.0);
+    let key = rdp(pts, eps);
+
+    let mut toks: Vec<&'static str> = Vec::new();
+    for pair in key.windows(2) {
+        let dx = pair[1].0 - pair[0].0;
+        let dy = pair[1].1 - pair[0].1;
+        let len = ((dx * dx + dy * dy) as f32).sqrt();
+        // 太短的段丢掉：RDP 之后还可能留下五六个像素的碎段
+        if len < 22.0 {
             continue;
         }
         let d = crate::win32::mousehook::dir8(dx, dy);
-        if Some(d) == last {
-            anchor = (x, y);
-            continue;
-        }
-        let need = if crate::win32::mousehook::is_reverse(last, d) {
-            step_f * 1.8
-        } else {
-            step_f
-        };
-        if dist >= need {
-            if !dir.is_empty() {
-                dir.push(',');
-            }
-            dir.push_str(d);
-            last = Some(d);
-            anchor = (x, y);
+        if toks.last() != Some(&d) {
+            toks.push(d);
         }
     }
-    dir
+    toks.join(",")
+}
+
+/// 录制框用：和真手势同一套算法
+pub fn trace_dir(pts: &[(i32, i32)], _step: i32) -> String {
+    path_to_dir(pts)
 }
 
 /// 进程名比较：忽略大小写和 `.exe` 后缀（用户填 `chrome` 也得认）

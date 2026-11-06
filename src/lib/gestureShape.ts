@@ -84,11 +84,20 @@ function hStroke(): Pt[] {
  * token 用逗号分隔（`D,R`）；连写的（`DRUR`）按两字符优先切 —— 和
  * Rust 的 `normalize` 保持同一套规则，否则缩略图会和实际识别不一致。
  */
-/** 位移 → 8 方向（和 Rust 的 `dir8` 同一套扇区，0° = 向右、顺时针） */
+/**
+ * 位移 → 8 方向。和后端 `dir8` 同一套规则：主方向优先。
+ *
+ * 一轴投影超过另一轴 1.6 倍（约 ±32°）就算主方向，只有真正接近 45° 才判斜向。
+ * 纯 atan2 的 45° 扇区主方向容差只有 ±22.5°，手稍偏一点就成了斜向。
+ */
 export function dir8(dx: number, dy: number): string {
-  const idx = Math.round(Math.atan2(dy, dx) / (Math.PI / 4))
-  const i = ((idx % 8) + 8) % 8
-  return ['R', 'DR', 'D', 'DL', 'L', 'UL', 'U', 'UR'][i]
+  const ax = Math.abs(dx)
+  const ay = Math.abs(dy)
+  const RATIO = 1.6
+  if (ax >= RATIO * ay) return dx > 0 ? 'R' : 'L'
+  if (ay >= RATIO * ax) return dy > 0 ? 'D' : 'U'
+  if (dx > 0) return dy > 0 ? 'DR' : 'UR'
+  return dy > 0 ? 'DL' : 'UL'
 }
 
 export function patternToStroke(pattern: string): Pt[] {
