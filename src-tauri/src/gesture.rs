@@ -381,6 +381,8 @@ fn describe(a: &GestureAction) -> String {
             "窗口{}",
             match op.as_str() {
                 "close" => "关闭",
+                "close-similar" => "关闭同程序其他窗口",
+                "toggle-max" => "最大化/还原",
                 "minimize" => "最小化",
                 "maximize" => "最大化",
                 "restore" => "还原",

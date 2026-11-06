@@ -89,8 +89,10 @@ const TYPES: Array<{ id: ActionType; label: string; hint: string }> = [
 
 const WINDOW_OPS = [
   { id: 'close', label: '关闭窗口' },
+  { id: 'close-similar', label: '关闭同程序的其他窗口' },
   { id: 'minimize', label: '最小化' },
   { id: 'maximize', label: '最大化' },
+  { id: 'toggle-max', label: '最大化 / 还原切换' },
   { id: 'restore', label: '还原' },
   { id: 'topmost', label: '置顶 / 取消置顶' }
 ]

@@ -654,6 +654,17 @@ pub fn paste(service: &ClipboardService, id: &str, plain: bool) -> AppResult<Str
     Ok(item.kind)
 }
 
+/// 读剪贴板里的纯文本（不加任何过滤）。
+///
+/// 「搜索选中文字」「ping 选中地址」这类手势要先发 Ctrl+C 再取内容，
+/// 走 `read_raw` 会顺带读图、判类型，没必要。
+pub fn read_text() -> Option<String> {
+    let mut cb = arboard::Clipboard::new().ok()?;
+    let t = cb.get_text().ok()?;
+    let t = t.trim().to_string();
+    (!t.is_empty()).then_some(t)
+}
+
 pub fn copy_text(text: &str) -> AppResult<()> {
     let mut cb = arboard::Clipboard::new().map_err(|e| AppError::Clipboard(e.to_string()))?;
     cb.set_text(text).map_err(|e| AppError::Clipboard(e.to_string()))?;

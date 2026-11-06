@@ -21,8 +21,7 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, EnumWindows, GetClassNameW, GetClientRect, GetForegroundWindow,
-    GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GWL_EXSTYLE,
+    GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT, GWL_EXSTYLE,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
@@ -479,6 +478,43 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// 手势的动作是异步派发的（不能卡在钩子回调里），等到真正执行时，
 /// 前台窗口可能已经变成 NULL（窗口切换的瞬间就是这样）。
 /// 所以调用方在**手势开始时**就把当时的前台窗口记下来，执行时优先用它。
+/// 关闭"相似窗口"：同进程的其他可见顶层窗口。
+///
+/// 资源管理器、记事本最容易堆一堆，一个个点太烦。当前窗口留着，其余同进程
+/// 且**有标题**的一律 `WM_CLOSE` —— 没标题的多是隐藏的辅助窗口，关掉会伤到
+/// 正在运行的程序。
+static SIMILAR_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+unsafe extern "system" fn enum_close_similar(hwnd: HWND, _: LPARAM) -> BOOL {
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid != SIMILAR_PID.load(std::sync::atomic::Ordering::SeqCst) {
+        return BOOL(1);
+    }
+    if !IsWindowVisible(hwnd).as_bool() {
+        return BOOL(1);
+    }
+    let mut buf = [0u16; 256];
+    if GetWindowTextW(hwnd, &mut buf) == 0 {
+        return BOOL(1);
+    }
+    let _ = PostMessageW(Some(hwnd), WM_CLOSE, Default::default(), Default::default());
+    BOOL(1)
+}
+
+fn close_similar(hwnd: HWND) -> Result<(), String> {
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return Err("拿不到前台进程".into());
+        }
+        SIMILAR_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+        let _ = EnumWindows(Some(enum_close_similar), LPARAM(0));
+    }
+    Ok(())
+}
+
 pub fn act_on(hwnd_raw: isize, op: &str) -> Result<(), String> {
     unsafe {
         let hwnd = HWND(hwnd_raw as *mut core::ffi::c_void);
@@ -498,6 +534,14 @@ pub fn act_on(hwnd_raw: isize, op: &str) -> Result<(), String> {
             }
             "restore" => {
                 let _ = ShowWindow(hwnd, SW_RESTORE);
+            }
+            "toggle-max" => {
+                // 最大化 ↔ 还原：一个手势两用，省得记两个方向
+                let zoomed = IsZoomed(hwnd).as_bool();
+                let _ = ShowWindow(hwnd, if zoomed { SW_RESTORE } else { SW_MAXIMIZE });
+            }
+            "close-similar" => {
+                close_similar(hwnd)?;
             }
             "topmost" => {
                 let ex = windows::Win32::UI::WindowsAndMessaging::GetWindowLongW(hwnd, GWL_EXSTYLE);

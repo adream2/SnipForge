@@ -416,33 +416,38 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
     // 它和 `↑↓`(刷新) 只差一个起笔方向，静态看几乎分辨不出来。
     // 全部可以改、可以删。
     vec![
-        // 四个主方向：最常用
-        b("L", keys("Alt+Left")),
+        // 编辑：上复制、下粘贴 —— 手势里最高频的两个
+        b("U", keys("Ctrl+C")),
+        b("D", keys("Ctrl+V")),
+        // 浏览
         b("R", keys("Alt+Right")),
-        b("U", scroll("up")),
-        b("D", scroll("down")),
-        // 两条斜线：单个 token，划起来比"先下后右"省事
-        b("DR", keys("Ctrl+W")),
-        b("DL", keys("Ctrl+T")),
-        // 组合手势：两个以上 token 用逗号分隔
-        b("U,D", keys("F5")),
-        b("L,U", win("minimize")),
-        b("R,U", win("maximize")),
-        b("L,D", keys("Win+D")),
-        b("R,D", keys("Alt+Tab")),
-        b("U,D,R", media("mute")),
-        // 本工具自己的：折线 S 截图、方框贴图、开口框取字、H 打开 hosts
-        b("DL,DR,DL", GestureAction::Snip {
-            id: "region".into(),
+        b("L", keys("Alt+Left")),
+        // 窗口
+        b("D,R", win("close")),
+        b("D,L", win("close-similar")),
+        b("UR", win("toggle-max")),
+        b("DL", win("minimize")),
+        b("UL", keys("Esc")),
+        b("DR", keys("Delete")),
+        // 工具
+        b("L,D,R,D,L", GestureAction::Snip {
+            id: "search-selection".into(),
+        }),
+        b("U,R,D,L", GestureAction::Snip {
+            id: "ping-selection".into(),
+        }),
+        b("D,U,R,D", GestureAction::Snip {
+            id: "hosts".into(),
         }),
         b("D,R,U,L", GestureAction::Snip {
             id: "pin-region".into(),
         }),
-        b("D,R,U", GestureAction::Snip {
+        b("D,L,U,R", GestureAction::Snip {
             id: "ocr-region".into(),
         }),
-        b("D,R,D", GestureAction::Snip {
-            id: "hosts".into(),
+        // 截图：↙↘↙
+        b("DL,DR,DL", GestureAction::Snip {
+            id: "region".into(),
         }),
     ]
 }
@@ -490,16 +495,14 @@ fn default_profiles() -> Vec<GestureProfile> {
             "sogouexplorer".into(),
         ],
         bindings: vec![
-            b("L", keys("Alt+Left")),
-            b("R", keys("Alt+Right")),
             b("U", keys("Ctrl+Home")),
             b("D", keys("Ctrl+End")),
-            b("U,D", keys("F5")),
-            b("D,U", keys("Ctrl+Shift+R")),
-            b("DR", keys("Ctrl+W")),
-            b("DL", keys("Ctrl+T")),
-            b("U,L", keys("Ctrl+PgUp")),
-            b("U,R", keys("Ctrl+PgDn")),
+            b("DR,UR", keys("F5")),
+            b("UR,DR", keys("Ctrl+Shift+R")),
+            b("D,R", keys("Ctrl+W")),
+            b("U,R", keys("Ctrl+Tab")),
+            b("U,L", keys("Ctrl+Shift+Tab")),
+            b("D,R,D", keys("Alt+Home")),
         ],
     }]
 }
@@ -661,6 +664,15 @@ pub fn migrate(cfg: &mut AppSettings) {
         cfg.gestures.exclude_pattern = "R,DL,R".into();
         cfg.version = 5;
         log::info!("配置迁移到 v5：手势升级为 8 方向，绑定重置为默认");
+    }
+    if cfg.version < 6 {
+        // 默认手势定稿：按用户给的这套（复制/粘贴/关窗/搜索/ping/贴图/OCR…）
+        // 全部换成新表，旧的手工调整一并作废 —— 8 方向语义和之前完全不同。
+        cfg.gestures.bindings = default_gesture_bindings();
+        cfg.gestures.profiles = default_profiles();
+        cfg.gestures.exclude_pattern = "R,DL,R".into();
+        cfg.version = 6;
+        log::info!("配置迁移到 v6：默认手势换成 8 方向定稿版");
     }
 }
 

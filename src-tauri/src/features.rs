@@ -81,6 +81,64 @@ pub const FEATURES: &[Feature] = &[
         grabs_screen: false,
         run: |a| crate::windows::show_main(a, Some("hosts")),
     },
+    Feature {
+        id: "search-selection",
+        label: "搜索选中文字",
+        grabs_screen: false,
+        run: |_a| {
+            tauri::async_runtime::spawn_blocking(move || {
+                // 先复制当前选中：手势触发时前台窗口还活着，Ctrl+C 打得进去
+                if let Err(e) = crate::win32::input::send_keys("Ctrl+C") {
+                    log::warn!("搜索：复制选中失败 {e}");
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(180));
+                let Some(text) = crate::clipboard::read_text() else {
+                    log::warn!("搜索：剪贴板是空的");
+                    return;
+                };
+                let q: String = text.chars().take(300).collect();
+                let url = format!("https://www.bing.com/search?q={}", percent_encode(&q));
+                if let Err(e) = crate::win32::window::shell_open(&url) {
+                    log::warn!("搜索：打开浏览器失败 {e}");
+                }
+            });
+        },
+    },
+    Feature {
+        id: "ping-selection",
+        label: "Ping 选中地址",
+        grabs_screen: false,
+        run: |_a| {
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = crate::win32::input::send_keys("Ctrl+C");
+                std::thread::sleep(std::time::Duration::from_millis(180));
+                let Some(text) = crate::clipboard::read_text() else {
+                    return;
+                };
+                // 只留域名 / IP / 端口能用的字符。剪贴板里的任意内容拼进
+                // 命令行就是命令注入，宁可 p 不出来也不能执行别的
+                let host: String = text
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == ':')
+                    .take(64)
+                    .collect();
+                if host.is_empty() {
+                    log::warn!("ping：选中内容里没有合法地址");
+                    return;
+                }
+                // 直接 spawn ping，不经过任何 shell：既没有注入面，
+                // 也不用处理引号转义。系统会自动给它开一个控制台窗口。
+                if let Err(e) = std::process::Command::new("ping")
+                    .arg("-t")
+                    .arg(&host)
+                    .spawn()
+                {
+                    log::warn!("ping：启动失败 {e}");
+                }
+            });
+        },
+    },
 ];
 
 pub fn find(id: &str) -> Option<&'static Feature> {
@@ -140,4 +198,19 @@ mod tests {
         // 老配置里被删掉的 "window" 不会再让程序崩
         assert!(!grabs_screen("panel"));
     }
+}
+
+/// URL 百分号编码（只用于搜索关键词，够用就行）
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
