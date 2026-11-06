@@ -85,19 +85,15 @@ function hStroke(): Pt[] {
  * Rust 的 `normalize` 保持同一套规则，否则缩略图会和实际识别不一致。
  */
 /**
- * 位移 → 8 方向。和后端 `dir8` 同一套规则：主方向优先。
+ * 位移 → 8 方向。和后端 `dir8` 同一套：每 45° 一个扇区，0° = 向右、顺时针。
  *
- * 一轴投影超过另一轴 1.6 倍（约 ±32°）就算主方向，只有真正接近 45° 才判斜向。
- * 纯 atan2 的 45° 扇区主方向容差只有 ±22.5°，手稍偏一点就成了斜向。
+ * 别给主方向加权（试过 ±32°，`↙` 会被判成 `↓`）。画得偏一点不要紧，
+ * 匹配有编辑距离容错兜着。
  */
 export function dir8(dx: number, dy: number): string {
-  const ax = Math.abs(dx)
-  const ay = Math.abs(dy)
-  const RATIO = 1.6
-  if (ax >= RATIO * ay) return dx > 0 ? 'R' : 'L'
-  if (ay >= RATIO * ax) return dy > 0 ? 'D' : 'U'
-  if (dx > 0) return dy > 0 ? 'DR' : 'UR'
-  return dy > 0 ? 'DL' : 'UL'
+  const idx = Math.round(Math.atan2(dy, dx) / (Math.PI / 4))
+  const i = ((idx % 8) + 8) % 8
+  return ['R', 'DR', 'D', 'DL', 'L', 'UL', 'U', 'UR'][i]
 }
 
 export function patternToStroke(pattern: string): Pt[] {
