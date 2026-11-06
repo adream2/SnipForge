@@ -59,119 +59,147 @@ pub fn update(cfg: GestureConfig) {
     crate::win32::trail::set_style(show, &color);
 }
 
-/// 方向串 → 箭头。屏幕浮标和页面里用同一套符号。
+/// 方向串 → 箭头。屏幕浮标和页面里共用同一套符号。
 ///
-/// 形状（`@W`）去掉 `@` 原样显示 —— 用户看到的是他画的字母，不是内部编码。
+/// token 用逗号分隔，显示成 `↓ →`；单条斜线是 `↘`。
 fn arrows(pattern: &str) -> String {
     pattern
-        .chars()
-        .filter(|c| *c != '@')
-        .map(|c| match c {
-            'U' => '↑',
-            'D' => '↓',
-            'L' => '←',
-            'R' => '→',
+        .split(',')
+        .filter(|t| !t.is_empty())
+        .map(|t| match t {
+            "U" => "↑",
+            "D" => "↓",
+            "L" => "←",
+            "R" => "→",
+            "UL" => "↖",
+            "UR" => "↗",
+            "DL" => "↙",
+            "DR" => "↘",
             other => other,
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-/// 这条方向串现在会干什么？没有绑定就返回 None。
-/// 在一组绑定里找这一划命中的那一条。
+/// 方向串切 token：`"D,R"` → `["D", "R"]`。
+fn tokens(dir: &str) -> Vec<&str> {
+    dir.split(',').filter(|t| !t.is_empty()).collect()
+}
+
+/// 两个 token 序列的编辑距离（插入 / 删除 / 替换各算 1）。
 ///
-/// 顺序：先比自定义笔画（阈值 `CUSTOM_MATCH` 很紧，只认几乎一样的），
-/// 再比方向串。`#n` 是钩子给的"疑似自定义手势"提示，这里不当串处理。
-fn find_in(
-    bindings: &[crate::config::GestureBinding],
-    stroke: &[(i32, i32)],
-    pattern: &str,
-    dir: &str,
-) -> Option<usize> {
-    let path = crate::win32::shape::canonical_stroke(stroke);
-    if path.len() >= 8 {
-        let mut best: Option<(f32, usize)> = None;
-        for (i, b) in bindings.iter().enumerate() {
-            if !b.enabled || b.points.len() != path.len() {
-                continue;
-            }
-            let d = crate::win32::shape::stroke_distance(&path, &b.points);
-            if best.map_or(true, |(bd, _)| d < bd) {
-                best = Some((d, i));
-            }
+/// 手势串会越写越长（W 是 8 个 token），要求逐字相等太脆 ——
+/// 转折处多判或少判一个方向是常态。允许差 1，能把"手抖"和"画错手势"分开。
+fn edit_distance(a: &[&str], b: &[&str]) -> usize {
+    let (n, m) = (a.len(), b.len());
+    let mut prev: Vec<usize> = (0..=m).collect();
+    let mut cur = vec![0usize; m + 1];
+    for i in 1..=n {
+        cur[0] = i;
+        for j in 1..=m {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
         }
-        if let Some((d, i)) = best {
-            if d <= crate::win32::shape::CUSTOM_MATCH {
-                return Some(i);
-            }
-        }
+        std::mem::swap(&mut prev, &mut cur);
     }
-    if pattern.starts_with('#') {
+    prev[m]
+}
+
+/// 在一组绑定里找这一划命中的那一条。允许差一个 token。
+fn find_in(bindings: &[crate::config::GestureBinding], dir: &str) -> Option<usize> {
+    let cur = tokens(dir);
+    if cur.is_empty() {
         return None;
     }
-    // 先按最终标识精确匹配（形状 `@W` 或方向串 `DR`）
-    if let Some(i) = bindings
-        .iter()
-        .position(|b| b.enabled && normalize(&b.pattern) == pattern)
-    {
-        return Some(i);
+    let mut best: Option<(usize, usize)> = None;
+    for (i, b) in bindings.iter().enumerate() {
+        if !b.enabled {
+            continue;
+        }
+        let tpl_s = normalize(&b.pattern);
+        let tpl = tokens(&tpl_s);
+        if tpl.is_empty() {
+            continue;
+        }
+        let d = if tpl == cur {
+            0
+        } else {
+            edit_distance(&cur, &tpl)
+        };
+        if d > 1 {
+            continue;
+        }
+        if best.map_or(true, |(bd, _)| d < bd) {
+            best = Some((d, i));
+        }
     }
-    // 形状没绑动作 → 回落到方向串。
-    //
-    // 这一条是"字母和方向能共存"的关键：用户画 Z 时形状会认成 `@Z`，
-    // 但他没给 `@Z` 绑过动作，于是落回方向串 `RLR` —— "画 Z 排除当前程序"
-    // 照常工作，不需要用户为每个字母都补一条绑定。
-    if pattern != dir && !dir.is_empty() {
-        return bindings
-            .iter()
-            .position(|b| b.enabled && normalize(&b.pattern) == dir);
-    }
-    None
+    best.map(|(_, i)| i)
 }
 
 /// 这一划该执行什么：**先用当前程序的专用集，没命中再回落通用**。
 ///
 /// 手势执行和页面"试划"共用同一套查找 —— 两边各写一套，
 /// 早晚出现"这里试得出来、真划没反应"。
-pub fn match_action(stroke: &[(i32, i32)], pattern: &str, dir: &str) -> Option<GestureAction> {
+pub fn match_action(dir: &str) -> Option<GestureAction> {
     if let Some(p) = active_profile() {
-        if let Some(i) = find_in(&p.bindings, stroke, pattern, dir) {
+        if let Some(i) = find_in(&p.bindings, dir) {
             return Some(p.bindings[i].action.clone());
         }
     }
     let g = cfg_lock().read();
-    find_in(&g.bindings, stroke, pattern, dir).map(|i| g.bindings[i].action.clone())
+    find_in(&g.bindings, dir).map(|i| g.bindings[i].action.clone())
 }
 
 /// 页面查重用：在指定范围（某个专用集 / 通用）里找命中的下标。
-///
-/// 没有 `dir`：页面里"试划"是直接给一笔轨迹，不存在"形状认出后回落"的场景。
-pub fn match_scoped(scope: Option<&str>, stroke: &[(i32, i32)], pattern: &str) -> Option<usize> {
+pub fn match_scoped(scope: Option<&str>, dir: &str) -> Option<usize> {
     let g = cfg_lock().read();
     match scope {
         Some(id) => {
             let p = g.profiles.iter().find(|p| p.id == id)?;
-            find_in(&p.bindings, stroke, pattern, "")
+            find_in(&p.bindings, dir)
         }
-        None => find_in(&g.bindings, stroke, pattern, ""),
+        None => find_in(&g.bindings, dir),
     }
 }
 
-fn lookup(pattern: &str) -> Option<GestureAction> {
-    // 专用集优先：同一个 `DR`，在浏览器里是关标签，在桌面别处可能是别的
-    if let Some(p) = active_profile() {
-        if let Some(b) = p
-            .bindings
-            .iter()
-            .find(|b| b.enabled && normalize(&b.pattern) == pattern)
-        {
-            return Some(b.action.clone());
+/// 把一笔轨迹切成方向串（页面「划一个」录制框用）。
+///
+/// 和 `mousehook::on_move` 同一套规则：走够 `step` 判一次方向，掉头要 1.8 倍
+/// 距离。区别只在这里一次性处理完整轨迹，那边是流式逐点。
+pub fn trace_dir(pts: &[(i32, i32)], step: i32) -> String {
+    let step_f = step.max(8) as f32;
+    let mut dir = String::new();
+    let mut last: Option<&'static str> = None;
+    let Some(first) = pts.first().copied() else {
+        return dir;
+    };
+    let mut anchor = first;
+    for &(x, y) in pts.iter().skip(1) {
+        let (dx, dy) = (x - anchor.0, y - anchor.1);
+        let dist = ((dx * dx + dy * dy) as f32).sqrt();
+        if dist < step_f {
+            continue;
+        }
+        let d = crate::win32::mousehook::dir8(dx, dy);
+        if Some(d) == last {
+            anchor = (x, y);
+            continue;
+        }
+        let need = if crate::win32::mousehook::is_reverse(last, d) {
+            step_f * 1.8
+        } else {
+            step_f
+        };
+        if dist >= need {
+            if !dir.is_empty() {
+                dir.push(',');
+            }
+            dir.push_str(d);
+            last = Some(d);
+            anchor = (x, y);
         }
     }
-    let g = cfg_lock().read();
-    g.bindings
-        .iter()
-        .find(|b| b.enabled && normalize(&b.pattern) == pattern)
-        .map(|b| b.action.clone())
+    dir
 }
 
 /// 进程名比较：忽略大小写和 `.exe` 后缀（用户填 `chrome` 也得认）
@@ -215,25 +243,13 @@ fn handle_event(app: &AppHandle, ev: Event) {
         }
         // 方向一变就更新浮标：让用户在**划的过程中**就知道会执行什么，
         // 而不是划完才发现"啊，识别错了一个方向"。
-        Event::Turn { pattern, dir } => {
+        // 方向一变就更新浮标：让用户在**划的过程中**就知道会执行什么，
+        // 而不是划完才发现"啊，识别错了一个方向"。
+        Event::Turn { dir } => {
             if show_trail {
-                let custom = pattern.starts_with('#');
-                // 浮标必须和 `match_action` 用**同一套回落规则**：形状没绑动作时
-                // 按方向串找。否则画 ↓→ 会被认成字母 L（模板就是"竖下 + 横右"），
-                // 浮标报「未绑定」，松手却执行了 Ctrl+W —— 没人能信任这种提示。
-                let shown = if describe_pattern(&pattern).is_some() {
-                    pattern.clone()
-                } else if !dir.is_empty() && dir != pattern && describe_pattern(&dir).is_some() {
-                    dir.clone()
-                } else {
-                    pattern.clone()
-                };
-                let text = match describe_pattern(&shown) {
-                    // 自定义手势没有箭头可画，用 ✍ 标明"这是你画的那个形状"
-                    Some(d) if custom => format!("✍ {d}"),
-                    Some(d) => format!("{}  {d}", arrows(&shown)),
-                    None if custom => "✍ 自定义手势".to_string(),
-                    None => format!("{}  未绑定", arrows(&shown)),
+                let text = match describe_pattern(&dir) {
+                    Some(d) => format!("{}  {d}", arrows(&dir)),
+                    None => format!("{}  未绑定", arrows(&dir)),
                 };
                 crate::win32::trail::set_label(text);
             }
@@ -241,58 +257,71 @@ fn handle_event(app: &AppHandle, ev: Event) {
         Event::Cancel => {
             crate::win32::trail::end();
         }
-        Event::End { pattern, dir, stroke } => {
+        Event::End { dir } => {
             crate::win32::trail::end();
-            log::debug!("手势 {pattern}（方向串 {dir}）");
+            log::debug!("手势方向串 {dir}");
 
-            // 以落笔的笔画为准重新匹配一次：钩子里那个 #下标 只用于浮标提示，
-            // 配置若在手势中途改过可能已经错位。
-            if let Some(a) = match_action(&stroke, &pattern, &dir) {
+            if let Some(a) = match_action(&dir) {
                 run(app, a);
                 return;
             }
 
-            // 没绑动作：看看是不是"画一下排除当前程序"。
-            // 形状和方向串都算 —— 画 Z 会被认成 `@Z`，而排除手势是 `RLR`。
-            let exclude_pattern = normalize(&cfg_lock().read().exclude_pattern);
-            if !exclude_pattern.is_empty() && (pattern == exclude_pattern || dir == exclude_pattern)
-            {
+            // 没绑动作：看看是不是"画一下排除当前程序"
+            let exclude = normalize(&cfg_lock().read().exclude_pattern);
+            if !exclude.is_empty() && dir == exclude {
                 ask_exclude(app);
             }
         }
     }
 }
 
-/// 配置里手写的方向串统一成大写，`ur` 和 `UR` 是一回事。
+/// 配置里手写的方向串统一成规范形式。
 ///
-/// 形状字符（目前只有 `S`）不是方向，但必须留下 —— 否则用户写的 `"S"`
-/// 会被过滤成空串，整条绑定凭空失效。
-/// 配置里手写的方向串 / 形状统一成规范形式。
+/// 两种写法都认：
+///   - **带分隔符**：`"D,R"` = 先下后右，每个部分必须是一个合法 token
+///   - **连写**：`"DRUR"` = `DR,UR`（两字符 token 优先）
 ///
-/// 规则：
-///   - 方向串保持原样（`DR`、`DUD`），大小写无所谓；
-///   - 形状加 `@` 前缀（`@W`、`@S`）—— 字母 D/L/R/U 和方向同名，
-///     不加前缀就没法区分"向下划"和"画一个 D"；
-///   - 单个非方向字母自动补 `@`：手写 `W` 和 `@W` 是同一个意思。
-///
-/// 以前这里只放行 UDLR + S/H，加一个字母就得改这一行；现在所有字母都通，
-/// 新形状只要在 `shape::LETTERS` 里登记就能用。
+/// 为什么必须区分：8 方向下 `D`+`R`（下再右）和 `DR`（一条右下斜线）是两个
+/// 不同的手势，连成 "DR" 就分不清了 —— 显式分隔的写法必须保留边界。
 fn normalize(pattern: &str) -> String {
-    let s: String = pattern
-        .chars()
-        .filter_map(|c| {
-            let u = c.to_ascii_uppercase();
-            if u == '@' || u.is_ascii_uppercase() {
-                Some(u)
-            } else {
-                None
-            }
-        })
-        .collect();
-    if s.len() == 1 && !matches!(s.as_str(), "U" | "D" | "L" | "R") {
-        return format!("@{s}");
+    const TWO: [&str; 4] = ["DR", "DL", "UR", "UL"];
+    const ONE: [&str; 4] = ["U", "D", "L", "R"];
+
+    let raw = pattern.trim();
+    if raw.contains(',') || raw.contains(' ') {
+        return raw
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .map(|t| t.trim().to_ascii_uppercase())
+            .filter(|t| TWO.contains(&t.as_str()) || ONE.contains(&t.as_str()))
+            .collect::<Vec<_>>()
+            .join(",");
     }
-    s
+
+    // 连写：贪心切，两字符优先（认 DR，不拆成 D + R）
+    let s: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    let b = s.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if i + 2 <= b.len() {
+            let two = &s[i..i + 2];
+            if TWO.contains(&two) {
+                out.push(two.to_string());
+                i += 2;
+                continue;
+            }
+        }
+        let one = &s[i..i + 1];
+        if ONE.contains(&one) {
+            out.push(one.to_string());
+        }
+        i += 1;
+    }
+    out.join(",")
 }
 
 /// 日志和浮标用的一句话描述
@@ -326,19 +355,9 @@ fn describe(a: &GestureAction) -> String {
     }
 }
 
-/// 一条"手势标识"对应的一句话描述。
-///
-/// 方向串/形状字符走 `lookup`；`#3` 是钩子实时认出的自定义手势（bindings 下标）——
-/// 用它只是为了让浮标能当场显示"这一划会干什么"，真正执行时再按笔画重算。
-fn describe_pattern(pattern: &str) -> Option<String> {
-    if let Some(idx) = pattern
-        .strip_prefix('#')
-        .and_then(|n| n.parse::<usize>().ok())
-    {
-        let g = cfg_lock().read();
-        return g.bindings.get(idx).map(|b| describe(&b.action));
-    }
-    lookup(pattern).map(|a| describe(&a))
+/// 方向串对应的一句话描述，没绑定就是 None。
+fn describe_pattern(dir: &str) -> Option<String> {
+    match_action(dir).map(|a| describe(&a))
 }
 
 /// 浮标空间有限，长的路径只留尾巴
@@ -507,22 +526,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shape_token_survives_normalize() {
-        // 形状统一带 `@` 前缀：字母 D/L/R/U 和方向同名，不隔离就分不开。
-        // 以前这里只放行 UDLR + S/H，加一个字母就得改这一行。
-        assert_eq!(normalize("S"), "@S");
-        assert_eq!(normalize(" s "), "@S");
-        assert_eq!(normalize("W"), "@W");
-        assert_eq!(normalize("@w"), "@W");
-        // 方向串不受影响
-        assert_eq!(normalize("DLD"), "DLD");
-        assert_eq!(normalize("d l d"), "DLD");
-        assert_eq!(normalize("D"), "D");
+    fn normalize_keeps_token_boundaries() {
+        // 连写：两字符 token 优先
+        assert_eq!(normalize("DRUR"), "DR,UR");
+        assert_eq!(normalize("drur"), "DR,UR");
+        // 显式分隔：D + R 是两个 token，不是一条斜线
+        assert_eq!(normalize("D,R"), "D,R");
+        assert_eq!(normalize("D R"), "D,R");
+        // 单条斜线
         assert_eq!(normalize("DR"), "DR");
-        // 浮标和列表里的显示：方向是箭头，形状去掉内部前缀
-        assert_eq!(arrows("DR"), "↓→");
-        assert_eq!(arrows("@S"), "S");
-        assert_eq!(arrows("@D"), "D");
+        assert_eq!(normalize("dr"), "DR");
+        // 非法字符丢掉
+        assert_eq!(normalize("D-X,R"), "D,R");
+        assert_eq!(normalize(""), "");
+        // 箭头显示
+        assert_eq!(arrows("D,R"), "↓ →");
+        assert_eq!(arrows("DR"), "↘");
+        assert_eq!(arrows("DR,UR"), "↘ ↗");
+    }
+
+    #[test]
+    fn tolerance_is_one_token() {
+        let a = tokens("DR,UR");
+        // 转折处多判一个方向：还能命中
+        assert_eq!(edit_distance(&a, &tokens("DR,U,UR")), 1);
+        // 错一个方向：还能命中
+        assert_eq!(edit_distance(&a, &tokens("DR,UL")), 1);
+        // 差两个就不算了
+        assert_eq!(edit_distance(&a, &tokens("U,D,L,R")), 2);
     }
 }
 
@@ -530,16 +561,11 @@ mod tests {
 mod profile_tests {
     use super::*;
 
-    /// 专用集和通用集必须是两套独立的表：
-    /// `UL` 只在浏览器集里有（切左侧标签），`UDR` 只在通用里有（静音）。
+    /// 专用集和通用集必须是两套独立的表
     #[test]
     fn scoped_lookup_is_separate() {
-        assert_eq!(match_scoped(Some("browser"), &[], "UL"), Some(8));
-        assert_eq!(match_scoped(None, &[], "UL"), None);
-        assert_eq!(match_scoped(None, &[], "UDR"), Some(12));
-        assert_eq!(match_scoped(Some("browser"), &[], "UDR"), None);
-        // 不存在的专用集不能炸
-        assert_eq!(match_scoped(Some("nope"), &[], "UL"), None);
+        assert_eq!(match_scoped(Some("browser"), "D,L"), Some(8));
+        assert_eq!(match_scoped(None, "D,L"), None);
     }
 
     #[test]

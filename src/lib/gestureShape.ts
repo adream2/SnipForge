@@ -18,6 +18,11 @@ const DIRS: Record<string, Pt> = {
   D: [0, 1],
   L: [-1, 0],
   R: [1, 0],
+  // 斜向：和 Rust 侧 `dir8` 同一套四十五度扇区
+  UL: [-0.7071, -0.7071],
+  UR: [0.7071, -0.7071],
+  DL: [-0.7071, 0.7071],
+  DR: [0.7071, 0.7071],
 }
 
 /** 把点集塞进 [0,1] 方框，保持宽高比（不拉扁，否则 L 会看成 V） */
@@ -73,22 +78,47 @@ function hStroke(): Pt[] {
   ])
 }
 
+/**
+ * 方向串 → 折线。
+ *
+ * token 用逗号分隔（`D,R`）；连写的（`DRUR`）按两字符优先切 —— 和
+ * Rust 的 `normalize` 保持同一套规则，否则缩略图会和实际识别不一致。
+ */
+/** 位移 → 8 方向（和 Rust 的 `dir8` 同一套扇区，0° = 向右、顺时针） */
+export function dir8(dx: number, dy: number): string {
+  const idx = Math.round(Math.atan2(dy, dx) / (Math.PI / 4))
+  const i = ((idx % 8) + 8) % 8
+  return ['R', 'DR', 'D', 'DL', 'L', 'UL', 'U', 'UR'][i]
+}
+
 export function patternToStroke(pattern: string): Pt[] {
-  let p = (pattern || '').toUpperCase()
-  // 形状带 `@` 前缀（@W / @S），缩略图只关心笔画本身
-  if (p.startsWith('@')) p = p.slice(1)
-  if (!p) return []
-  if (p === 'S') return fit(sStroke())
-  if (p === 'H') return hStroke()
-  // 其它字母没有内置缩略图：返回空数组，由调用方显示文字
-  if (p.length === 1 && !DIRS[p]) return []
+  const raw = (pattern || '').toUpperCase()
+  const list: string[] = []
+  for (const t of raw.split(/[,\s]+/).filter(Boolean)) {
+    if (DIRS[t]) {
+      list.push(t)
+      continue
+    }
+    let i = 0
+    while (i < t.length) {
+      const two = t.slice(i, i + 2)
+      if (two.length === 2 && DIRS[two]) {
+        list.push(two)
+        i += 2
+        continue
+      }
+      const one = t[i]
+      if (DIRS[one]) list.push(one)
+      i += 1
+    }
+  }
+  if (!list.length) return []
 
   let x = 0
   let y = 0
   const pts: Pt[] = [[0, 0]]
-  for (const ch of p) {
-    const d = DIRS[ch]
-    if (!d) continue
+  for (const t of list) {
+    const d = DIRS[t]
     x += d[0]
     y += d[1]
     pts.push([x, y])

@@ -43,19 +43,11 @@ pub enum Event {
     Begin { x: i32, y: i32 },
     /// 手势过程中的每一次移动
     Move { x: i32, y: i32 },
-    /// 识别结果变了（用来实时更新屏幕上的动作名）。
-    /// `dir` 一起带上：形状锁定后浮标要能回落到方向串，
-    /// 否则会出现"提示未绑定、松手却执行了动作"。
-    Turn { pattern: String, dir: String },
-    /// 抬手。`pattern` 形如 "DR"（方向串）或 "@W"（形状）；
-    /// `dir` 是**纯方向串**，形状没绑定动作时用它回落（见 gesture::find_in）。
-    /// `stroke` 是这一笔的原始轨迹，给"自定义手势"按形状匹配用
-    /// （方向串表达不了 M、W、Z 这些）。
-    End {
-        pattern: String,
-        dir: String,
-        stroke: Vec<(i32, i32)>,
-    },
+    /// 方向串变了（实时更新屏幕上的动作名）。
+    /// 串里 token 用逗号分隔：`"D,R"` = 先下后右，`"DR"` = 一条右下斜线。
+    Turn { dir: String },
+    /// 抬手，一笔结束
+    End { dir: String },
     /// 手势被放弃（动了但没划出方向、或者中途按了左键）
     Cancel,
 }
@@ -81,20 +73,14 @@ struct Track {
     /// 中途按了左键 → 放弃手势，且不补发右键
     canceled: bool,
     origin: (i32, i32),
+    /// 当前方向的起点。方向判定、"这一段够不够长"都以它为基准
     anchor: (i32, i32),
-    last_dir: Option<char>,
-    /// 最终标识：方向串（"DR"）或形状（"@W"）
-    pattern: String,
-    /// 纯方向串。形状认出来之后 `pattern` 会变成 "@W"，但方向串要留着 ——
-    /// 用户没给 "@W" 绑动作时得回落到它，否则"划一个 W 形状"会把
-    /// 本来能用的 `DUD` 绑定吞掉。
+    last_dir: Option<&'static str>,
+    /// 方向串。token 用逗号分隔：`"D,R"` = 先下后右，`"DR"` = 一条右下斜线。
+    ///
+    /// 逗号是必须的：8 方向下，`D` + `R`（下再右）和 `DR`（右下一条斜线）
+    /// 如果连成一个 "DR" 就没法区分了。
     dir: String,
-    /// 这一笔的原始轨迹（形状识别用）
-    pts: Vec<(i32, i32)>,
-    /// 已认出的形状。认出来就锁定，不再走方向判定
-    shape: Option<char>,
-    /// 已认出的自定义手势（bindings 下标）
-    custom: Option<usize>,
 }
 
 static TRACK: RwLock<Option<Track>> = RwLock::new(None);
@@ -164,9 +150,6 @@ struct Snapshot {
     pause_fullscreen: bool,
     swallow_down: bool,
     excluded: Vec<String>,
-    /// 自定义手势：(在 bindings 里的下标, 规范笔画)。
-    /// 下标只用来给浮标显示"这一划会执行什么"，真正执行时按笔画重算。
-    custom: Vec<(usize, Vec<[f32; 2]>)>,
 }
 
 fn snapshot() -> Option<Snapshot> {
@@ -180,13 +163,6 @@ fn snapshot() -> Option<Snapshot> {
         "x1" => Trigger::X1,
         _ => Trigger::Right,
     };
-    let custom = cfg
-        .bindings
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| b.enabled && b.points.len() >= 8)
-        .map(|(i, b)| (i, b.points.clone()))
-        .collect();
     Some(Snapshot {
         trigger,
         threshold: cfg.threshold.clamp(8, 200),
@@ -194,7 +170,6 @@ fn snapshot() -> Option<Snapshot> {
         pause_fullscreen: cfg.pause_fullscreen,
         swallow_down: cfg.swallow_down,
         excluded: cfg.excluded.clone(),
-        custom,
     })
 }
 
@@ -254,16 +229,49 @@ fn on_down(x: i32, y: i32, swallow: bool) -> bool {
         origin: (x, y),
         anchor: (x, y),
         last_dir: None,
-        pattern: String::new(),
         dir: String::new(),
-        pts: vec![(x, y)],
-        shape: None,
-        custom: None,
     });
     swallow
 }
 
-fn on_move(x: i32, y: i32, threshold: i32, step: i32, custom: &[(usize, Vec<[f32; 2]>)]) {
+/// 位移 → 8 方向之一（屏幕坐标，y 向下）。
+///
+/// 每 45° 一个扇区，`R` 是 0°、顺时针：R / DR / D / DL / L / UL / U / UR。
+pub(crate) fn dir8(dx: i32, dy: i32) -> &'static str {
+    let angle = (dy as f32).atan2(dx as f32);
+    let idx = ((angle / (std::f32::consts::PI / 4.0)).round() as i32).rem_euclid(8);
+    match idx {
+        0 => "R",
+        1 => "DR",
+        2 => "D",
+        3 => "DL",
+        4 => "L",
+        5 => "UL",
+        6 => "U",
+        _ => "UR",
+    }
+}
+
+/// 两个方向正相反（掉头）。
+///
+/// 掉头要走过一倍八的距离才认：手在转折点抖一下就会来回切方向，
+/// 不设门槛的话 `DR,UR`（画 V）会被切成 `DR,U,DR` 之类，整条串废掉。
+pub(crate) fn is_reverse(prev: Option<&str>, cur: &str) -> bool {
+    let Some(p) = prev else { return false };
+    matches!(
+        (p, cur),
+        ("U", "D")
+            | ("D", "U")
+            | ("L", "R")
+            | ("R", "L")
+            | ("UL", "DR")
+            | ("DR", "UL")
+            | ("UR", "DL")
+            | ("DL", "UR")
+    )
+}
+
+fn on_move(x: i32, y: i32, threshold: i32, step: i32) {
     // 第一段：更新状态，顺带算出要不要发 Begin
     let began = {
         let mut guard = TRACK.write();
@@ -278,15 +286,11 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32, custom: &[(usize, Vec<[f32
             }
             t.gesture = true;
             t.anchor = (x, y);
-            // 起手那 30px 也要进轨迹：S 的开始被砍掉一截，识别会明显变差
-            if t.pts.last() != Some(&(x, y)) {
-                t.pts.push((x, y));
-            }
             Some(t.origin)
         } else {
             None
         }
-    }; // 锁在这里放开，后面才能安全地回调上层
+    };
 
     if let Some((ox, oy)) = began {
         emit(Event::Begin { x: ox, y: oy });
@@ -301,88 +305,42 @@ fn on_move(x: i32, y: i32, threshold: i32, step: i32, custom: &[(usize, Vec<[f32
         if !t.gesture {
             return;
         }
-        // ---- 轨迹累积 + 形状识别 ----
-        // 每 4 个点试一次：既够及时（浮标能当场显示"截图"），又不至于
-        // 每帧都算一遍把钩子拖慢（钩子超时会被系统静默摘钩）。
-        if t
-            .pts
-            .last()
-            .map_or(true, |l| (l.0 - x).abs().max((l.1 - y).abs()) >= 2)
-            && t.pts.len() < crate::win32::shape::MAX_POINTS
-        {
-            t.pts.push((x, y));
-        }
-        let mut changed: Option<String> = None;
-        // 自定义笔画优先：用户特意画的那个形状，比"方向串 / S"更具体
-        if t.custom.is_none() && !custom.is_empty() && t.pts.len() >= 12 && t.pts.len() % 4 == 0
-        {
-            let path = crate::win32::shape::canonical_stroke(&t.pts);
-            let mut best: Option<(f32, usize)> = None;
-            for (idx, tpl) in custom {
-                let d = crate::win32::shape::stroke_distance(&path, tpl);
-                if best.map_or(true, |(bd, _)| d < bd) {
-                    best = Some((d, *idx));
-                }
-            }
-            if let Some((d, idx)) = best {
-                if d <= crate::win32::shape::CUSTOM_MATCH {
-                    t.custom = Some(idx);
-                    t.pattern = format!("#{idx}");
-                    changed = Some(t.pattern.clone());
-                }
-            }
-        }
-        if changed.is_none() && t.shape.is_none() && t.custom.is_none() && t.pts.len() >= 12 && t.pts.len() % 4 == 0 {
-            if let Some(c) = crate::win32::shape::recognize(&t.pts) {
-                t.shape = Some(c);
-                // 形状用 `@` 前缀，和方向串分处两个命名空间：
-                // `D` 是"向下划"，`@D` 才是"画一个 D"。同一个字符不能既当
-                // 方向又当字母，前缀是最省事的隔离方式。
-                //
-                // 曲线糊出来的方向串（DLD 之类）不再往 pattern 里塞，
-                // 但 `t.dir` 继续累积 —— 形状没绑动作时要靠它回落。
-                t.pattern = format!("@{c}");
-                changed = Some(t.pattern.clone());
-            }
-        }
 
         let (dx, dy) = (x - t.anchor.0, y - t.anchor.1);
-        // 方向串**永远**累积，不受"已认出形状"影响：
-        // 画 W 时形状在 12 个点就锁定了，但方向串要一直记到抬手 ——
-        // 否则 `@W` 没绑动作时回落到的方向串只有开头一两个字符，等于错的。
-        if t.custom.is_none() && (dx.abs() >= step || dy.abs() >= step) {
-            let d = if dx.abs() > dy.abs() {
-                if dx > 0 {
-                    'R'
-                } else {
-                    'L'
-                }
-            } else if dy > 0 {
-                'D'
+        let dist = ((dx * dx + dy * dy) as f32).sqrt();
+        let mut changed = None;
+
+        // 走够一格才判一次。门槛用**欧氏距离**而不是单轴：8 方向里斜线
+        // 的 x/y 投影都只有总长的 0.7，按单轴算会让斜向比直线更灵敏。
+        if dist >= step as f32 {
+            let d = dir8(dx, dy);
+            if Some(d) == t.last_dir {
+                // 方向没变：锚点前移，继续累计
+                t.anchor = (x, y);
             } else {
-                'U'
-            };
-            if Some(d) != t.last_dir {
-                t.last_dir = Some(d);
-                t.dir.push(d);
-                // pattern 只在还没认出形状时跟着方向走
-                if t.shape.is_none() {
-                    t.pattern.push(d);
+                let need = if is_reverse(t.last_dir, d) {
+                    step as f32 * 1.8
+                } else {
+                    step as f32
+                };
+                if dist >= need {
+                    t.last_dir = Some(d);
+                    if !t.dir.is_empty() {
+                        t.dir.push(',');
+                    }
+                    t.dir.push_str(d);
+                    changed = Some(t.dir.clone());
+                    t.anchor = (x, y);
                 }
-                // 认出形状后 pattern 不再变，但方向串还在长 —— 浮标要靠它
-                // 回落显示"真正会执行的动作"，所以这里也得刷新一次
-                changed = Some(t.pattern.clone());
+                // 距离不够（多半是转折处的抖动）：锚点不动，继续累计
             }
-            // 锚点跟着走：同一方向连续移动只记一次
-            t.anchor = (x, y);
         }
-        // (新标识, 当前完整方向串)
-        changed.map(|p| (p, t.dir.clone()))
+        changed
     };
 
     emit(Event::Move { x, y });
-    if let Some((pattern, dir)) = turned {
-        emit(Event::Turn { pattern, dir });
+    if let Some(dir) = turned {
+        emit(Event::Turn { dir });
     }
 }
 
@@ -398,12 +356,8 @@ fn on_up() -> bool {
     }
     // 没吞按下（swallowDown 关掉）：抬起要放行，右键菜单交给系统
     if !t.swallowed {
-        if t.gesture && !t.pattern.is_empty() {
-            emit(Event::End {
-                pattern: t.pattern,
-                dir: t.dir,
-                stroke: t.pts,
-            });
+        if t.gesture && !t.dir.is_empty() {
+            emit(Event::End { dir: t.dir });
         }
         return false;
     }
@@ -414,26 +368,15 @@ fn on_up() -> bool {
         return true;
     }
 
-    if t.gesture && !t.pattern.is_empty() {
-        // 一笔结束时把轨迹指标记一行：形状手势最难查的就是"用户说没反应"，
-        // 有了这几个数字（尺寸、弦长、模板距离）才知道是该调阈值还是该改算法。
-        log::debug!(
-            "轨迹 {} 形状={:?}",
-            crate::win32::shape::diagnose(&t.pts),
-            t.shape
-        );
-        emit(Event::End {
-            pattern: t.pattern,
-            dir: t.dir,
-            stroke: t.pts,
-        });
+    if t.gesture && !t.dir.is_empty() {
+        log::debug!("手势方向串 {}", t.dir);
+        emit(Event::End { dir: t.dir });
         return true;
     }
 
     // 没形成手势 = 用户只是点了一下右键。补发一次真正的右键点击，
     // 否则"右键菜单打不开"会变成新的 bug。
     if !t.gesture {
-        // 补发：让系统认为这就是一次普通右键点击
         if let Err(e) = crate::win32::input::inject_right_click() {
             log::warn!("补发右键失败: {e}");
         }
@@ -453,7 +396,7 @@ fn cancel_if_gesturing() {
         if t.down {
             t.canceled = true;
             t.gesture = false;
-            t.pattern.clear();
+            t.dir.clear();
         }
     }
 }
@@ -503,7 +446,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 return LRESULT(1);
             }
         } else if msg == WM_MOUSEMOVE {
-            on_move(ms.pt.x, ms.pt.y, cfg.threshold, cfg.step, &cfg.custom);
+            on_move(ms.pt.x, ms.pt.y, cfg.threshold, cfg.step);
         } else if msg == WM_LBUTTONDOWN {
             cancel_if_gesturing();
         }

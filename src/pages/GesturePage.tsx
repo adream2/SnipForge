@@ -8,6 +8,7 @@ import type {
   GestureProfile
 } from '../lib/types'
 import { useToast } from '../components/Toast'
+import { dir8 } from '../lib/gestureShape'
 import { IconPlus, IconTrash } from '../components/Icons'
 import { GestureShape } from '../components/GestureShape'
 import { sameStroke, strokeOf } from '../lib/gestureShape'
@@ -28,7 +29,16 @@ import { featureLabel, normalizeFeatureId, useFeatures } from '../lib/features'
  * 否则"这里认得出、实际划没反应"就成了新 bug。
  */
 
-const ARROW: Record<string, string> = { U: '↑', D: '↓', L: '←', R: '→' }
+const ARROW: Record<string, string> = {
+  U: '↑',
+  D: '↓',
+  L: '←',
+  R: '→',
+  UL: '↖',
+  UR: '↗',
+  DL: '↙',
+  DR: '↘'
+}
 
 /**
  * 手势标识 → 人看的符号。
@@ -38,12 +48,27 @@ const ARROW: Record<string, string> = { U: '↑', D: '↓', L: '←', R: '→' }
  * 显示时把前缀去掉，用户看到的是自己画的字母，不是内部编码。
  */
 function arrows(pattern: string): string {
-  const p = (pattern || '').toUpperCase()
-  if (p.startsWith('@')) return p.slice(1)
-  return p
-    .split('')
-    .map((c) => ARROW[c] ?? c)
-    .join(' ')
+  const raw = (pattern || '').toUpperCase()
+  const out: string[] = []
+  for (const t of raw.split(/[,\s]+/).filter(Boolean)) {
+    if (ARROW[t]) {
+      out.push(ARROW[t])
+      continue
+    }
+    // 连写：两字符优先，和 Rust 的 normalize 一致
+    let i = 0
+    while (i < t.length) {
+      const two = t.slice(i, i + 2)
+      if (two.length === 2 && ARROW[two]) {
+        out.push(ARROW[two])
+        i += 2
+        continue
+      }
+      out.push(ARROW[t[i]] ?? t[i])
+      i += 1
+    }
+  }
+  return out.join(' ')
 }
 
 /* ---------------- 动作类型表 ---------------- */
@@ -180,23 +205,17 @@ function Recorder({
     setPts([])
     setPreview('')
     const raw = path.map((p) => [Math.round(p.x), Math.round(p.y)] as [number, number])
-    if (raw.length >= 12) {
+    if (raw.length >= 6) {
       try {
-        // 内置形状（S）有专用模板，优先用它 —— 比"自定义"更通用
-        const shape = await api.gestureRecognize(raw)
-        if (shape) {
-          onDone(shape, undefined, raw)
-          return
-        }
-        // 其余一律**连笔画一起存**：方向串（UDUD 这种）只是给人和日志看的，
-        // M 和 W 的串可能撞，真正认的是这一笔的形状。
-        const canon = await api.gestureNormalize(raw)
-        if (canon.length >= 8) {
-          onDone(pat, canon, raw)
+        // 交给后端翻译：和真手势共用同一套 8 方向判定 + 短段过滤，
+        // 这里算出来的串和实际划出来的必然一致
+        const dir = await api.gestureTrace(raw)
+        if (dir) {
+          onDone(dir, undefined, raw)
           return
         }
       } catch {
-        // 后端不可用（比如页面单独在浏览器里跑）：退回方向串，别把功能卡死
+        // 后端不可用（页面单独在浏览器里跑）：退回前端算的串，别把功能卡死
       }
     }
     if (pat) onDone(pat, undefined, raw)
@@ -230,14 +249,15 @@ function Recorder({
           if (s.path.length < 400) s.path.push(p)
           const dx = p.x - s.anchor.x
           const dy = p.y - s.anchor.y
-          if (Math.abs(dx) < 34 && Math.abs(dy) < 34) return
-          const d = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'R' : 'L') : dy > 0 ? 'D' : 'U'
+          // 门槛用欧氏距离：8 方向里斜线的单轴投影只有总长的 0.7
+          if (Math.hypot(dx, dy) < 34) return
+          const d = dir8(dx, dy)
           if (d !== s.last) {
             s.last = d
-            s.pat += d
+            s.pat += (s.pat ? ',' : '') + d
             setPreview(s.pat)
+            s.anchor = p
           }
-          s.anchor = p
         }}
         onPointerUp={() => {
           void finish()
@@ -261,7 +281,7 @@ function Recorder({
           </svg>
         ) : (
           <span className="gesture-rec-hint">
-            {preview ? '方向串识别中…' : '按住左键划一下：方向串或任意形状（S / M / 圈…）'}
+            {preview ? '识别中…' : '按住左键划一下：上下左右 + 四个斜向，可组合'}
           </span>
         )}
       </div>
@@ -512,7 +532,7 @@ function BindingsCard({
       return
     }
     void api
-      .gestureMatch(raw, upper, scope ?? undefined)
+      .gestureMatch(upper, scope ?? undefined)
       .then((idx) => {
         if (idx !== null && bindings[idx]) {
           toast.push(
@@ -560,7 +580,7 @@ function BindingsCard({
             onDone={(p, _pts, raw) => {
               // 和真手势同一套匹配顺序（自定义笔画优先，再方向串）
               void api
-                .gestureMatch(raw ?? [], p.toUpperCase(), scope ?? undefined)
+                .gestureMatch(p.toUpperCase(), scope ?? undefined)
                 .then((idx) => {
                   const hit = idx === null ? undefined : bindings[idx]
                   toast.push(

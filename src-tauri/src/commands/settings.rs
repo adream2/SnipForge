@@ -237,48 +237,20 @@ pub fn autostart_status() -> bool {
     crate::autostart::is_enabled()
 }
 
-/// 识别一笔轨迹是不是形状手势（页面里"划一个"录制框用）。
+/// 把一笔轨迹翻译成方向串（页面「划一个」录制框用）。
 ///
-/// 刻意走后端：形状识别只有一份实现，录制框认出来的和真手势必须完全一致 ——
-/// 前端再写一套，早晚会出现"这里认得出、实际划就没反应"。
+/// 和钩子共用同一套 8 方向判定 + 短段过滤 —— 前端自己再写一套，
+/// 早晚出现"这里录得出来、真划没反应"。
 #[tauri::command]
-pub fn gesture_recognize(points: Vec<[i32; 2]>) -> Option<String> {
+pub fn gesture_trace(points: Vec<[i32; 2]>, step: Option<i32>) -> String {
     let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
-    // 带 `@` 前缀返回：前端会把结果原样存进配置，和默认绑定（`@S`）保持同一种写法。
-    // 不带前缀也能匹配（`normalize` 会补），但配置里两种写法混着不好排查。
-    crate::win32::shape::recognize(&pts).map(|c| format!("@{c}"))
+    crate::gesture::trace_dir(&pts, step.unwrap_or(38))
 }
 
-/// 形状识别的诊断行：每个内置形状的"距离比"（1.0 = 正好卡在阈值上）。
+/// 页面「试划」用：这一划会命中哪一条绑定（返回下标）。
 ///
-/// 给 `tests/shape_probe.py` 和排查"为什么画 H 没反应"用 —— 只有数字
-/// 才能说明是尺寸不够、还是画得不像，靠"再试一次"永远猜不出来。
+/// 走和真手势完全相同的匹配逻辑（含容错），这里试出什么，真划就是什么。
 #[tauri::command]
-pub fn gesture_diagnose(points: Vec<[i32; 2]>) -> String {
-    let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
-    crate::win32::shape::diagnose(&pts)
-}
-
-/// 把用户画的一笔规范化成手势模板（32 点，等比归一化）。
-///
-/// 和真手势共用同一份实现：前端自己再算一遍，迟早出现
-/// "录的时候认得出、划的时候不像"。
-#[tauri::command]
-pub fn gesture_normalize(points: Vec<[i32; 2]>) -> Vec<[f32; 2]> {
-    let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
-    crate::win32::shape::canonical_stroke(&pts)
-}
-
-/// 页面"试划"用：这一划会命中哪一条绑定（返回下标）。
-///
-/// 走的是和真手势完全相同的匹配顺序（自定义笔画优先，再方向串），
-/// 所以这里试出来是什么，真划就是什么。
-#[tauri::command]
-pub fn gesture_match(
-    points: Vec<[i32; 2]>,
-    pattern: String,
-    profile: Option<String>,
-) -> Option<usize> {
-    let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
-    crate::gesture::match_scoped(profile.as_deref(), &pts, &pattern)
+pub fn gesture_match(pattern: String, profile: Option<String>) -> Option<usize> {
+    crate::gesture::match_scoped(profile.as_deref(), &pattern)
 }

@@ -416,33 +416,32 @@ fn default_gesture_bindings() -> Vec<GestureBinding> {
     // 它和 `↑↓`(刷新) 只差一个起笔方向，静态看几乎分辨不出来。
     // 全部可以改、可以删。
     vec![
+        // 四个主方向：最常用
         b("L", keys("Alt+Left")),
         b("R", keys("Alt+Right")),
         b("U", scroll("up")),
         b("D", scroll("down")),
+        // 两条斜线：单个 token，划起来比"先下后右"省事
         b("DR", keys("Ctrl+W")),
         b("DL", keys("Ctrl+T")),
-        b("UD", keys("F5")),
-        b("LU", win("minimize")),
-        b("RU", win("maximize")),
-        b("LD", keys("Win+D")),
-        b("RD", keys("Alt+Tab")),
-        b("UDR", media("mute")),
-        // 真的画一个 S（曲线），不是 DLD 那种折线。
-        // 形状一律带 `@` 前缀：`D` 是"向下划"，`@D` 才是字母 D。
-        b("@S", GestureAction::Snip {
+        // 组合手势：两个以上 token 用逗号分隔
+        b("U,D", keys("F5")),
+        b("L,U", win("minimize")),
+        b("R,U", win("maximize")),
+        b("L,D", keys("Win+D")),
+        b("R,D", keys("Alt+Tab")),
+        b("U,D,R", media("mute")),
+        // 本工具自己的：折线 S 截图、方框贴图、开口框取字、H 打开 hosts
+        b("DL,DR,DL", GestureAction::Snip {
             id: "region".into(),
         }),
-        // ↓→↑← 框一圈 = 框选区域直接贴到屏幕上
-        b("DRUL", GestureAction::Snip {
+        b("D,R,U,L", GestureAction::Snip {
             id: "pin-region".into(),
         }),
-        // ↓→↑ 画个"拍一下"的开口框 = 框选取字（不闭合，避免和上面那个方框看着一样）
-        b("DRU", GestureAction::Snip {
+        b("D,R,U", GestureAction::Snip {
             id: "ocr-region".into(),
         }),
-        // 画个 H = 编辑 hosts（横平竖直，和上面的曲线手势不会互相抢）
-        b("@H", GestureAction::Snip {
+        b("D,R,D", GestureAction::Snip {
             id: "hosts".into(),
         }),
     ]
@@ -495,12 +494,12 @@ fn default_profiles() -> Vec<GestureProfile> {
             b("R", keys("Alt+Right")),
             b("U", keys("Ctrl+Home")),
             b("D", keys("Ctrl+End")),
-            b("UD", keys("F5")),
-            b("DU", keys("Ctrl+Shift+R")),
+            b("U,D", keys("F5")),
+            b("D,U", keys("Ctrl+Shift+R")),
             b("DR", keys("Ctrl+W")),
             b("DL", keys("Ctrl+T")),
-            b("UL", keys("Ctrl+PgUp")),
-            b("UR", keys("Ctrl+PgDn")),
+            b("U,L", keys("Ctrl+PgUp")),
+            b("U,R", keys("Ctrl+PgDn")),
         ],
     }]
 }
@@ -572,7 +571,7 @@ impl Default for GestureConfig {
             swallow_down: true,
             excluded: Vec::new(),
             // 横、横回来、横 —— 手写 Z 的简化
-            exclude_pattern: "RLR".into(),
+            exclude_pattern: "R,DL,R".into(),
             bindings: default_gesture_bindings(),
             profiles: default_profiles(),
         }
@@ -650,6 +649,18 @@ pub fn migrate(cfg: &mut AppSettings) {
         }
         cfg.version = 4;
         log::info!("配置迁移到 v4：形状手势加 @ 前缀（S → @S、H → @H）");
+    }
+    if cfg.version < 5 {
+        // 手势引擎升级到 8 方向：旧绑定在新语义下意思全变了
+        // （旧的 `DR` 是"先下后右"，新的 `DR` 是"一条右下斜线"）。
+        // 没有可靠的自动转换 —— "下再右"应该写成 `D,R`，但"一条右下斜线"
+        // 在旧体系里根本不存在，分不清用户当初想的是哪个。
+        // 干脆整份换成新默认，用户自己再调。
+        cfg.gestures.bindings = default_gesture_bindings();
+        cfg.gestures.profiles = default_profiles();
+        cfg.gestures.exclude_pattern = "R,DL,R".into();
+        cfg.version = 5;
+        log::info!("配置迁移到 v5：手势升级为 8 方向，绑定重置为默认");
     }
 }
 
