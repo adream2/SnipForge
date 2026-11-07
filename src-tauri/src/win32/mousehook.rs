@@ -29,9 +29,8 @@ use std::sync::{Arc, OnceLock};
 use parking_lot::RwLock;
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, PostMessageW,
-    SetWindowsHookExW, TranslateMessage, MSLLHOOKSTRUCT, MSG, WH_MOUSE_LL, WM_CANCELMODE,
-    WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
+    MSLLHOOKSTRUCT, MSG, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
     WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
@@ -68,8 +67,6 @@ struct Track {
     down: bool,
     /// 是否已越过阈值（进入手势模式）
     gesture: bool,
-    /// 这次按下有没有被我们吞掉（吞了才需要补发点击）
-    swallowed: bool,
     /// 中途按了左键 → 放弃手势，且不补发右键
     canceled: bool,
     origin: (i32, i32),
@@ -149,7 +146,6 @@ struct Snapshot {
     threshold: i32,
     step: i32,
     pause_fullscreen: bool,
-    swallow_down: bool,
     excluded: Vec<String>,
 }
 
@@ -169,7 +165,6 @@ fn snapshot() -> Option<Snapshot> {
         threshold: cfg.threshold.clamp(8, 200),
         step: cfg.step.clamp(16, 300),
         pause_fullscreen: cfg.pause_fullscreen,
-        swallow_down: cfg.swallow_down,
         excluded: cfg.excluded.clone(),
     })
 }
@@ -220,35 +215,19 @@ fn should_handle(cfg: &Snapshot) -> bool {
     true
 }
 
-/// 让前台窗口取消"内部模式"：松开鼠标捕获、关掉已经弹出来的菜单。
-///
-/// 新默认不吞按下，所以目标程序在用户开始划之前就收到了一个 `RButtondown`。
-/// 桌面、任务栏这类"按下就出菜单"的地方会当场弹出菜单 —— 用户一动，
-/// 我们就把这个模式取消掉，菜单随之消失。`WM_CANCELMODE` 正是干这个用的
-/// 官方消息（模态对话框弹出时系统也是发它），比补发一次假点击干净得多。
-fn cancel_capture() {
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if !hwnd.0.is_null() {
-            let _ = PostMessageW(Some(hwnd), WM_CANCELMODE, WPARAM(0), LPARAM(0));
-        }
-    }
-}
-
 /// 触发键按下。返回 true = 吞掉这次按下。
-fn on_down(x: i32, y: i32, swallow: bool) -> bool {
-    log::debug!("钩子：按下 ({x},{y}) swallow={swallow}");
+fn on_down(x: i32, y: i32) -> bool {
+    log::debug!("钩子：按下 ({x},{y})");
     *TRACK.write() = Some(Track {
         down: true,
         gesture: false,
-        swallowed: swallow,
         canceled: false,
         origin: (x, y),
         started: std::time::Instant::now(),
         pts: vec![(x, y)],
         dir: String::new(),
     });
-    swallow
+    true
 }
 
 /// 位移 → 8 方向之一（屏幕坐标，y 向下）。
@@ -316,9 +295,6 @@ fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
     };
 
     if let Some((ox, oy)) = began {
-        // 真的开始划了：把目标程序那个"按着右键"的状态取消掉，
-        // 否则它会一直等着一个我们最终不会交给它的抬起
-        cancel_capture();
         log::debug!("钩子：进入手势模式 anchor={ox},{oy}");
         emit(Event::Begin { x: ox, y: oy });
         emit(Event::Move { x, y });
@@ -381,12 +357,7 @@ fn on_up(button: crate::win32::input::ClickButton) -> bool {
     if !t.down {
         return false;
     }
-    log::debug!(
-        "钩子：抬起 gesture={} dir={:?} swallowed={}",
-        t.gesture,
-        t.dir,
-        t.swallowed
-    );
+    log::debug!("钩子：抬起 gesture={} dir={:?}", t.gesture, t.dir);
     // 抬手时用**完整轨迹**最后定案：过程中每 6 点重算一次，最后一次
     // 可能停在半路（比如最后一段刚画一半），这里补一次完整的
     if t.gesture {
@@ -395,28 +366,6 @@ fn on_up(button: crate::win32::input::ClickButton) -> bool {
             t.dir = dir;
         }
     }
-    // 新默认（swallowDown 关掉）：按下已经原样交给目标程序，
-    // **单击一个字都不用合成** —— 系统怎么处理，现在就怎么处理，
-    // 所以不会出现"菜单闪一下又开一次"。
-    if !t.swallowed {
-        if !t.gesture {
-            // 只是点了一下：抬起也放行，右键菜单由系统自己弹
-            return false;
-        }
-        // 成了手势：这个抬起必须吞掉，否则程序会把它当成一次完整的右键点击
-        // （多数程序在抬起时弹菜单），刚划完就冒出一个菜单。
-        // 再取消一次模式，把"按着没放"的残留状态彻底清干净。
-        cancel_capture();
-        log::debug!("钩子：抬手判定 放行模式 dir={:?}", t.dir);
-        if !t.dir.is_empty() {
-            log::debug!("手势方向串 {}", t.dir);
-            emit(Event::End { dir: t.dir });
-        } else {
-            emit(Event::Cancel);
-        }
-        return true;
-    }
-
     // 中途按了左键：用户的意图已经变了，什么都别做（也不补发右键）
     if t.canceled {
         emit(Event::Cancel);
@@ -480,10 +429,12 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
         }
 
         let Some(cfg) = hot() else {
-            // 配置关掉了：清掉残留状态（读锁先放，再取写锁）
-            let has = TRACK.read().is_some();
-            if has {
-                *TRACK.write() = None;
+            // 配置关掉了：清掉残留状态（读锁先放，再取写锁）。
+            // 手势划到一半被关掉时，轨迹层还亮着 —— 一并收掉，否则屏幕上会
+            // 留一条不会再动的线。
+            let had = TRACK.write().take().is_some();
+            if had {
+                emit(Event::Cancel);
             }
             return CallNextHookEx(None, code, wparam, lparam);
         };
@@ -507,7 +458,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 log::debug!("手势: 本次按下被忽略（全屏或排除程序）");
                 return CallNextHookEx(None, code, wparam, lparam);
             }
-            if on_down(ms.pt.x, ms.pt.y, cfg.swallow_down) {
+            if on_down(ms.pt.x, ms.pt.y) {
                 return LRESULT(1);
             }
         } else if msg == up_msg && is_x1 {

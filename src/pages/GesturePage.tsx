@@ -1028,23 +1028,6 @@ export default function GesturePage({
 
               <div className="setting-row">
                 <div className="label">
-                  <strong>兼容模式：接管右键按下</strong>
-                  <span>
-                    默认关闭。普通单击完全交给系统处理，桌面菜单不会闪。
-                    开启后单击要靠程序补发，桌面/任务栏可能"菜单闪一下再开一次"。
-                    只有个别程序在默认模式下表现异常时才需要打开
-                  </span>
-                </div>
-                <div className="control">
-                  <button
-                    className={`switch ${g.swallowDown ? 'on' : ''}`}
-                    onClick={() => patch({ swallowDown: !g.swallowDown })}
-                  />
-                </div>
-              </div>
-
-              <div className="setting-row">
-                <div className="label">
                   <strong>例外程序</strong>
                   <span>
                     列表里的程序完全不响应手势（右键菜单照常）。

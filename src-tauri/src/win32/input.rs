@@ -306,9 +306,11 @@ pub fn inject_click(button: ClickButton) -> Result<(), String> {
     }
 
     std::thread::spawn(move || {
-        // 35ms 是实测能稳住菜单的最小值：再短桌面菜单仍会闪退，
-        // 再长用户会感觉到"点击有延迟"。
-        std::thread::sleep(std::time::Duration::from_millis(35));
+        // 两次发送之间的间隔要接近真人的点击时长（约 80-120ms）。
+        // 太短（试过 35ms）桌面/任务栏的菜单还没建完，合成的抬起会落在
+        // 底下的桌面上，于是又开一次菜单 —— 表现就是"菜单跳两下"。
+        // 长一点，抬起就能落到已经建好的菜单窗口上，和真点击一致。
+        std::thread::sleep(std::time::Duration::from_millis(100));
         unsafe {
             SendInput(&[up], std::mem::size_of::<INPUT>() as i32);
         }
