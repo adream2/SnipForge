@@ -1,0 +1,30 @@
+{
+  "id": "devkit",
+  "name": "开发者工具箱",
+  "version": "1.0.0",
+  "author": "SnipForge",
+  "description": "编码转换、格式化校验、生成器、文本处理。全部本地计算，不联网",
+  "kind": "devkit",
+  "groups": [
+    {
+      "id": "encode",
+      "name": "编码转换",
+      "tools": ["base64", "url", "hex", "html", "unicode", "jwt"]
+    },
+    {
+      "id": "format",
+      "name": "格式化 / 校验",
+      "tools": ["json", "xml", "sql", "regex"]
+    },
+    {
+      "id": "generate",
+      "name": "生成 / 计算",
+      "tools": ["uuid", "timestamp", "hash", "password", "radix", "cron"]
+    },
+    {
+      "id": "text",
+      "name": "文本处理",
+      "tools": ["case", "dedupe", "diff", "lines", "count"]
+    }
+  ]
+}

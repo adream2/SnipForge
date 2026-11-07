@@ -1,5 +1,12 @@
 /** 插件：声明式图床的状态展示。 */
 
+/** 工具型插件（devkit）声明的工具分组 —— 清单 JSON 是唯一事实源 */
+export interface PluginGroup {
+  id: string
+  name: string
+  tools: string[]
+}
+
 export interface PluginInfo {
   id: string
   name: string
@@ -12,6 +19,10 @@ export interface PluginInfo {
   error?: string
   hooks: string[]
   providers: string[]
+  /** devkit 这类工具型插件的分组；图床插件为空数组 */
+  groups: PluginGroup[]
+  /** 全部工具 id 平铺 */
+  tools: string[]
   dir: string
 }
 

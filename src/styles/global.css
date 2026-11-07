@@ -2619,3 +2619,33 @@ select.input {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* ---------------- 开发者工具箱 ---------------- */
+
+/* 工具列表。不复用 .nav-item：那是给深色侧边栏写的，
+   放到浅色内容区里选中态是白底白卡，看着像没选中 */
+.devkit-tool {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.devkit-tool:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text);
+}
+.devkit-tool.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}
+.devkit-tool.missing {
+  color: var(--text-3);
+  font-style: italic;
+}

@@ -11,6 +11,7 @@ import {
   IconGesture,
   IconHosts,
   IconPlugin,
+  IconCode,
   IconSettings,
   IconMinus,
   IconSquare,
@@ -20,6 +21,7 @@ import GesturePage from './pages/GesturePage'
 import ClipboardPage from './pages/ClipboardPage'
 import RecordPage from './pages/RecordPage'
 import ToolsPage from './pages/ToolsPage'
+import DevToolsPage from './pages/DevToolsPage'
 import IconPage from './pages/IconPage'
 import UploadPage from './pages/UploadPage'
 import PluginsPage from './pages/PluginsPage'
@@ -54,6 +56,7 @@ type Page =
   | 'clipboard'
   | 'record'
   | 'tools'
+  | 'devtools'
   | 'icons'
   | 'upload'
   | 'gesture'
@@ -65,6 +68,7 @@ const NAV: Array<{ id: Page; label: string; icon: React.ReactNode }> = [
   { id: 'clipboard', label: '剪贴板', icon: <IconClipboard size={16} /> },
   { id: 'record', label: '录屏', icon: <IconVideo size={16} /> },
   { id: 'tools', label: '图片工具', icon: <IconImage size={16} /> },
+  { id: 'devtools', label: '开发工具', icon: <IconCode size={16} /> },
   { id: 'icons', label: '图标提取', icon: <IconApp size={16} /> },
   { id: 'upload', label: '图床', icon: <IconUpload size={16} /> },
   { id: 'gesture', label: '鼠标手势', icon: <IconGesture size={16} /> },
@@ -241,6 +245,7 @@ function Shell() {
               <RecordPage settings={settings} onChange={updateSettings} />
             )}
             {page === 'tools' && <ToolsPage />}
+            {page === 'devtools' && <DevToolsPage />}
             {page === 'icons' && <IconPage />}
             {page === 'upload' && <UploadPage settings={settings} onChange={updateSettings} />}
             {page === 'gesture' && (

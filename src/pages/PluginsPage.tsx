@@ -82,6 +82,7 @@ export default function PluginsPage() {
                   <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
                     {p.description ?? p.id}
                     {p.providers.length > 0 && ` · 图床：${p.providers.join(', ')}`}
+                    {p.tools.length > 0 && ` · ${p.tools.length} 个工具`}
                   </div>
                 </div>
                 <button

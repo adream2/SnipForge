@@ -21,8 +21,8 @@ export const settingsApi = {
   settingsReset: () => invoke<{ settings: AppSettings }>('settings_reset'),
   pickDir: (defaultPath?: string) => invoke<string | null>('settings_pick_dir', { defaultPath }),
   /** 把一笔轨迹翻译成方向串（录制框用），和真手势同一份实现 */
-  gestureTrace: (points: Array<[number, number]>, step?: number) =>
-    invoke<string>('gesture_trace', { points, step: step ?? null }),
+  gestureTrace: (points: Array<[number, number]>) =>
+    invoke<string>('gesture_trace', { points }),
   /** 试划：这一划会命中哪一条绑定（下标）。和真手势同一套匹配 + 容错 */
   gestureMatch: (pattern: string, profile?: string) =>
     invoke<number | null>('gesture_match', { pattern, profile: profile ?? null }),

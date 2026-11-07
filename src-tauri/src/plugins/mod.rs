@@ -78,6 +78,32 @@ pub fn state_of(state: &Arc<AppState>) -> PluginState {
                         .as_object()
                         .map(|_| vec![spec["provider"]["id"].as_str().unwrap_or(&id).to_string()])
                         .unwrap_or_default();
+                    // 工具型插件（devkit）：清单里的分组原样透传，前端据此渲染。
+                    // 工具实现留在前端注册表，这里只做"目录"，不碰任何可执行内容
+                    let groups = spec["groups"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|g| {
+                                    let gid = g["id"].as_str()?.to_string();
+                                    Some(crate::types::PluginGroup {
+                                        name: g["name"].as_str().unwrap_or(&gid).to_string(),
+                                        id: gid,
+                                        tools: g["tools"]
+                                            .as_array()
+                                            .map(|t| {
+                                                t.iter()
+                                                    .filter_map(|v| v.as_str().map(String::from))
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default(),
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let tool_ids: Vec<String> =
+                        groups.iter().flat_map(|g| g.tools.clone()).collect();
                     let display_id = id.clone();
                     plugins.push(PluginInfo {
                         id: display_id,
@@ -98,6 +124,8 @@ pub fn state_of(state: &Arc<AppState>) -> PluginState {
                             })
                             .unwrap_or_default(),
                         providers: provider_ids,
+                        groups,
+                        tools: tool_ids,
                         dir: path.to_string_lossy().to_string(),
                     });
                 }
@@ -113,6 +141,8 @@ pub fn state_of(state: &Arc<AppState>) -> PluginState {
                     error: Some("JSON 解析失败".into()),
                     hooks: Vec::new(),
                     providers: Vec::new(),
+                    groups: Vec::new(),
+                    tools: Vec::new(),
                     dir: path.to_string_lossy().to_string(),
                 }),
             }

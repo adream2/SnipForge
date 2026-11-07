@@ -369,7 +369,22 @@ pub struct PluginInfo {
     pub hooks: Vec<String>,
     #[serde(default)]
     pub providers: Vec<String>,
+    /// 工具型插件（devkit）声明的工具分组。清单是唯一事实源：
+    /// 前端按这里的分组渲染页面，不在 TS 里再抄一份工具目录
+    #[serde(default)]
+    pub groups: Vec<PluginGroup>,
+    /// 全部工具 id 平铺（插件页显示数量、快速统计用）
+    #[serde(default)]
+    pub tools: Vec<String>,
     pub dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginGroup {
+    pub id: String,
+    pub name: String,
+    pub tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

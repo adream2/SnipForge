@@ -82,6 +82,13 @@ pub const FEATURES: &[Feature] = &[
         run: |a| crate::windows::show_main(a, Some("hosts")),
     },
     Feature {
+        id: "devtools",
+        label: "开发者工具箱",
+        // 纯前端页面，不抓屏
+        grabs_screen: false,
+        run: |a| crate::windows::show_main(a, Some("devtools")),
+    },
+    Feature {
         id: "search-selection",
         label: "搜索选中文字",
         grabs_screen: false,

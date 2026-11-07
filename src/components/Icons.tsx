@@ -51,6 +51,14 @@ export const IconPlugin = ({ size, className, strokeWidth = 1.7 }: IconProps) =>
   </svg>
 )
 
+export const IconCode = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
+  <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
+    <path d="M8.5 8.5L5 12l3.5 3.5" />
+    <path d="M15.5 8.5L19 12l-3.5 3.5" />
+    <path d="M13.2 5.5l-2.4 13" />
+  </svg>
+)
+
 export const IconSettings = ({ size, className, strokeWidth = 1.7 }: IconProps) => (
   <svg {...base(size)} strokeWidth={strokeWidth} className={className}>
     <circle cx="12" cy="12" r="3" />
