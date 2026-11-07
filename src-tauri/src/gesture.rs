@@ -21,6 +21,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::{GestureAction, GestureConfig};
 use crate::win32::mousehook::{self, Event};
+// 匹配规则住在 core 里：纯函数、能跑单测（主 crate 的 test harness 在本机加载不起来）
+use snipforge_core::pattern::{find_in, normalize, pick};
 
 static CFG: OnceLock<RwLock<GestureConfig>> = OnceLock::new();
 
@@ -81,73 +83,20 @@ fn arrows(pattern: &str) -> String {
         .join(" ")
 }
 
-/// 方向串切 token：`"D,R"` → `["D", "R"]`。
-fn tokens(dir: &str) -> Vec<&str> {
-    dir.split(',').filter(|t| !t.is_empty()).collect()
-}
-
-/// 两个 token 序列的编辑距离（插入 / 删除 / 替换各算 1）。
-///
-/// 手势串会越写越长（W 是 8 个 token），要求逐字相等太脆 ——
-/// 转折处多判或少判一个方向是常态。允许差 1，能把"手抖"和"画错手势"分开。
-fn edit_distance(a: &[&str], b: &[&str]) -> usize {
-    let (n, m) = (a.len(), b.len());
-    let mut prev: Vec<usize> = (0..=m).collect();
-    let mut cur = vec![0usize; m + 1];
-    for i in 1..=n {
-        cur[0] = i;
-        for j in 1..=m {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[m]
-}
-
-/// 在一组绑定里找这一划命中的那一条。允许差一个 token。
-fn find_in(bindings: &[crate::config::GestureBinding], dir: &str) -> Option<usize> {
-    let cur = tokens(dir);
-    if cur.is_empty() {
-        return None;
-    }
-    let mut best: Option<(usize, usize)> = None;
-    for (i, b) in bindings.iter().enumerate() {
-        if !b.enabled {
-            continue;
-        }
-        let tpl_s = normalize(&b.pattern);
-        let tpl = tokens(&tpl_s);
-        if tpl.is_empty() {
-            continue;
-        }
-        let d = if tpl == cur {
-            0
-        } else {
-            edit_distance(&cur, &tpl)
-        };
-        if d > 1 {
-            continue;
-        }
-        if best.map_or(true, |(bd, _)| d < bd) {
-            best = Some((d, i));
-        }
-    }
-    best.map(|(_, i)| i)
-}
-
 /// 这一划该执行什么：**先用当前程序的专用集，没命中再回落通用**。
 ///
 /// 手势执行和页面"试划"共用同一套查找 —— 两边各写一套，
 /// 早晚出现"这里试得出来、真划没反应"。
 pub fn match_action(dir: &str) -> Option<Vec<GestureAction>> {
-    if let Some(p) = active_profile() {
-        if let Some(i) = find_in(&p.bindings, dir) {
-            return Some(p.bindings[i].steps());
-        }
-    }
+    // 先把专用集取出来（内部会拿一次读锁），再拿通用集的锁，避免重入
+    let profile = active_profile();
     let g = cfg_lock().read();
-    find_in(&g.bindings, dir).map(|i| g.bindings[i].steps())
+    let p_hit = profile.as_ref().and_then(|p| find_in(&p.bindings, dir));
+    let g_hit = find_in(&g.bindings, dir);
+    match pick(p_hit, g_hit)? {
+        (true, i) => profile.as_ref().map(|p| p.bindings[i].steps()),
+        (false, i) => Some(g.bindings[i].steps()),
+    }
 }
 
 /// 页面查重用：在指定范围（某个专用集 / 通用）里找命中的下标。
@@ -156,9 +105,9 @@ pub fn match_scoped(scope: Option<&str>, dir: &str) -> Option<usize> {
     match scope {
         Some(id) => {
             let p = g.profiles.iter().find(|p| p.id == id)?;
-            find_in(&p.bindings, dir)
+            find_in(&p.bindings, dir).map(|(_, i)| i)
         }
-        None => find_in(&g.bindings, dir),
+        None => find_in(&g.bindings, dir).map(|(_, i)| i),
     }
 }
 
@@ -322,55 +271,6 @@ fn handle_event(app: &AppHandle, ev: Event) {
             }
         }
     }
-}
-
-/// 配置里手写的方向串统一成规范形式。
-///
-/// 两种写法都认：
-///   - **带分隔符**：`"D,R"` = 先下后右，每个部分必须是一个合法 token
-///   - **连写**：`"DRUR"` = `DR,UR`（两字符 token 优先）
-///
-/// 为什么必须区分：8 方向下 `D`+`R`（下再右）和 `DR`（一条右下斜线）是两个
-/// 不同的手势，连成 "DR" 就分不清了 —— 显式分隔的写法必须保留边界。
-fn normalize(pattern: &str) -> String {
-    const TWO: [&str; 4] = ["DR", "DL", "UR", "UL"];
-    const ONE: [&str; 4] = ["U", "D", "L", "R"];
-
-    let raw = pattern.trim();
-    if raw.contains(',') || raw.contains(' ') {
-        return raw
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .map(|t| t.trim().to_ascii_uppercase())
-            .filter(|t| TWO.contains(&t.as_str()) || ONE.contains(&t.as_str()))
-            .collect::<Vec<_>>()
-            .join(",");
-    }
-
-    // 连写：贪心切，两字符优先（认 DR，不拆成 D + R）
-    let s: String = raw
-        .chars()
-        .filter(|c| c.is_ascii_alphabetic())
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
-    let b = s.as_bytes();
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        if i + 2 <= b.len() {
-            let two = &s[i..i + 2];
-            if TWO.contains(&two) {
-                out.push(two.to_string());
-                i += 2;
-                continue;
-            }
-        }
-        let one = &s[i..i + 1];
-        if ONE.contains(&one) {
-            out.push(one.to_string());
-        }
-        i += 1;
-    }
-    out.join(",")
 }
 
 /// 日志和浮标用的一句话描述
@@ -595,37 +495,17 @@ fn ask_exclude(app: &AppHandle) {
 mod tests {
     use super::*;
 
+    /// 串的解析与匹配规则在 `snipforge_core::pattern`（那边能跑单测），
+    /// 这里只验 fe 侧共用的箭头显示。
     #[test]
-    fn normalize_keeps_token_boundaries() {
-        // 连写：两字符 token 优先
-        assert_eq!(normalize("DRUR"), "DR,UR");
-        assert_eq!(normalize("drur"), "DR,UR");
-        // 显式分隔：D + R 是两个 token，不是一条斜线
-        assert_eq!(normalize("D,R"), "D,R");
-        assert_eq!(normalize("D R"), "D,R");
-        // 单条斜线
-        assert_eq!(normalize("DR"), "DR");
-        assert_eq!(normalize("dr"), "DR");
-        // 非法字符丢掉
-        assert_eq!(normalize("D-X,R"), "D,R");
-        assert_eq!(normalize(""), "");
-        // 箭头显示
+    fn arrows_render_eight_directions() {
         assert_eq!(arrows("D,R"), "↓ →");
         assert_eq!(arrows("DR"), "↘");
         assert_eq!(arrows("DR,UR"), "↘ ↗");
-    }
-
-    #[test]
-    fn tolerance_is_one_token() {
-        let a = tokens("DR,UR");
-        // 转折处多判一个方向：还能命中
-        assert_eq!(edit_distance(&a, &tokens("DR,U,UR")), 1);
-        // 错一个方向：还能命中
-        assert_eq!(edit_distance(&a, &tokens("DR,UL")), 1);
-        // 差两个就不算了
-        assert_eq!(edit_distance(&a, &tokens("U,D,L,R")), 2);
+        assert_eq!(arrows("UL,UR,DL"), "↖ ↗ ↙");
     }
 }
+
 
 #[cfg(test)]
 mod profile_tests {
