@@ -477,15 +477,20 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// 为什么要能传句柄而不是只认 `GetForegroundWindow`：
 /// 手势的动作是异步派发的（不能卡在钩子回调里），等到真正执行时，
 /// 前台窗口可能已经变成 NULL（窗口切换的瞬间就是这样）。
-/// 所以调用方在**手势开始时**就把当时的前台窗口记下来，执行时优先用它。
 /// 关闭"相似窗口"：同进程的其他可见顶层窗口。
 ///
 /// 资源管理器、记事本最容易堆一堆，一个个点太烦。当前窗口留着，其余同进程
 /// 且**有标题**的一律 `WM_CLOSE` —— 没标题的多是隐藏的辅助窗口，关掉会伤到
 /// 正在运行的程序。
 static SIMILAR_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// 要留下的那个窗口（用户正在用的）。少了它就会连自己一起关掉 ——
+/// "关闭同程序其他窗口"变成"关闭所有窗口"。
+static SIMILAR_KEEP: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 unsafe extern "system" fn enum_close_similar(hwnd: HWND, _: LPARAM) -> BOOL {
+    if hwnd.0 as isize == SIMILAR_KEEP.load(std::sync::atomic::Ordering::SeqCst) {
+        return BOOL(1);
+    }
     let mut pid = 0u32;
     GetWindowThreadProcessId(hwnd, Some(&mut pid));
     if pid != SIMILAR_PID.load(std::sync::atomic::Ordering::SeqCst) {
@@ -510,6 +515,7 @@ fn close_similar(hwnd: HWND) -> Result<(), String> {
             return Err("拿不到前台进程".into());
         }
         SIMILAR_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+        SIMILAR_KEEP.store(hwnd.0 as isize, std::sync::atomic::Ordering::SeqCst);
         let _ = EnumWindows(Some(enum_close_similar), LPARAM(0));
     }
     Ok(())

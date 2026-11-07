@@ -296,16 +296,19 @@ pub fn inject_click(button: ClickButton) -> Result<(), String> {
         ClickButton::X1 => (MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, 1 << 16),
     };
 
-    let down = mouse_input(down_flag, data);
-    let up = mouse_input(up_flag, data);
-    unsafe {
-        if SendInput(&[down], std::mem::size_of::<INPUT>() as i32) == 0 {
-            PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
-            return Err("补发点击失败".into());
-        }
-    }
-
     std::thread::spawn(move || {
+        // 两次发送都在这个线程里做：钩子回调只负责"决定要补点一下"，
+        // 系统调用一概不碰 —— 回调里跑 SendInput 会拖慢输入处理，
+        // 低级钩子超时会被静默摘钩。
+        let down = mouse_input(down_flag, data);
+        let up = mouse_input(up_flag, data);
+        unsafe {
+            if SendInput(&[down], std::mem::size_of::<INPUT>() as i32) == 0 {
+                log::warn!("补发点击失败（按下被系统拒绝）");
+                PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
+                return;
+            }
+        }
         // 两次发送之间的间隔要接近真人的点击时长（约 80-120ms）。
         // 太短（试过 35ms）桌面/任务栏的菜单还没建完，合成的抬起会落在
         // 底下的桌面上，于是又开一次菜单 —— 表现就是"菜单跳两下"。

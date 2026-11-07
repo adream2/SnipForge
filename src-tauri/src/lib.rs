@@ -54,6 +54,7 @@ mod win32;
 mod windows;
 
 pub use snipforge_core::config;
+pub use snipforge_core::pattern;
 pub use devtools::*;
 
 pub fn run() {

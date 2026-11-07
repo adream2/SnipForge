@@ -6,12 +6,16 @@
 //!   - `win32/input` `win32/window`：真正执行动作（发键、开程序、窗口操作）
 //!   - 这里：读配置、匹配方向串、分发动作、处理"画一下排除这个程序"
 //!
-//! 手势有两种表示：
-//!   - **方向串**（`"DR"`）：折线手势，精确相等匹配。四个方向、行为完全可预测 ——
-//!     划错了就是没反应，而不是"有时候执行错动作"。配置里能直接用箭头显示。
-//!   - **形状**（`"S"`）：曲线手势。方向串表达不了 S，拿 `DLD` 硬凑等于让用户
-//!     把 S 画成折线，手感全错。所以这类手势在钩子里由 `win32::shape` 认，
-//!     认出来就是一个形状字符，和方向串一样参与匹配。
+//! 手势只有一种表示：**方向串**。
+//!
+//! 位移按 45° 分界切成 8 个方向（`R / DR / D / DL / L / UL / U / UR`），
+//! token 之间用逗号分隔：`"D,R"` 是"先下后右"，`"DR"` 是一条右下斜线。
+//! 整条轨迹先做折线简化（RDP），所以"你画了几段就是几个 token"。
+//!
+//! 早期做过点云形状识别（画 S、画 W），后来删掉了：一笔画的折线本来就是
+//! 方向串，形状识别只会把方向手势抢走。需要字母就组合方向，行为可预测。
+//!
+//! 匹配规则在 `snipforge_core::pattern`（纯函数、有单测）。
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::OnceLock;
@@ -22,7 +26,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::config::{GestureAction, GestureConfig};
 use crate::win32::mousehook::{self, Event};
 // 匹配规则住在 core 里：纯函数、能跑单测（主 crate 的 test harness 在本机加载不起来）
-use snipforge_core::pattern::{find_in, normalize, pick};
+use snipforge_core::pattern::normalize;
 
 static CFG: OnceLock<RwLock<GestureConfig>> = OnceLock::new();
 
@@ -36,6 +40,35 @@ static BEGIN_HWND: AtomicIsize = AtomicIsize::new(0);
 /// 排除确认框正在弹 → 别重复弹
 static ASKING_EXCLUDE: AtomicBool = AtomicBool::new(false);
 
+/// 画不画轨迹 / 轨迹颜色。
+///
+/// `handle_event` 是在**钩子线程**里同步跑的，鼠标一动就是一次调用。
+/// 每次都去 `cfg_lock()` 读一遍再 `clone()` 一个 String，等于在钩子里持续
+/// 分配内存 —— 低级钩子有超时，超时会被系统静默摘钩（摘了手势就全没了）。
+/// 所以配置变更时写进这两个静态量，热路径只做一次原子读。
+static SHOW_TRAIL: AtomicBool = AtomicBool::new(true);
+static TRAIL_COLOR: OnceLock<RwLock<String>> = OnceLock::new();
+
+fn show_trail() -> bool {
+    SHOW_TRAIL.load(Ordering::Relaxed)
+}
+
+fn trail_color() -> String {
+    TRAIL_COLOR
+        .get_or_init(|| RwLock::new("#6C5CE7".into()))
+        .read()
+        .clone()
+}
+
+fn cache_style(show: bool, color: &str) {
+    SHOW_TRAIL.store(show, Ordering::Relaxed);
+    let lock = TRAIL_COLOR.get_or_init(|| RwLock::new(String::new()));
+    let mut c = lock.write();
+    if c.as_str() != color {
+        *c = color.to_string();
+    }
+}
+
 fn cfg_lock() -> &'static RwLock<GestureConfig> {
     CFG.get_or_init(|| RwLock::new(GestureConfig::default()))
 }
@@ -43,6 +76,7 @@ fn cfg_lock() -> &'static RwLock<GestureConfig> {
 /// 安装手势（幂等）。
 pub fn install(app: &AppHandle, cfg: GestureConfig) {
     *cfg_lock().write() = cfg.clone();
+    cache_style(cfg.show_trail, &cfg.trail_color);
     mousehook::update_config(cfg);
 
     // 轨迹层提前建好：第一次划手势时再建窗口会有肉眼可见的延迟
@@ -57,6 +91,7 @@ pub fn update(cfg: GestureConfig) {
     let color = cfg.trail_color.clone();
     let show = cfg.show_trail;
     *cfg_lock().write() = cfg.clone();
+    cache_style(show, &color);
     mousehook::update_config(cfg);
     crate::win32::trail::set_style(show, &color);
 }
@@ -88,13 +123,21 @@ fn arrows(pattern: &str) -> String {
 /// 手势执行和页面"试划"共用同一套查找 —— 两边各写一套，
 /// 早晚出现"这里试得出来、真划没反应"。
 pub fn match_action(dir: &str) -> Option<Vec<GestureAction>> {
-    // 先把专用集取出来（内部会拿一次读锁），再拿通用集的锁，避免重入
-    let profile = active_profile();
     let g = cfg_lock().read();
-    let p_hit = profile.as_ref().and_then(|p| find_in(&p.bindings, dir));
-    let g_hit = find_in(&g.bindings, dir);
-    match pick(p_hit, g_hit)? {
-        (true, i) => profile.as_ref().map(|p| p.bindings[i].steps()),
+    // 专用集按引用拿，不 clone —— 这个函数在每个方向变化时都会跑一次，
+    // 而一次 `GestureProfile` 克隆会连所有绑定的轨迹点一起复制。
+    let exe = crate::win32::window::foreground_exe_cached();
+    let prof = if exe.is_empty() {
+        None
+    } else {
+        g.profiles
+            .iter()
+            .find(|p| p.exes.iter().any(|e| same_exe(e, &exe)))
+    };
+    let p_hit = prof.and_then(|p| crate::pattern::find_in(&p.bindings, dir));
+    let g_hit = crate::pattern::find_in(&g.bindings, dir);
+    match crate::pattern::pick(p_hit, g_hit)? {
+        (true, i) => prof.map(|p| p.bindings[i].steps()),
         (false, i) => Some(g.bindings[i].steps()),
     }
 }
@@ -105,9 +148,9 @@ pub fn match_scoped(scope: Option<&str>, dir: &str) -> Option<usize> {
     match scope {
         Some(id) => {
             let p = g.profiles.iter().find(|p| p.id == id)?;
-            find_in(&p.bindings, dir).map(|(_, i)| i)
+            crate::pattern::find_in(&p.bindings, dir).map(|(_, i)| i)
         }
-        None => find_in(&g.bindings, dir).map(|(_, i)| i),
+        None => crate::pattern::find_in(&g.bindings, dir).map(|(_, i)| i),
     }
 }
 
@@ -163,10 +206,16 @@ pub fn path_to_dir(pts: &[(i32, i32)]) -> String {
     if pts.len() < 3 {
         return String::new();
     }
-    let xs: Vec<i32> = pts.iter().map(|p| p.0).collect();
-    let ys: Vec<i32> = pts.iter().map(|p| p.1).collect();
-    let span = (xs.iter().max().unwrap() - xs.iter().min().unwrap())
-        .max(ys.iter().max().unwrap() - ys.iter().min().unwrap());
+    // 一次遍历算包围盒：不分配两个 Vec，也没有 `unwrap` ——
+    // 这个函数跑在钩子线程里，任何 panic 都会连带整个输入链
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+    for &(x, y) in pts {
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+    let span = (max_x - min_x).max(max_y - min_y);
     // 容差跟着手势尺度走：画得大就容忍大一点的抖动
     let eps = (span as f32 * 0.055).clamp(6.0, 22.0);
     let key = rdp(pts, eps);
@@ -201,43 +250,25 @@ fn same_exe(a: &str, b: &str) -> bool {
     crate::win32::window::exe_name_eq(a, b)
 }
 
-/// 当前前台程序命中的专用手势集（多个命中取第一个）。
-fn active_profile() -> Option<crate::config::GestureProfile> {
-    let exe = crate::win32::window::foreground_exe_cached();
-    if exe.is_empty() {
-        return None;
-    }
-    let g = cfg_lock().read();
-    g.profiles
-        .iter()
-        .find(|p| p.exes.iter().any(|e| same_exe(e, &exe)))
-        .cloned()
-}
-
 fn handle_event(app: &AppHandle, ev: Event) {
-    let (show_trail, color) = {
-        let g = cfg_lock().read();
-        (g.show_trail, g.trail_color.clone())
-    };
     match ev {
         Event::Begin { x, y } => {
             BEGIN_HWND.store(crate::win32::focus::foreground_hwnd(), Ordering::SeqCst);
-            if show_trail {
+            if show_trail() {
+                let color = trail_color();
                 crate::win32::trail::begin_with(&color);
                 crate::win32::trail::push(x, y);
             }
         }
         Event::Move { x, y } => {
-            if show_trail {
+            if show_trail() {
                 crate::win32::trail::push(x, y);
             }
         }
         // 方向一变就更新浮标：让用户在**划的过程中**就知道会执行什么，
         // 而不是划完才发现"啊，识别错了一个方向"。
-        // 方向一变就更新浮标：让用户在**划的过程中**就知道会执行什么，
-        // 而不是划完才发现"啊，识别错了一个方向"。
         Event::Turn { dir } => {
-            if show_trail {
+            if show_trail() {
                 // 排除手势不是"绑定"，`describe_pattern` 查不到 —— 单独认一下，
                 // 否则画对了 Z 也显示「未绑定」，用户会以为手势画错了。
                 let exclude = normalize(&cfg_lock().read().exclude_pattern);

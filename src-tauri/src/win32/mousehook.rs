@@ -218,15 +218,26 @@ fn should_handle(cfg: &Snapshot) -> bool {
 /// 触发键按下。返回 true = 吞掉这次按下。
 fn on_down(x: i32, y: i32) -> bool {
     log::debug!("钩子：按下 ({x},{y})");
-    *TRACK.write() = Some(Track {
-        down: true,
-        gesture: false,
-        canceled: false,
-        origin: (x, y),
-        started: std::time::Instant::now(),
-        pts: vec![(x, y)],
-        dir: String::new(),
-    });
+    // 上一次的抬起如果丢了（别的钩子/远程桌面吃掉），这里会覆盖旧状态 ——
+    // 先给旧的那笔发一次 Cancel，否则屏幕上那条轨迹再也没人收。
+    let stale = {
+        let mut guard = TRACK.write();
+        let stale = guard.is_some();
+        *guard = Some(Track {
+            down: true,
+            gesture: false,
+            canceled: false,
+            origin: (x, y),
+            started: std::time::Instant::now(),
+            pts: vec![(x, y)],
+            dir: String::new(),
+        });
+        stale
+    };
+    if stale {
+        log::warn!("上一次手势没收到抬起，已强制结束");
+        emit(Event::Cancel);
+    }
     true
 }
 
@@ -309,17 +320,20 @@ fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
             return;
         }
         // 2px 内不记点：高刷鼠标一秒能推上千个事件，全存下来 RDP 也要跟着变慢
-        if t
+        let pushed = t
             .pts
             .last()
             .map_or(true, |l| (l.0 - x).abs().max((l.1 - y).abs()) >= 2)
-            && t.pts.len() < 1500
-        {
+            && t.pts.len() < 1500;
+        if pushed {
             t.pts.push((x, y));
         }
         // 每 6 个点重算一次（约 12px 一次）。RDP 很轻，但没必要每个
         // mousemove 都跑 —— 低层钩子有超时，超时会被系统静默摘钩。
-        if t.pts.len() % 6 == 0 {
+        //
+        // 必须带 `pushed`：点数到 1500 封顶后长度不再变，1500 % 6 == 0
+        // 会让这里**每个 mousemove 都做一次全量 RDP**，越划越卡。
+        if pushed && t.pts.len() % 6 == 0 {
             let dir = crate::gesture::path_to_dir(&t.pts);
             if !dir.is_empty() && dir != t.dir {
                 t.dir = dir;
