@@ -548,7 +548,9 @@ pub struct GestureConfig {
     pub trigger: String,
     /// 按下后移动超过这么多像素才算手势，否则当普通点击
     pub threshold: i32,
-    /// 判定一次"转向"所需的最小位移
+    /// **已废弃**：早期按"走够多少像素算转向"判定，后来改成整条轨迹做折线
+    /// 简化（RDP），"几段就是几个 token"，这个值不再参与任何判定。
+    /// 字段留着只为兼容旧配置文件（删了会让 serde 丢字段、用户看到配置变样）。
     pub step: i32,
     /// 画轨迹
     pub show_trail: bool,

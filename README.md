@@ -65,7 +65,7 @@
 
 GitHub / S3 兼容 / SM.MS / 自定义 / 本地目录，写一个 JSON 就能接新图床（声明式插件）。
 另外还有：**图标提取**（exe / dll / lnk / APK / IPA，含 Android 自适应图标合成）、
-**鼠标手势**（画一个 S 就截图）、**Hosts 编辑**（写入自动提权）、图片格式转换与压缩。
+**鼠标手势**（八个方向组合，如 `↙↘↙` 截图）、**Hosts 编辑**（写入自动提权）、图片格式转换与压缩。
 
 <img src="docs/images/gesture.png" width="49%" alt="鼠标手势"> <img src="docs/images/upload.png" width="49%" alt="图床">
 

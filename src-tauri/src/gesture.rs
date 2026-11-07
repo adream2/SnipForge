@@ -154,91 +154,11 @@ pub fn match_scoped(scope: Option<&str>, dir: &str) -> Option<usize> {
     }
 }
 
-/// 点到线段的垂距（RDP 用）
-fn perp(p: (i32, i32), a: (i32, i32), b: (i32, i32)) -> f32 {
-    let (dx, dy) = ((b.0 - a.0) as f32, (b.1 - a.1) as f32);
-    let len = (dx * dx + dy * dy).sqrt();
-    if len < 1e-3 {
-        let (px, py) = ((p.0 - a.0) as f32, (p.1 - a.1) as f32);
-        return (px * px + py * py).sqrt();
-    }
-    let (px, py) = ((p.0 - a.0) as f32, (p.1 - a.1) as f32);
-    ((px * dy - py * dx) / len).abs()
-}
+/// 轨迹 → 方向串（实现和单测都在 `snipforge_core::stroke`）
+pub use snipforge_core::stroke::path_to_dir;
 
-/// Ramer–Douglas–Peucker 折线简化：只保留真正的拐点。
-fn rdp(pts: &[(i32, i32)], eps: f32) -> Vec<(i32, i32)> {
-    let n = pts.len();
-    if n < 3 {
-        return pts.to_vec();
-    }
-    let mut keep = vec![false; n];
-    keep[0] = true;
-    keep[n - 1] = true;
-    let mut stack = vec![(0usize, n - 1)];
-    while let Some((a, b)) = stack.pop() {
-        if b <= a + 1 {
-            continue;
-        }
-        let mut best = (a, 0.0f32);
-        for i in a + 1..b {
-            let d = perp(pts[i], pts[a], pts[b]);
-            if d > best.1 {
-                best = (i, d);
-            }
-        }
-        if best.1 > eps {
-            keep[best.0] = true;
-            stack.push((a, best.0));
-            stack.push((best.0, b));
-        }
-    }
-    (0..n).filter(|&i| keep[i]).map(|i| pts[i]).collect()
-}
-
-/// 轨迹 → 方向串。
-///
-/// **不用逐点判方向**：手画的折线在拐角处会来回抖，逐点判定会把一段切成一堆
-/// 废 token（用户画一个三段折线，浮标显示 `↙,↓,→,↓,↙` 五个）。
-/// 改成先做折线简化（RDP），只留真正的拐点，再对每段算方向 ——
-/// 段数就等于"用户画了几笔"。
-pub fn path_to_dir(pts: &[(i32, i32)]) -> String {
-    if pts.len() < 3 {
-        return String::new();
-    }
-    // 一次遍历算包围盒：不分配两个 Vec，也没有 `unwrap` ——
-    // 这个函数跑在钩子线程里，任何 panic 都会连带整个输入链
-    let (mut min_x, mut max_x, mut min_y, mut max_y) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
-    for &(x, y) in pts {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    let span = (max_x - min_x).max(max_y - min_y);
-    // 容差跟着手势尺度走：画得大就容忍大一点的抖动
-    let eps = (span as f32 * 0.055).clamp(6.0, 22.0);
-    let key = rdp(pts, eps);
-
-    let mut toks: Vec<&'static str> = Vec::new();
-    for pair in key.windows(2) {
-        let dx = pair[1].0 - pair[0].0;
-        let dy = pair[1].1 - pair[0].1;
-        let len = ((dx * dx + dy * dy) as f32).sqrt();
-        // 太短的段丢掉：RDP 之后还可能留下五六个像素的碎段
-        if len < 22.0 {
-            continue;
-        }
-        let d = crate::win32::mousehook::dir8(dx, dy);
-        if toks.last() != Some(&d) {
-            toks.push(d);
-        }
-    }
-    toks.join(",")
-}
-
-/// 录制框用：和真手势同一套算法
-pub fn trace_dir(pts: &[(i32, i32)], _step: i32) -> String {
+/// 录制框用：和真手势同一套算法（`step` 已经不参与判定，串完全由轨迹形状决定）
+pub fn trace_dir(pts: &[(i32, i32)]) -> String {
     path_to_dir(pts)
 }
 

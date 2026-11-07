@@ -144,7 +144,6 @@ enum Trigger {
 struct Snapshot {
     trigger: Trigger,
     threshold: i32,
-    step: i32,
     pause_fullscreen: bool,
     excluded: Vec<String>,
 }
@@ -163,7 +162,6 @@ fn snapshot() -> Option<Snapshot> {
     Some(Snapshot {
         trigger,
         threshold: cfg.threshold.clamp(8, 200),
-        step: cfg.step.clamp(16, 300),
         pause_fullscreen: cfg.pause_fullscreen,
         excluded: cfg.excluded.clone(),
     })
@@ -241,29 +239,6 @@ fn on_down(x: i32, y: i32) -> bool {
     true
 }
 
-/// 位移 → 8 方向之一（屏幕坐标，y 向下）。
-///
-/// 每 45° 一个扇区，`R` 是 0°、顺时针：R / DR / D / DL / L / UL / U / UR。
-///
-/// **不要给主方向加权**。试过"一轴投影超过另一轴 1.6 倍就算主方向"（±32°），
-/// 结果把用户画的 `↙`（约 60°）判成 `↓`、`↙`（约 27°）判成 `←` ——
-/// 斜向手势直接消失。45° 均分 + 编辑距离容错才是对的：画 27° 想表达 `←`，
-/// 串是 `DL`，和 `L` 只差一个 token，照样能命中。
-pub(crate) fn dir8(dx: i32, dy: i32) -> &'static str {
-    let angle = (dy as f32).atan2(dx as f32);
-    let idx = ((angle / (std::f32::consts::PI / 4.0)).round() as i32).rem_euclid(8);
-    match idx {
-        0 => "R",
-        1 => "DR",
-        2 => "D",
-        3 => "DL",
-        4 => "L",
-        5 => "UL",
-        6 => "U",
-        _ => "UR",
-    }
-}
-
 /// 一次手势最多持续这么久。超过就当状态作废。
 ///
 /// 理论上按下和抬起一定成对出现，但只要有一个事件被别人吞掉（另一个
@@ -271,7 +246,7 @@ pub(crate) fn dir8(dx: i32, dy: i32) -> &'static str {
 /// 轨迹会一直跟着鼠标画下去，只能重启进程。加个兜底：超时自动复位。
 const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(20);
 
-fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
+fn on_move(x: i32, y: i32, threshold: i32) {
     // 兜底：抬起丢了就作废，别让轨迹永远跟着鼠标
     let expired = {
         let guard = TRACK.read();
@@ -486,7 +461,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 return LRESULT(1);
             }
         } else if msg == WM_MOUSEMOVE {
-            on_move(ms.pt.x, ms.pt.y, cfg.threshold, cfg.step);
+            on_move(ms.pt.x, ms.pt.y, cfg.threshold);
         } else if msg == WM_LBUTTONDOWN {
             cancel_if_gesturing();
         }

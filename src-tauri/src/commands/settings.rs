@@ -242,9 +242,9 @@ pub fn autostart_status() -> bool {
 /// 和钩子共用同一套 8 方向判定 + 短段过滤 —— 前端自己再写一套，
 /// 早晚出现"这里录得出来、真划没反应"。
 #[tauri::command]
-pub fn gesture_trace(points: Vec<[i32; 2]>, step: Option<i32>) -> String {
+pub fn gesture_trace(points: Vec<[i32; 2]>) -> String {
     let pts: Vec<(i32, i32)> = points.iter().map(|p| (p[0], p[1])).collect();
-    crate::gesture::trace_dir(&pts, step.unwrap_or(38))
+    crate::gesture::trace_dir(&pts)
 }
 
 /// 页面「试划」用：这一划会命中哪一条绑定（返回下标）。

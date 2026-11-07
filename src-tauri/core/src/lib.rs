@@ -10,4 +10,5 @@ pub mod config;
 pub mod pattern;
 pub mod safe;
 pub mod shape;
+pub mod stroke;
 pub mod version;
