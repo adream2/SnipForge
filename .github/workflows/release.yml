@@ -100,6 +100,11 @@ jobs:
       - name: 同步站点版本号
         run: node scripts/sync-site-version.mjs
 
+      # 更新日志区块同样由脚本从 CHANGELOG.md 生成，两个脚本改的是同一份
+      # site/index.html，必须在同一个提交里带上去
+      - name: 同步站点更新日志
+        run: node scripts/sync-site-changelog.mjs
+
       - name: 提交站点更新
         shell: bash
         run: |

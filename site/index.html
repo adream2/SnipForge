@@ -97,7 +97,7 @@
         "主密码加密敏感数据（Argon2id + AES-256-GCM）"
       ],
       "datePublished": "2026-10-30",
-      "dateModified": "2026-11-01"
+      "dateModified": "2026-11-07"
     },
     {
       "@type": "FAQPage",
@@ -617,6 +617,98 @@
     white-space: nowrap;
   }
 
+  /* ---------------- 更新日志 ---------------- */
+  .changelog {
+    display: grid;
+    gap: 10px;
+    margin-top: 28px;
+  }
+
+  .cl-item {
+    padding: 0 22px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .cl-item summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 15px 0;
+    cursor: pointer;
+    list-style: none;
+    font-size: 14.5px;
+    font-weight: 600;
+    user-select: none;
+  }
+
+  .cl-item summary::-webkit-details-marker { display: none; }
+
+  .cl-item summary::after {
+    content: "+";
+    margin-left: auto;
+    color: var(--text-3);
+    font-weight: 400;
+    font-size: 17px;
+  }
+
+  .cl-item[open] summary::after { content: "–"; }
+  .cl-item[open] { padding-bottom: 8px; }
+
+  .cl-ver { font-family: var(--mono); letter-spacing: 0; }
+
+  .cl-badge {
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 999px;
+  }
+
+  .cl-badge.preview { color: #8a6d1a; background: #fdf6e3; border: 1px solid #ecd9a0; }
+  .cl-badge.stable { color: #1a7f4b; background: #e8f7ef; border: 1px solid #b8e6cc; }
+
+  .cl-date { font-size: 12px; font-weight: 400; color: var(--text-3); }
+
+  .cl-body h4 { margin: 14px 0 6px; font-size: 13.5px; letter-spacing: -.01em; }
+
+  .cl-body p, .cl-body ul {
+    margin: 8px 0;
+    font-size: 13.2px;
+    color: var(--text-2);
+  }
+
+  .cl-body ul { padding-left: 18px; }
+  .cl-body li + li { margin-top: 5px; }
+
+  .cl-body code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 1px 5px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    word-break: break-all;
+  }
+
+  .cl-body table {
+    display: block;
+    overflow-x: auto;
+    width: 100%;
+    margin: 10px 0;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+
+  .cl-body th, .cl-body td {
+    padding: 5px 10px;
+    text-align: left;
+    border: 1px solid var(--border);
+  }
+
+  .cl-body th { background: var(--surface-2); font-weight: 600; }
+
   /* ---------------- 下载 ---------------- */
   .download {
     margin-top: 26px;
@@ -809,6 +901,7 @@
       <a href="#shots">界面</a>
       <a href="#keys">快捷键</a>
       <a href="#faq">常见问题</a>
+      <a href="#changelog">更新日志</a>
       <a href="#download">下载</a>
     </nav>
     <a class="nav-cta" href="https://github.com/adream2/SnipForge" target="_blank" rel="noopener">GitHub</a>
@@ -1088,6 +1181,236 @@
         </p>
       </article>
     </div>
+  </section>
+
+  <section id="changelog" class="wrap">
+    <div class="sec-head">
+      <h2>更新日志</h2>
+      <p>由仓库 <code>CHANGELOG.md</code> 自动同步，发版即更新 —— 这里就是全部变化，没有"性能优化与若干修复"。</p>
+    </div>
+
+    <div class="changelog">
+<!-- changelog:start -->
+  <details class="cl-item" open>
+    <summary>
+      <span class="cl-ver">0.2.1</span>
+      <span class="cl-badge preview">预览版</span>
+      <span class="cl-date">2026-11-07</span>
+    </summary>
+    <div class="cl-body">
+<h4>新增 · 开发者工具箱（插件形式）</h4>
+<p>21 个本地工具，侧边栏「开发工具」进入，手势里也能挂一条。</p>
+<ul>
+<li><strong>编码转换</strong>：Base64（URL-safe / 折行）、URL、Hex、HTML 实体、Unicode 转义、JWT 解析</li>
+<li><strong>格式化 / 校验</strong>：JSON（带行列报错、键排序）、XML、SQL、正则测试（高亮 + 分组明细 + 替换预览）</li>
+<li><strong>生成 / 计算</strong>：UUID、时间戳互转、哈希（MD5/SHA-1/256/384/512）、随机密码、进制转换、Cron 下次触发</li>
+<li><strong>文本处理</strong>：命名风格（camel/snake/kebab…）、去重排序、行级 diff、行处理、字数统计</li>
+<li>工具目录写在 <code>plugins/devkit.plugin.json</code>，算法在前端注册表 <code>src/lib/devkit/</code>。 清单一改，导航和工具列表跟着变；插件页可以整体开关这个工具箱</li>
+<li>MD5 是手写的（Web Crypto 不提供），已和 Node 的 <code>crypto</code> 对过 8 组输入； 密码用拒绝采样 + 保证每类字符至少一个；进制转换走 BigInt，超过 2^53 不丢精度</li>
+</ul>
+<h4>变更 · 手势引擎换 8 方向（破坏性）</h4>
+<ul>
+<li><strong>方向从 4 个扩到 8 个</strong>：上下左右 + 四个斜向。位移按 45° 扇区判定， 一个方向走够 <code>step</code> 才记一个 token</li>
+<li><strong>逗号分隔 token</strong>：<code>D,R</code> = 先下后右，<code>DR</code> = 一条右下斜线 —— 不分开的话 这两种手势会撞成同一个串</li>
+<li><strong>容错一个 token</strong>：转折处多判/少判一个方向是常态，要求逐字相等太脆。 <code>DR,UR</code> 和 <code>DR,U,UR</code> 都能命中 V</li>
+<li><strong>掉头要 1.8 倍距离</strong>：上↔下、左↔右这种正相反的方向，防转折点抖动 切出多余 token</li>
+<li><strong>删掉形状识别</strong>：点云匹配、模板阈值、<code>@</code> 前缀、自定义笔画全部去掉。 S / H 改用方向串写（S = <code>DL,DR,DL</code>，H = <code>D,R,D</code>），行为从"黑盒猜" 变成"画什么就是什么"</li>
+<li><strong>默认绑定全部重配</strong>（配置迁移 v5 会重置，旧绑定在新语义下意思全变了）： 四个主方向 + <code>DR</code>/<code>DL</code> 两条斜线 + 若干组合</li>
+<li>录制框改成「画一遍 → 后端翻译成方向串」，和真手势共用同一套判定</li>
+</ul>
+<h4>变更 · 默认手势定稿（8 方向）</h4>
+<p>按实际使用习惯重排，<strong>配置迁移 v6 会重置绑定</strong>：</p>
+<table>
+<thead><tr><th>手势</th><th>动作</th><th>手势</th><th>动作</th></tr></thead>
+<tbody><tr><td>↑</td><td>复制</td><td>↓</td><td>粘贴</td></tr>
+<tr><td>→</td><td>前进</td><td>←</td><td>后退</td></tr>
+<tr><td>↓→</td><td>关闭窗口</td><td>↓←</td><td>关闭同程序其他窗口</td></tr>
+<tr><td>↗</td><td>最大化/还原</td><td>↙</td><td>最小化</td></tr>
+<tr><td>↖</td><td>Esc</td><td>↘</td><td>Del</td></tr>
+<tr><td>←↓→↓←</td><td>搜索选中文字</td><td>↑→↓←</td><td>Ping 选中地址</td></tr>
+<tr><td>↓↑→↓</td><td>编辑 hosts</td><td>↓→↑←</td><td>贴图</td></tr>
+<tr><td>↓←↑→</td><td>OCR</td><td>→↙→</td><td>排除当前程序</td></tr>
+<tr><td>↙↘↙</td><td>截图</td><td></td><td></td></tr>
+</tbody>
+</table>
+<p>浏览器专用集：↑ 页顶 / ↓ 页底 / ↘↗ 刷新 / ↗↘ 强制刷新 / ↓→ 关标签 / ↑→ 右侧标签 / ↑← 左侧标签 / ↓→↓ 主页。</p>
+<p>新增三个动作：</p>
+<ul>
+<li><strong>关闭同程序其他窗口</strong>：枚举同进程、可见、有标题的顶层窗口发 <code>WM_CLOSE</code>， 当前窗口留着。没有标题的多是隐藏辅助窗口，关掉会伤到正在运行的程序</li>
+<li><strong>搜索选中文字</strong>：先 <code>Ctrl+C</code>，180ms 后读剪贴板，开 Bing</li>
+<li><strong>Ping 选中地址</strong>：<code>Ctrl+C</code> 后只保留域名/IP/端口的合法字符， 直接 <code>spawn ping</code> —— 不经过任何 shell，没有命令注入面</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li><strong>右键点一下菜单不弹（被"吞"了）</strong>。判定的顺序错了：先看方向串再看位移。 手抖 40 多像素时 <code>path_to_dir</code> 已经能切出一个 token（<code>R</code>/<code>D</code>/…），而单 token 手势是精确匹配的 —— 于是"点一下"变成执行动作，菜单自然不出来。 现在<strong>位移 &lt; 48px 一律按单击补发</strong>，不看向量算出了什么</li>
+<li>补发点击加了诊断日志（光标位置 + 光标下的窗口类名 + <code>SendInput</code> 的返回值和 错误码）。以后"补发没生效"能一眼看出是没发出去，还是发到了别的窗口</li>
+</ul>
+<h4>审计（第二轮）</h4>
+<ul>
+<li><strong>方向解析（<code>dir8</code> / RDP / 折线简化）搬进 <code>snipforge_core::stroke</code></strong>， 补 8 条单测。这块以前<strong>一条测试都没有</strong> —— 而"画 3 段出 5 个 token" 正是这里出过的 bug。现在覆盖：8 个扇区、22.5° 边界、直线单 token、 直角两 token、<code>↙↘↙</code> 三段、锯齿抖动仍是一段、相邻同向合并、过短轨迹不出 token</li>
+<li><strong><code>step</code> 字段已废弃</strong>：RDP 之后"几段就是几个 token"，本来按"走够多少像素 算一次转向"的 <code>step</code> 不再参与任何判定。从 <code>Snapshot</code> 和 <code>on_move</code> 里删掉， 配置字段保留但注明废弃（删了会让旧配置文件丢字段）</li>
+<li><code>gesture_trace</code> 去掉没用的 <code>step</code> 参数（前后端一起改）</li>
+<li><strong>文档对齐现状</strong>：<code>docs/FEATURES.md</code> 还在写"画一个 S 截图""<code>@S</code>/<code>@H</code> 形状命名空间""接管右键按下开关""$P 点云匹配"—— 这些都是已经删掉的东西。 整章按 8 方向重写，含默认手势表和三条匹配规则；<code>README.md</code> 的 "画一个 S 就截图"一并改掉</li>
+</ul>
+<h4>审计（手势链路）</h4>
+<p>一轮完整代码审计，按"会不会在钩子线程里出事"这条线逐层过：</p>
+<ul>
+<li><strong><code>handle_event</code> 每个 mousemove 都拿配置锁 + <code>clone()</code> 一个 String</strong>。 这个函数就在钩子线程里同步跑，等于持续分配内存。改为配置变更时写进 <code>AtomicBool</code> + <code>RwLock&lt;String&gt;</code>，热路径只做一次原子读</li>
+<li><strong><code>on_move</code> 在轨迹点数封顶后每个事件都做全量 RDP</strong>。<code>pts</code> 到 1500 后长度 不再变，<code>1500 % 6 == 0</code> 让重算条件恒成立 —— 越划越卡。改成只有真的压入 新点时才重算</li>
+<li><strong><code>match_action</code> 每次方向变化都整体 clone 专用手势集</strong>（连所有绑定的轨迹点）。 改成按引用索引</li>
+<li><strong><code>inject_click</code> 在钩子回调里调 <code>SendInput</code></strong>。整理成整对发送都在工作线程 里做，回调只负责"决定要补点一下"</li>
+<li><strong>"关闭同程序其他窗口"会把自己也关掉</strong>：枚举时没有排除当前窗口， 说是"其他窗口"，实际连用户正在用的那个一起 <code>WM_CLOSE</code></li>
+<li><strong><code>path_to_dir</code> 里有两处 <code>unwrap()</code></strong>（包围盒）。虽然前面对点数有保护， 但这段跑在钩子线程，panic 会连带整个输入链。改成单次遍历算包围盒</li>
+<li><code>on_move</code> 的兜底之外，<code>on_down</code> 也会处理"上一次抬起丢了"的残留状态， 先把旧轨迹收掉再开新的</li>
+<li>修正 <code>gesture.rs</code> 顶部过时的模块文档（还在描述已删除的点云形状识别、 四个方向）和 <code>window.rs</code> 里一段粘错位置的注释</li>
+</ul>
+<ul>
+<li><strong>在浏览器里画 <code>↓↑→↓</code> 打开的是主页，而不是编辑 hosts</strong>。原因是匹配顺序： 先查浏览器专用集，里面 <code>↓→↓</code>（主页）只要"差一个 token"就算命中， 于是把通用集里精确命中的 <code>↓↑→↓</code> 挡住了。现在改成：</li>
+</ul>
+<ul>
+<li><strong>先比距离</strong>，精确匹配永远赢过模糊匹配；距离相同才让专用集优先 （专用集的意义是"在这个程序里覆盖"，不是"随便糊一个"）</li>
+<li><strong>容错按长度收紧</strong>：两段以内只认精确（<code>↓→</code> 是关窗口，<code>↓→→</code> 不该命中它）； 三段以上才允许差一个</li>
+<li><strong>只容忍"多画"</strong>，不容忍"少画"：转折处手抖多切一个 token 可以， 但 3 段手势不会去命中 4 段绑定 —— 否则画 <code>↓→↓</code> 会误触 <code>↓↑→↓</code></li>
+<li><strong>匹配规则搬到 <code>snipforge_core::pattern</code></strong>。主 crate 的测试 harness 在本机 起不来（<code>STATUS_ENTRYPOINT_NOT_FOUND</code>），所以 <code>gesture.rs</code> 里的测试从来没跑过， 其中两条断言一直是错的（<code>normalize("D-X,R")</code> 和一处编辑距离）。搬进 core 后 36 项单测全绿，这两条也一并修正</li>
+</ul>
+<ul>
+<li><strong>吞一半按下/抬起会让系统按键状态卡死</strong>（这是这一轮所有怪现象的根）。 鼠标钩子吞掉一个事件，系统那颗键的状态就不会跟着变 —— 实测：放行 <code>RButtondown</code>、吞掉 <code>RButtonup</code> 之后，<code>GetAsyncKeyState(VK_RBUTTON)</code> 会<strong>一直返回 DOWN</strong>。后果是目标窗口一直以为右键按着：捕获不放、 菜单卡住、左键跟着失灵，得再点一次右键才恢复。 <strong>规则：按下和抬起必须成对处理</strong>，要么都放行，要么都吞掉</li>
+<li><strong>桌面右键菜单跳两下</strong>。整对吞掉后必须补发一次点击，而补发时按下和抬起 之间的间隔太短（35ms），桌面/任务栏的菜单还没建完，合成的抬起落在了底下 的桌面上，于是又开一次菜单。间隔改成 100ms（接近真人点击），抬起就能落到 已经建好的菜单窗口上</li>
+<li><strong>松手后手势不结束、轨迹一直跟着鼠标</strong>。根因是<strong>同时跑了两个实例</strong>： 两套钩子互相截事件，一边拿了按下、另一边拿了抬起，前者状态永远不清。 启动时用会话内命名互斥体挡掉第二个实例（弹提示后退出）；另外加 20 秒 超时兜底，任何情况下都不会再"永久跟随"</li>
+<li>删掉 <code>swallowDown</code> 开关（配置项和界面都去掉）：两种模式只有一种是对的， 留个开关只会让人选到错的那个</li>
+<li><strong>手势只认 S 和 H，其余字母不再内置识别</strong>。一笔画的折线本来就是方向串 （<code>↓→</code> 既是「向下再向右」，又恰好是字母 L 的写法），全字母参与识别时 每次「下再右」都被判成画字母。更要紧的是 <code>RLR</code>（画 Z 形）是「排除当前 程序」的默认绑定，会被 <code>@Z</code> 吃掉，排除功能直接失效。 现在只有 S / H 参与内置识别；其他字母在「鼠标手势」页画一遍存成自定义 手势即可 —— 只认你加的那一个，不干扰任何方向手势</li>
+<li><strong>画 <code>↓→</code> 时浮标报「未绑定」，但松手却执行了动作</strong>。原因：<code>↓→</code> 的形状正好 等于字母 <code>L</code> 的模板（竖下 + 横右），被形状识别抢成 <code>@L</code>。执行层有回落 （<code>@L</code> 没绑就按方向串 <code>DR</code> 找），浮标层却只查 <code>@L</code> —— 显示和执行用了两套规则。 现在两处共用同一套回落，浮标显示的永远是<strong>真正会执行</strong>的那个动作</li>
+</ul>
+    </div>
+  </details>
+
+  <details class="cl-item">
+    <summary>
+      <span class="cl-ver">0.2.0</span>
+      <span class="cl-badge preview">预览版</span>
+      <span class="cl-date">2026-11-03</span>
+    </summary>
+    <div class="cl-body">
+<h4>剪贴板 · 富文本与隐私</h4>
+<p>对照 TieZ 的剪贴板实现补齐三块：</p>
+<ul>
+<li><strong>富文本 HTML 保留</strong>（以前挂在 📋 计划里的那条）。采集时读 Windows 的 <code>HTML Format</code>，粘贴时同时写 <code>CF_UNICODETEXT</code> 和 HTML —— 从网页复制的表格、 带样式的文字，粘到 Word / 邮件 / 飞书里格式不丢；记事本、终端这类只认纯文本的 地方照常能粘。去重仍按纯文本 hash：同一段话复制两次不该变成两条历史</li>
+<li><strong>隐私遮罩预览</strong>：列表里手机号、身份证、银行卡、邮箱自动打码 （<code>138**<strong>8000</code> / <code>110101</strong>****<strong>1234</code>）。</strong>只影响显示**，选中后写进剪贴板的 还是原文。面板和主窗口都生效 —— 投屏、录屏、旁边有人的时候不至于把证件号念出来</li>
+<li><strong>按来源程序筛选</strong>：卡片底部的程序名现在可点，点一下只看那个程序里的复制记录； 再点一下（或点顶部「来自 xxx ✕」）取消</li>
+<li><strong>粘贴为纯文本</strong>：面板里 <code>Alt+Enter</code>，丢掉网页带来的字体颜色等样式， 只把文字塞过去。配合上面的富文本保留，两种场景各取所需</li>
+</ul>
+<p>不做的事：WebDAV / MQTT 跨设备同步。这个工具的定位是本地常驻，剪贴板历史里 经常有密码和证件号，不上传比"能同步"重要。</p>
+<h4>鼠标手势 · 支持画字母</h4>
+<p>以前只能认方向（<code>←→↑↓</code> 及其组合）和 <code>S</code> / <code>H</code> 两个形状，画 W、V、B、M 一律落到"未绑定"。原因是<strong>形状和方向串共用同一批字符</strong>：<code>D</code> 既是"向下划" 又是"字母 D"，加一个字母就得跟方向抢名字。</p>
+<p>现在按主流工具的做法拆开：</p>
+<ul>
+<li><strong>一笔画字母基本都认</strong>：A B C D E F G H J K L M N P R S T U V W X Y （<code>I</code> 是一条竖线、等于方向串；<code>O</code> 是闭合圆；<code>Q</code> 一笔画不自然）</li>
+<li><strong>形状用 <code>@</code> 前缀</strong>，和方向串分处两个命名空间：<code>@W</code> 是字母，<code>DR</code> 是方向。 用户手写 <code>W</code> 也认（自动补前缀）</li>
+<li><strong>形状没绑动作时自动回落方向串</strong>：画 Z 会先认成 <code>@Z</code>，没绑就落回 <code>RLR</code>， 「画 Z 排除当前程序」照常工作，不需要为每个字母补绑定</li>
+<li>配置迁移 v4：老绑定里的 <code>S</code> / <code>H</code> 自动改成 <code>@S</code> / <code>@H</code></li>
+<li><code>S</code> 补了两个斜写模板（±10°）：点云不抗旋转，以前斜着写 S 认不出</li>
+<li>形状识别从主 crate 搬到 <code>snipforge-core</code>，第一次有了真正能跑的测试 （<code>letters_recognize_themselves</code>：每个字母 6 个抖动/缩放变体必须认回自己）</li>
+</ul>
+<h4>鼠标手势 · 手感修复</h4>
+<p>反馈「划起来不流畅、不灵活，和其它手势工具差距极大」。定位到四个实现问题， 全部在轨迹层和默认参数上，与 UI 框架无关：</p>
+<ul>
+<li><strong>不再每帧重建 GDI 资源</strong>：画笔、画刷、字体改成随窗口缓存，只在分辨率或 轨迹色变化时重建。以前每帧 <code>CreateFontW</code> 一次，字体面查询就是几毫秒</li>
+<li><strong>重绘合并 + 66fps 上限</strong>：高刷鼠标每秒上千次位移，以前每次都投递一次重绘， 消息队列被灌满，表现是轨迹越划越落后于光标</li>
+<li><strong>只贴脏区</strong>：以前每帧清空并回贴整个虚拟屏（4K 双屏 800 万像素每帧）， 现在只处理「轨迹包围盒 ∪ 浮标包围盒 ∪ 上一帧范围」</li>
+<li><strong>灵敏度默认值 30/55 → 16/38</strong>：旧值划一小段没反应、短促手势划不出方向。 配置里两个值都还是旧默认的自动升级（v3 迁移），自己调过的不动</li>
+<li><strong>浮标停留 520 → 240ms</strong>：连续划两个手势不再互相干扰</li>
+<li>轨迹采样加 2px 阈值，去掉一像素一报的抖动点</li>
+</ul>
+<h4>决策记录</h4>
+<ul>
+<li>新增 <code>docs/ADR-001-ui-stack.md</code>：评估 Rust + egui 迁移，结论是<strong>不迁</strong>。 内存 27 MB 不是瓶颈，且 egui 的立即模式对全屏覆盖层是负优化； 手势卡顿的根因在 GDI 重绘方式，换框架解决不了。文档里留了重新评估的触发条件</li>
+</ul>
+<p>---</p>
+    </div>
+  </details>
+
+  <details class="cl-item">
+    <summary>
+      <span class="cl-ver">0.1.0</span>
+      <span class="cl-badge preview">预览版</span>
+      <span class="cl-date">2026-11-01</span>
+    </summary>
+    <div class="cl-body">
+<p>第一个预览版。Windows 10/11 x64。</p>
+<h4>截图</h4>
+<ul>
+<li>一个入口：<code>Alt+Q</code> 打开冻结画面，拖拽框选区域、单击选窗口、<code>Ctrl</code> 选整窗、 <code>Ctrl+A</code> 整屏、<code>S</code> 滚动长截图</li>
+<li>滚动长截图按行签名拼接，最高 24000px</li>
+<li><strong>取完之后做什么可配</strong>：打开编辑器 / 直接复制到剪贴板 / 直接保存 / 钉在屏幕上。 选「直接复制」完全不弹窗口</li>
+</ul>
+<h4>标注与美化</h4>
+<ul>
+<li>矩形、椭圆、箭头、画笔、文字、序号、高亮、马赛克</li>
+<li><code>V</code> 切选择工具，点中标注可拖动、<code>Delete</code> 删除，<code>Esc</code> 先退选中再退编辑器</li>
+<li>撤销重做、颜色/粗细/字号可调；对象化模型（标注是数据不是像素）</li>
+<li>美化：背景、边距、圆角、阴影；水印：文字/平铺/九宫格</li>
+</ul>
+<h4>取字（OCR）</h4>
+<ul>
+<li>Windows 系统 OCR（需对应语言包）；可选 PaddleOCR 引擎，设置页一键下载安装 （多镜像 + 体积校验 + 离线导入）</li>
+<li>识别结果手动触发翻译；<strong>点词复制</strong>：原图上每个词都是可点区域</li>
+</ul>
+<h4>剪贴板</h4>
+<ul>
+<li>文本 / 图片 / 文件 / 颜色四类全收，按 <code>GetClipboardSequenceNumber</code> 变更检测</li>
+<li><code>Alt+V</code> 面板：搜索、分类、收藏、来源程序识别；<code>Win+V</code> 可用键盘钩子接管</li>
+<li>历史落盘做了节流，连续复制不会反复重写索引</li>
+</ul>
+<h4>安全</h4>
+<ul>
+<li><strong>主密码</strong>：Argon2id 派生 + AES-256-GCM，加密收藏的密码、图床 token、翻译 key。 设了主密码后磁盘上没有明文；启动即锁定，可随时「立即锁定」</li>
+<li>忘记密码没有后门，唯一出路是「清空保险箱」（两段式确认）</li>
+<li>路径穿越防护：图床目录、文件名、保存文件名统一出口校验</li>
+</ul>
+<h4>图床</h4>
+<ul>
+<li>GitHub、S3 兼容、SM.MS、自定义、本地目录；声明式插件（JSON 描述即可接入新图床）</li>
+<li>上传历史、连通性测试、目录浏览</li>
+</ul>
+<h4>录屏</h4>
+<ul>
+<li>视频（H.264 MP4）与 GIF 分开录，<code>Ctrl+Alt+R</code> / <code>Ctrl+Alt+G</code></li>
+<li><strong>系统声音</strong>（WASAPI loopback，不用装虚拟声卡）+ <strong>麦克风</strong>，两路自动混音， 静音时段按视频时间轴补静音</li>
+<li><strong>摄像头画中画</strong>：圆角+描边、四角位置、大小比例、水平镜像</li>
+<li>恒定帧率、光标合成、点击高亮环、放大镜、暂停续录</li>
+</ul>
+<h4>其他</h4>
+<ul>
+<li><strong>图标提取</strong>：exe / dll / lnk / APK / IPA → 各尺寸原始图标，可导出 PNG / ICO。 Android 自适应图标会合成背景+前景</li>
+<li><strong>图片工具</strong>：格式互转、质量压缩、等比缩放</li>
+<li><strong>Hosts 编辑</strong>：可视化编辑，写入自动提权</li>
+<li><strong>鼠标手势</strong>：自定义手势绑定到任意功能</li>
+<li><strong>检查更新</strong>：启动后静默检查一次 GitHub Release，只提示不自动安装。 API 被限流时自动改用 releases 订阅（不受 60 次/小时配额限制）</li>
+<li><strong>联网走系统代理</strong>：图床上传、OCR 引擎下载、翻译、检查更新统一读取 Windows「Internet 选项」的代理设置（Clash / v2rayN 默认就是系统代理）， 也认 <code>HTTPS_PROXY</code> / <code>ALL_PROXY</code> 环境变量</li>
+</ul>
+<h4>关于与站点</h4>
+<ul>
+<li>设置 → 关于：新增「产品主页」「源码与反馈」「更新日志」三个入口。外链地址由后端 <code>commands/about.rs</code> 统一维护，界面只传名字，不再散落硬编码 URL</li>
+<li>关于页补一行说明：截图、OCR、剪贴板、录屏均在本机完成，只有主动上传或允许检查更新时才联网</li>
+<li>产品主页上线 GitHub Pages：&lt;https://adream2.github.io/SnipForge/&gt;（功能、截图、常见问题、下载）</li>
+<li>SEO：canonical、Open Graph / Twitter 卡片、<code>sitemap.xml</code>、<code>robots.txt</code>、1200×630 分享图</li>
+<li>GEO：JSON-LD（<code>SoftwareApplication</code> / <code>FAQPage</code> / <code>WebSite</code> / <code>Organization</code>）、<code>llms.txt</code>， 页面补「SnipForge 是什么」事实表与常见问题八问，便于搜索引擎与 AI 问答引擎直接引用</li>
+<li>新增 <code>npm run site:check</code>（上线前自检）与 <code>npm run site:ping</code>（IndexNow 主动推送）</li>
+<li>本版产物在发布后重新打包覆盖，版本号未变</li>
+</ul>
+<h4>已知限制</h4>
+<ul>
+<li>只支持 Windows；多显示器不支持跨屏框选</li>
+<li>没有代码签名，首次运行 SmartScreen 会拦一下</li>
+<li>录屏的摄像头设备不支持热切换，录制后不能剪辑</li>
+<li>长截图依赖目标窗口响应合成滚轮事件（部分 Electron 应用和游戏不响应）</li>
+</ul>
+    </div>
+  </details>
+<!-- changelog:end -->
+    </div>
+
+    <p class="note">更早的版本历史见 <a href="https://github.com/adream2/SnipForge/blob/main/CHANGELOG.md">CHANGELOG.md</a>。</p>
   </section>
 
   <section id="download" class="wrap">

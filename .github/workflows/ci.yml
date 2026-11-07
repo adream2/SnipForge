@@ -49,6 +49,13 @@ jobs:
       - name: 主工程编译检查（含测试代码）
         run: cargo check --all-targets --manifest-path src-tauri/Cargo.toml
 
+      # 站点是纯静态页，版本号/更新日志都靠脚本同步。哪个提交只改了
+      # package.json / CHANGELOG.md 却忘了跑同步脚本，在这里直接拦下
+      - name: 站点与工程一致性
+        run: |
+          node scripts/sync-site-version.mjs --check
+          node scripts/sync-site-changelog.mjs --check
+
   # 下面这组需要真正链接出 exe 并跑起来（WebView2 运行时）。
   # 环境和本机差异较大，所以**不阻塞合并**，只作为参考信号。
   selftest:
