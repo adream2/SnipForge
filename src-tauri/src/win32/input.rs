@@ -302,9 +302,13 @@ pub fn inject_click(button: ClickButton) -> Result<(), String> {
         // 低级钩子超时会被静默摘钩。
         let down = mouse_input(down_flag, data);
         let up = mouse_input(up_flag, data);
+        if log::log_enabled!(log::Level::Debug) {
+            log::debug!("补发点击：光标={:?} 窗口={:?}", cursor_pos(), window_under_cursor());
+        }
         unsafe {
-            if SendInput(&[down], std::mem::size_of::<INPUT>() as i32) == 0 {
-                log::warn!("补发点击失败（按下被系统拒绝）");
+            let n = SendInput(&[down], std::mem::size_of::<INPUT>() as i32);
+            if n == 0 {
+                log::warn!("补发点击失败（按下被系统拒绝）err={:?}", windows::Win32::Foundation::GetLastError());
                 PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
                 return;
             }
@@ -315,9 +319,37 @@ pub fn inject_click(button: ClickButton) -> Result<(), String> {
         // 长一点，抬起就能落到已经建好的菜单窗口上，和真点击一致。
         std::thread::sleep(std::time::Duration::from_millis(100));
         unsafe {
-            SendInput(&[up], std::mem::size_of::<INPUT>() as i32);
+            let n = SendInput(&[up], std::mem::size_of::<INPUT>() as i32);
+            if n == 0 {
+                log::warn!("补发点击失败（抬起被系统拒绝）err={:?}", windows::Win32::Foundation::GetLastError());
+            }
         }
         PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
     });
     Ok(())
+}
+
+/// 诊断用：当前光标位置。
+fn cursor_pos() -> (i32, i32) {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut p = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut p);
+    }
+    (p.x, p.y)
+}
+
+/// 诊断用：光标下窗口的类名（`SendInput` 不指定坐标时落在哪个窗口上）。
+fn window_under_cursor() -> String {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetCursorPos, WindowFromPoint};
+    unsafe {
+        let mut p = POINT::default();
+        let _ = GetCursorPos(&mut p);
+        let hwnd = WindowFromPoint(p);
+        let mut buf = [0u16; 128];
+        let n = GetClassNameW(hwnd, &mut buf);
+        String::from_utf16_lossy(&buf[..n.max(0) as usize])
+    }
 }

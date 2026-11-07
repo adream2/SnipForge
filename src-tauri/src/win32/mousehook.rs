@@ -352,10 +352,11 @@ fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
     }
 }
 
-/// 位移小于这个值就当"用户其实只想点一下"。
+/// 位移小于这个值就当"用户其实只想点一下"，**不看方向串是什么**。
 ///
-/// 手势阈值默认 16px，手抖很容易跨过；这时轨迹又短又碎，
-/// `path_to_dir` 会返回空串 —— 必须补发右键，否则就是"点了没反应"。
+/// 手势阈值默认 16px，手抖很容易跨过。40 多像素的抖动已经足够让
+/// `path_to_dir` 切出一个 token，而单 token 手势（`↓` 粘贴、`→` 前进）
+/// 是精确匹配的 —— 不在这里拦住，"右键点一下"就会变成执行动作。
 const CLICK_DRIFT: f32 = 48.0;
 
 /// 触发键抬起。返回 true = 吞掉这次抬起。
@@ -386,18 +387,12 @@ fn on_up(button: crate::win32::input::ClickButton) -> bool {
         return true;
     }
 
-    if t.gesture && !t.dir.is_empty() {
-        log::debug!("手势方向串 {}", t.dir);
-        emit(Event::End { dir: t.dir });
-        return true;
-    }
-
-    // 手势模式里没算出任何方向 —— 要么是真的只点了一下（手抖跨过了
-    // 阈值），要么是画了个认不出的形状。用位移大小区分：
+    // 位移太小 = 用户只想点一下，**先判这个再判方向串**。
     //
-    // 阈值默认 16px，手轻轻一点就可能把拖影抖过线，之后 `path_to_dir`
-    // 又因为每段都短于门槛而返回空串。这类必须补发右键，否则用户看到的是
-    // 「右键点了没反应」——桌面菜单点不出来就是这么来的。
+    // 以前是先看 `dir` 再看位移，于是手抖 40 多像素时 `path_to_dir` 会切出
+    // 一个 token（`R` / `D` / …），1 个 token 完全可能精确命中某条绑定 ——
+    // 结果"右键点一下"变成了执行动作，菜单自然不弹，用户看到的就是
+    // 「桌面右键被吞了」。
     let far = t
         .pts
         .iter()
@@ -412,6 +407,12 @@ fn on_up(button: crate::win32::input::ClickButton) -> bool {
         if let Err(e) = crate::win32::input::inject_click(button) {
             log::warn!("补发点击失败: {e}");
         }
+        return true;
+    }
+
+    if !t.dir.is_empty() {
+        log::debug!("手势方向串 {}", t.dir);
+        emit(Event::End { dir: t.dir });
         return true;
     }
 
