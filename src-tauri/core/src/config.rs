@@ -556,9 +556,11 @@ pub struct GestureConfig {
     pub trail_color: String,
     /// 前台窗口全屏时自动暂停（游戏、视频、演示、远程桌面）
     pub pause_fullscreen: bool,
-    /// 把触发键的"按下"也吞掉（推荐）。
-    /// 关掉会退回"只吞抬起"的老做法 —— 万一补发点击在你的机器上不灵，
-    /// 切到这里至少右键还在，代价是某些程序里会有状态残留。
+    /// **兼容模式**：把触发键的"按下"也吞掉，单击时再补发一次点击。
+    ///
+    /// 默认关闭。开启后普通单击要靠我们合成，桌面/任务栏这类"按下就出菜单"
+    /// 的地方会闪一下再开一次（合成的抬起把刚建好的菜单关掉了）。
+    /// 只有极少数程序在"放行按下 + 取消模式"下表现异常时才需要打开它。
     pub swallow_down: bool,
     /// 不响应手势的程序（exe 文件名，小写）
     pub excluded: Vec<String>,
@@ -585,7 +587,7 @@ impl Default for GestureConfig {
             trail_color: "#6C5CE7".into(),
             // 默认开：全屏多半是在玩游戏/看视频/演示，手势在那时候只会帮倒忙
             pause_fullscreen: true,
-            swallow_down: true,
+            swallow_down: false,
             excluded: Vec::new(),
             // 横、横回来、横 —— 手写 Z 的简化
             exclude_pattern: "R,DL,R".into(),
@@ -707,6 +709,13 @@ pub fn migrate(cfg: &mut AppSettings) {
         }
         cfg.version = 7;
         log::info!("配置迁移到 v7：手势支持复合动作（动作序列）");
+    }
+    if cfg.version < 8 {
+        // 补发点击在桌面/任务栏会"闪一下再开一次"（合成的抬起把刚建好的
+        // 菜单关掉）。默认改成放行按下、只在抬手时决定要不要吞。
+        cfg.gestures.swallow_down = false;
+        cfg.version = 8;
+        log::info!("配置迁移到 v8：右键按下放行，单击交回系统原生处理");
     }
 }
 

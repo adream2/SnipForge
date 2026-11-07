@@ -1028,10 +1028,11 @@ export default function GesturePage({
 
               <div className="setting-row">
                 <div className="label">
-                  <strong>接管右键按下</strong>
+                  <strong>兼容模式：接管右键按下</strong>
                   <span>
-                    推荐开启：手势期间目标程序收不到任何右键事件，状态最干净。
-                    若你的机器上发现右键点不动，关掉它退回老做法（只吞抬起）
+                    默认关闭。普通单击完全交给系统处理，桌面菜单不会闪。
+                    开启后单击要靠程序补发，桌面/任务栏可能"菜单闪一下再开一次"。
+                    只有个别程序在默认模式下表现异常时才需要打开
                   </span>
                 </div>
                 <div className="control">

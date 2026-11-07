@@ -29,9 +29,10 @@ use std::sync::{Arc, OnceLock};
 use parking_lot::RwLock;
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-    MSLLHOOKSTRUCT, MSG, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, PostMessageW,
+    SetWindowsHookExW, TranslateMessage, MSLLHOOKSTRUCT, MSG, WH_MOUSE_LL, WM_CANCELMODE,
+    WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
 
 use crate::config::GestureConfig;
@@ -218,6 +219,21 @@ fn should_handle(cfg: &Snapshot) -> bool {
     true
 }
 
+/// 让前台窗口取消"内部模式"：松开鼠标捕获、关掉已经弹出来的菜单。
+///
+/// 新默认不吞按下，所以目标程序在用户开始划之前就收到了一个 `RButtondown`。
+/// 桌面、任务栏这类"按下就出菜单"的地方会当场弹出菜单 —— 用户一动，
+/// 我们就把这个模式取消掉，菜单随之消失。`WM_CANCELMODE` 正是干这个用的
+/// 官方消息（模态对话框弹出时系统也是发它），比补发一次假点击干净得多。
+fn cancel_capture() {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if !hwnd.0.is_null() {
+            let _ = PostMessageW(Some(hwnd), WM_CANCELMODE, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
 /// 触发键按下。返回 true = 吞掉这次按下。
 fn on_down(x: i32, y: i32, swallow: bool) -> bool {
     *TRACK.write() = Some(Track {
@@ -277,6 +293,9 @@ fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
     };
 
     if let Some((ox, oy)) = began {
+        // 真的开始划了：把目标程序那个"按着右键"的状态取消掉，
+        // 否则它会一直等着一个我们最终不会交给它的抬起
+        cancel_capture();
         emit(Event::Begin { x: ox, y: oy });
         emit(Event::Move { x, y });
         return;
@@ -343,12 +362,25 @@ fn on_up(button: crate::win32::input::ClickButton) -> bool {
             t.dir = dir;
         }
     }
-    // 没吞按下（swallowDown 关掉）：抬起要放行，右键菜单交给系统
+    // 新默认（swallowDown 关掉）：按下已经原样交给目标程序，
+    // **单击一个字都不用合成** —— 系统怎么处理，现在就怎么处理，
+    // 所以不会出现"菜单闪一下又开一次"。
     if !t.swallowed {
-        if t.gesture && !t.dir.is_empty() {
-            emit(Event::End { dir: t.dir });
+        if !t.gesture {
+            // 只是点了一下：抬起也放行，右键菜单由系统自己弹
+            return false;
         }
-        return false;
+        // 成了手势：这个抬起必须吞掉，否则程序会把它当成一次完整的右键点击
+        // （多数程序在抬起时弹菜单），刚划完就冒出一个菜单。
+        // 再取消一次模式，把"按着没放"的残留状态彻底清干净。
+        cancel_capture();
+        if !t.dir.is_empty() {
+            log::debug!("手势方向串 {}", t.dir);
+            emit(Event::End { dir: t.dir });
+        } else {
+            emit(Event::Cancel);
+        }
+        return true;
     }
 
     // 中途按了左键：用户的意图已经变了，什么都别做（也不补发右键）
