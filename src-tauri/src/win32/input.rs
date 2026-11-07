@@ -235,14 +235,27 @@ pub fn wheel(delta: i32) -> Result<(), String> {
 /// 直接放行，不再当作手势输入处理。没有这个标记会无限递归。
 pub const INJECT_MAGIC: usize = 0x534E_4950; // 'SNIP'
 
-fn mouse_input(flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS) -> INPUT {
+/// 需要补发的鼠标键。手势的触发键可以是这三个之一，
+/// 补发时必须按**用户真正按下的那个键**回放 —— 用中键触发却补发右键，
+/// 用户会发现"中键变成了右键菜单"。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ClickButton {
+    Right,
+    Middle,
+    X1,
+}
+
+fn mouse_input(
+    flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
+    data: u32,
+) -> INPUT {
     INPUT {
         r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: windows::Win32::UI::Input::KeyboardAndMouse::MOUSEINPUT {
                 dx: 0,
                 dy: 0,
-                mouseData: 0,
+                mouseData: data,
                 dwFlags: flags,
                 time: 0,
                 dwExtraInfo: INJECT_MAGIC,
@@ -251,21 +264,55 @@ fn mouse_input(flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_F
     }
 }
 
-/// 补发一次右键点击。
+/// 补发一次按下-抬起。
 ///
-/// 手势的策略是"吞掉按下"，所以普通右键点击必须由我们补回来 ——
-/// 否则用户的右键就没了。必须用 `SendInput` 而不是 `mouse_event`：
+/// 手势的策略是"吞掉按下"，所以普通点击必须由我们补回来 ——
+/// 否则用户的键就没了。必须用 `SendInput` 而不是 `mouse_event`：
 /// 只有前者能带 `dwExtraInfo`，没有标记钩子会把自己注入的点击再吞一次。
-pub fn inject_right_click() -> Result<(), String> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP};
-    let inputs = [
-        mouse_input(MOUSEEVENTF_RIGHTDOWN),
-        mouse_input(MOUSEEVENTF_RIGHTUP),
-    ];
+///
+/// **按下和抬起必须分开发、中间留时间**。一整个批次里连着发 DOWN+UP 时，
+/// 桌面/任务栏这类目标在 DOWN 阶段就把菜单建出来了，紧接着队列里那个 UP
+/// 会被菜单自己的模态消息循环当成"一次点击"吃掉 —— 表现就是菜单闪一下就关。
+/// 分成两次发送，菜单建好时队列里没有待处理的 UP，菜单才留得住。
+///
+/// 还要**离开钩子线程**：低级钩子回调有超时限制，里面 `sleep` 会被系统
+/// 静默摘钩（卸载后手势整体失灵）。这里起个短命线程，钩子立刻返回。
+pub fn inject_click(button: ClickButton) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+        MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP,
+    };
+
+    // 上一次补发还没发完：忽略这次，避免两次点击交叉成"按下-按下-抬起-抬起"
+    static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if PENDING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    // XBUTTON1 放在 mouseData 的高 16 位，这是 SendInput 的约定
+    let (down_flag, up_flag, data) = match button {
+        ClickButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, 0),
+        ClickButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, 0),
+        ClickButton::X1 => (MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, 1 << 16),
+    };
+
+    let down = mouse_input(down_flag, data);
+    let up = mouse_input(up_flag, data);
     unsafe {
-        if SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) == 0 {
-            return Err("补发右键失败".into());
+        if SendInput(&[down], std::mem::size_of::<INPUT>() as i32) == 0 {
+            PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Err("补发点击失败".into());
         }
     }
+
+    std::thread::spawn(move || {
+        // 35ms 是实测能稳住菜单的最小值：再短桌面菜单仍会闪退，
+        // 再长用户会感觉到"点击有延迟"。
+        std::thread::sleep(std::time::Duration::from_millis(35));
+        unsafe {
+            SendInput(&[up], std::mem::size_of::<INPUT>() as i32);
+        }
+        PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
+    });
     Ok(())
 }

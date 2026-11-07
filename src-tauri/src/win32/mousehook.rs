@@ -319,8 +319,14 @@ fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
     }
 }
 
+/// 位移小于这个值就当"用户其实只想点一下"。
+///
+/// 手势阈值默认 16px，手抖很容易跨过；这时轨迹又短又碎，
+/// `path_to_dir` 会返回空串 —— 必须补发右键，否则就是"点了没反应"。
+const CLICK_DRIFT: f32 = 48.0;
+
 /// 触发键抬起。返回 true = 吞掉这次抬起。
-fn on_up() -> bool {
+fn on_up(button: crate::win32::input::ClickButton) -> bool {
     let taken = {
         let mut guard = TRACK.write();
         guard.take()
@@ -357,16 +363,30 @@ fn on_up() -> bool {
         return true;
     }
 
-    // 没形成手势 = 用户只是点了一下右键。补发一次真正的右键点击，
-    // 否则"右键菜单打不开"会变成新的 bug。
-    if !t.gesture {
-        if let Err(e) = crate::win32::input::inject_right_click() {
-            log::warn!("补发右键失败: {e}");
+    // 手势模式里没算出任何方向 —— 要么是真的只点了一下（手抖跨过了
+    // 阈值），要么是画了个认不出的形状。用位移大小区分：
+    //
+    // 阈值默认 16px，手轻轻一点就可能把拖影抖过线，之后 `path_to_dir`
+    // 又因为每段都短于门槛而返回空串。这类必须补发右键，否则用户看到的是
+    // 「右键点了没反应」——桌面菜单点不出来就是这么来的。
+    let far = t
+        .pts
+        .iter()
+        .map(|p| {
+            let dx = (p.0 - t.origin.0) as f32;
+            let dy = (p.1 - t.origin.1) as f32;
+            (dx * dx + dy * dy).sqrt()
+        })
+        .fold(0.0f32, f32::max);
+
+    if !t.gesture || far < CLICK_DRIFT {
+        if let Err(e) = crate::win32::input::inject_click(button) {
+            log::warn!("补发点击失败: {e}");
         }
         return true;
     }
 
-    // 动了但没划出方向（手抖到刚过阈值）：不补发 ——
+    // 确实画了一笔但没匹配到任何方向：不补发 ——
     // 在鼠标已经移开的位置弹出右键菜单反而更莫名其妙
     emit(Event::Cancel);
     true
@@ -425,7 +445,12 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 return LRESULT(1);
             }
         } else if msg == up_msg && is_x1 {
-            if on_up() {
+            let button = match cfg.trigger {
+                Trigger::Right => crate::win32::input::ClickButton::Right,
+                Trigger::Middle => crate::win32::input::ClickButton::Middle,
+                Trigger::X1 => crate::win32::input::ClickButton::X1,
+            };
+            if on_up(button) {
                 return LRESULT(1);
             }
         } else if msg == WM_MOUSEMOVE {

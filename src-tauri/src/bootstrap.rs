@@ -38,7 +38,7 @@ fn load_settings(paths: &Paths) -> AppSettings {
                 // 老配置文件里没有新加的字段（比如 gestures）。内存里有默认值、
                 // 功能能用，但用户打开 json 会以为"这功能不存在"，
                 // 也没法手改。所以补写一次完整配置。
-                let mut cfg = cfg;
+                let cfg = cfg;
                 let mut dirty = false;
                 if !text.contains("\"gestures\"") {
                     dirty = true;
