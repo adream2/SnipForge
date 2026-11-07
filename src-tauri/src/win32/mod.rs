@@ -98,6 +98,47 @@ pub mod input {
     }
 }
 
+/// 只允许一个实例。
+///
+/// 两个实例会各装一套鼠标钩子，而低级钩子是**链式**的：谁先返回 1，
+/// 后面的钩子就收不到这个事件。于是"按下"被 A 吞掉、"抬起"被 B 吞掉时，
+/// 两边各缺一半状态 —— 有一边永远等不到抬起，轨迹就会一直跟着鼠标画下去
+/// （用户看到的就是"松手了手势还没结束"）。顺带还会出现菜单弹两次、
+/// 动作执行两遍这类怪事，排查时极难想到是"开了两份"。
+///
+/// 用会话内命名互斥体挡掉：第二个实例弹个提示就退出。
+#[cfg(windows)]
+pub fn ensure_single_instance() {
+    use windows::core::w;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
+
+    unsafe {
+        match CreateMutexW(None, true, w!("fun.lxzt.snipforge.single")) {
+            Ok(handle) => {
+                if GetLastError() == ERROR_ALREADY_EXISTS {
+                    let _ = MessageBoxW(
+                        None,
+                        w!("SnipForge 已经在运行。\r\n\r\n它常驻托盘，右键托盘图标可以打开设置或退出。\r\n同时跑两份会让鼠标钩子装两遍，手势会失灵。"),
+                        w!("SnipForge"),
+                        MB_OK | MB_ICONINFORMATION,
+                    );
+                    std::process::exit(0);
+                }
+                // HANDLE 是 Copy 的，忘掉它没有意义；只要**不 CloseHandle**，
+                // 互斥体就活到这个进程退出为止 —— 这正是我们要的
+                let _ = handle;
+            }
+            // 建不出来不影响主功能，只是少了一层保护
+            Err(e) => eprintln!("单实例互斥体创建失败: {e}"),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn ensure_single_instance() {}
+
 #[cfg(not(windows))]
 pub mod window {
     use crate::types::NativeWindowInfo;

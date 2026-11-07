@@ -63,7 +63,6 @@ static SPAWNED: AtomicBool = AtomicBool::new(false);
 /// 被安全软件拦掉时界面显示"手势已启用"，用户划半天毫无反应。
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 
-#[derive(Default)]
 struct Track {
     /// 触发键是否按着
     down: bool,
@@ -74,6 +73,8 @@ struct Track {
     /// 中途按了左键 → 放弃手势，且不补发右键
     canceled: bool,
     origin: (i32, i32),
+    /// 按下时刻。用来判断状态是否已经作废（抬起丢了）
+    started: std::time::Instant,
     /// 这一笔的原始轨迹。方向串由它整体算出来（折线简化 + 逐段定向）
     pts: Vec<(i32, i32)>,
     /// 方向串。token 用逗号分隔：`"D,R"` = 先下后右，`"DR"` = 一条右下斜线。
@@ -236,12 +237,14 @@ fn cancel_capture() {
 
 /// 触发键按下。返回 true = 吞掉这次按下。
 fn on_down(x: i32, y: i32, swallow: bool) -> bool {
+    log::debug!("钩子：按下 ({x},{y}) swallow={swallow}");
     *TRACK.write() = Some(Track {
         down: true,
         gesture: false,
         swallowed: swallow,
         canceled: false,
         origin: (x, y),
+        started: std::time::Instant::now(),
         pts: vec![(x, y)],
         dir: String::new(),
     });
@@ -271,7 +274,27 @@ pub(crate) fn dir8(dx: i32, dy: i32) -> &'static str {
     }
 }
 
+/// 一次手势最多持续这么久。超过就当状态作废。
+///
+/// 理论上按下和抬起一定成对出现，但只要有一个事件被别人吞掉（另一个
+/// 手势程序的钩子、远程桌面、驱动异常），`TRACK` 就永远等不到抬起 ——
+/// 轨迹会一直跟着鼠标画下去，只能重启进程。加个兜底：超时自动复位。
+const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(20);
+
 fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
+    // 兜底：抬起丢了就作废，别让轨迹永远跟着鼠标
+    let expired = {
+        let guard = TRACK.read();
+        guard
+            .as_ref()
+            .is_some_and(|t| t.down && t.started.elapsed() > STALE_AFTER)
+    };
+    if expired {
+        *TRACK.write() = None;
+        log::warn!("手势状态超时（没收到抬起），强制复位");
+        emit(Event::Cancel);
+    }
+
     // 第一段：更新状态，顺带算出要不要发 Begin
     let began = {
         let mut guard = TRACK.write();
@@ -296,6 +319,7 @@ fn on_move(x: i32, y: i32, threshold: i32, _step: i32) {
         // 真的开始划了：把目标程序那个"按着右键"的状态取消掉，
         // 否则它会一直等着一个我们最终不会交给它的抬起
         cancel_capture();
+        log::debug!("钩子：进入手势模式 anchor={ox},{oy}");
         emit(Event::Begin { x: ox, y: oy });
         emit(Event::Move { x, y });
         return;
@@ -350,10 +374,19 @@ fn on_up(button: crate::win32::input::ClickButton) -> bool {
         let mut guard = TRACK.write();
         guard.take()
     };
-    let Some(mut t) = taken else { return false };
+    let Some(mut t) = taken else {
+        log::debug!("钩子：抬手时没有状态（可能按下没被记录）");
+        return false;
+    };
     if !t.down {
         return false;
     }
+    log::debug!(
+        "钩子：抬起 gesture={} dir={:?} swallowed={}",
+        t.gesture,
+        t.dir,
+        t.swallowed
+    );
     // 抬手时用**完整轨迹**最后定案：过程中每 6 点重算一次，最后一次
     // 可能停在半路（比如最后一段刚画一半），这里补一次完整的
     if t.gesture {
@@ -374,6 +407,7 @@ fn on_up(button: crate::win32::input::ClickButton) -> bool {
         // （多数程序在抬起时弹菜单），刚划完就冒出一个菜单。
         // 再取消一次模式，把"按着没放"的残留状态彻底清干净。
         cancel_capture();
+        log::debug!("钩子：抬手判定 放行模式 dir={:?}", t.dir);
         if !t.dir.is_empty() {
             log::debug!("手势方向串 {}", t.dir);
             emit(Event::End { dir: t.dir });
