@@ -280,7 +280,7 @@ export default function SettingsPage({
                 }
               />
             </Row>
-            <Row title="开机自启" desc="登录 Windows 后自动运行（写当前用户注册表，不需要管理员）">
+            <Row title="开机自启" desc="登录 Windows 后静默驻留托盘，不弹主界面（写当前用户注册表，不需要管理员）">
               <span
                 className={`hotkey-chip ${
                   autostart === false && settings.general.launchAtLogin ? 'fail' : ''

@@ -38,6 +38,7 @@
 | `arrow_shape.py` | 一次画四条锥尾箭头，肉眼验收形状 | `tests/out/arrow_shape.png` |
 | `arrow_tail.py` / `arrow_head.py` | 加粗后裁头部/尾部特写，看燕尾细节 | `tests/out/*_crop.png` |
 | `show_panel.py` | 把剪贴板面板叫出来停一会儿，方便手动截图 | — |
+| `check_windows.py` | 枚举进程的所有顶层窗口 + 可见性（验「开机自启静默启动」：带 `--silent` 时可见主窗口应为 0） | `可见顶层窗口数: 0` |
 | `shot.py` | 纯 ctypes 屏幕截图存 PNG（不依赖 Pillow）。**必须带 `CAPTUREBLT`**，否则透明分层窗口（选区/覆盖层/控制条）在截图里直接消失，会得出错误结论 | — |
 
 截图产物都落在 `tests/out/`（已 gitignore）。

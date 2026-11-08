@@ -58,7 +58,7 @@ pub use snipforge_core::pattern;
 pub use devtools::*;
 
 pub fn run() {
-    crate::win32::ensure_single_instance();
+    crate::win32::ensure_single_instance(autostart::silent_start());
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())

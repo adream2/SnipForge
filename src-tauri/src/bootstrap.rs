@@ -177,8 +177,12 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 失败只写 debug 日志 —— 公司网络出不去是常态，不该弹窗。
     update::spawn_startup_check(app.handle().clone(), state.clone());
 
-    // 首次启动展示主窗口，之后只在托盘里待命
-    if let Some(win) = app.get_webview_window("main") {
+    // 手动启动：显示主窗口。开机自启（带 --silent）：只留托盘图标，
+    // 主窗口照建（前端要跑起来，热键/托盘才连得上），但一直保持隐藏，
+    // 等用户点托盘或按热键时再由 windows::show_main 亮出来。
+    if autostart::silent_start() {
+        log::info!("静默启动：只驻留托盘，不显示主界面");
+    } else if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.set_focus();
     }

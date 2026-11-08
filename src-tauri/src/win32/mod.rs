@@ -107,8 +107,11 @@ pub mod input {
 /// 动作执行两遍这类怪事，排查时极难想到是"开了两份"。
 ///
 /// 用会话内命名互斥体挡掉：第二个实例弹个提示就退出。
+///
+/// `silent` 为 true（开机自启拉的）时不弹提示：登录时弹一个"已经在运行"
+/// 的对话框，用户只能点确定，毫无意义 —— 直接安静退出。
 #[cfg(windows)]
-pub fn ensure_single_instance() {
+pub fn ensure_single_instance(silent: bool) {
     use windows::core::w;
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
@@ -118,12 +121,14 @@ pub fn ensure_single_instance() {
         match CreateMutexW(None, true, w!("fun.lxzt.snipforge.single")) {
             Ok(handle) => {
                 if GetLastError() == ERROR_ALREADY_EXISTS {
-                    let _ = MessageBoxW(
-                        None,
-                        w!("SnipForge 已经在运行。\r\n\r\n它常驻托盘，右键托盘图标可以打开设置或退出。\r\n同时跑两份会让鼠标钩子装两遍，手势会失灵。"),
-                        w!("SnipForge"),
-                        MB_OK | MB_ICONINFORMATION,
-                    );
+                    if !silent {
+                        let _ = MessageBoxW(
+                            None,
+                            w!("SnipForge 已经在运行。\r\n\r\n它常驻托盘，右键托盘图标可以打开设置或退出。\r\n同时跑两份会让鼠标钩子装两遍，手势会失灵。"),
+                            w!("SnipForge"),
+                            MB_OK | MB_ICONINFORMATION,
+                        );
+                    }
                     std::process::exit(0);
                 }
                 // HANDLE 是 Copy 的，忘掉它没有意义；只要**不 CloseHandle**，
@@ -137,7 +142,7 @@ pub fn ensure_single_instance() {
 }
 
 #[cfg(not(windows))]
-pub fn ensure_single_instance() {}
+pub fn ensure_single_instance(_silent: bool) {}
 
 #[cfg(not(windows))]
 pub mod window {

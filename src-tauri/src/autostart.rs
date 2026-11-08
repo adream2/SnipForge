@@ -7,6 +7,10 @@
 //!
 //! 为什么用注册表而不是启动文件夹的快捷方式：读写都是几次 API 调用，
 //! 不用碰 COM（IShellLink），也不会因为快捷方式被手工删掉而状态失真。
+//!
+//! 开机会话里带着 `--silent` 启动：只驻留托盘，不弹主界面。
+//! 登录 Windows 的瞬间弹一个大窗口抢焦点，比不开自启更烦人 —— 这工具
+//! 99% 的时间是"后台待命 + 热键唤起"，启动时没人需要看主界面。
 
 use crate::error::{AppError, AppResult};
 use windows::core::PCWSTR;
@@ -18,6 +22,19 @@ use windows::Win32::System::Registry::{
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const VALUE_NAME: &str = "SnipForge";
+
+/// 静默启动开关，写在 Run 项的命令行里。
+///
+/// 靠命令行参数而不是"读配置"来判断：配置是用户可改的，而"这次是谁把我
+/// 拉起来的"只有命令行知道。手动双击不会带这个参数，所以照常弹主界面。
+pub const SILENT_FLAG: &str = "--silent";
+
+/// 本次进程是不是被开机自启拉起来的（→ 只驻留托盘，不显示主界面）。
+pub fn silent_start() -> bool {
+    std::env::args()
+        .skip(1)
+        .any(|a| a == SILENT_FLAG || a == "-silent")
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -46,9 +63,11 @@ fn open_key(access: REG_SAM_FLAGS) -> AppResult<HKEY> {
 
 /// 启动命令。路径里带空格时必须加引号 —— 否则 Windows 会截断到第一个空格，
 /// 装在 `C:\Program Files\...` 下就永远起不来。
+///
+/// 引号必须只包住 exe 路径，`--silent` 要留在引号外面。
 fn launch_command() -> AppResult<String> {
     let exe = std::env::current_exe()?;
-    Ok(format!("\"{}\"", exe.display()))
+    Ok(format!("\"{}\" {}", exe.display(), SILENT_FLAG))
 }
 
 /// 注册表里现在到底有没有这一项（不看配置，只信系统）。
@@ -71,7 +90,8 @@ pub fn is_enabled() -> bool {
 ///
 /// 打开时总是写入**当前** exe 的路径：换版本、改安装目录、或者把绿色版挪了位置之后，
 /// 旧的自启项指向的是不存在的文件，表现就是"设了但不自启"。
-/// 所以启动时也会调一次 `apply(true)` 做校正。
+/// 所以启动时也会调一次 `apply(true)` 做校正 —— 顺带把老版本写的
+/// 没有 `--silent` 的命令行升级成静默启动。
 pub fn apply(on: bool) -> AppResult<()> {
     let key = open_key(KEY_QUERY_VALUE | KEY_SET_VALUE)?;
     let name = wide(VALUE_NAME);
