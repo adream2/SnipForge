@@ -1195,9 +1195,16 @@
     <summary>
       <span class="cl-ver">0.2.1</span>
       <span class="cl-badge preview">预览版</span>
-      <span class="cl-date">2026-11-07</span>
+      <span class="cl-date">2026-11-08</span>
     </summary>
     <div class="cl-body">
+<h4>变更 · 开机自启改为静默启动（重新打包）</h4>
+<ul>
+<li>注册表 Run 项写入 <code>"…\snipforge.exe" --silent</code>。登录 Windows 后只驻留托盘图标， 不再弹主界面抢焦点；主窗口照常创建，热键、托盘、剪贴板监听全都正常， 点托盘或按热键随时亮出来</li>
+<li>手动双击 exe 不带该参数，行为不变（照常显示主界面）</li>
+<li>老版本写入的自启项在下次启动时自动校正成带 <code>--silent</code> 的写法，不用手动重开开关</li>
+<li>静默启动时撞上已有实例直接安静退出，不弹"已经在运行"的对话框</li>
+</ul>
 <h4>新增 · 开发者工具箱（插件形式）</h4>
 <p>21 个本地工具，侧边栏「开发工具」进入，手势里也能挂一条。</p>
 <ul>
